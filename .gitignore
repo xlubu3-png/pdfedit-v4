@@ -1,0 +1,23 @@
+# backend (Gradle / Java)
+backend/build/
+backend/.gradle/
+backend/out/
+*.class
+
+# frontend (Node / Vite)
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+*.log
+
+# installer build output
+installer/build/
+installer/dist/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml

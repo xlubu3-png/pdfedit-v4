@@ -1,0 +1,5 @@
+# Active only in the Windows installer build (-Dspring.profiles.active=installed): the launcher has no
+# console, so a log file is the only way to find out why the app did not start.
+logging:
+  file:
+    name: ${user.home}/WINTECH_PDF/app.log

@@ -1,0 +1,64 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '4.0.6'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.pdfedit'
+version = '0.1.0'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.apache.pdfbox:pdfbox:3.0.8'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+// The React frontend is built with npm and packaged into the boot jar as static resources, so a
+// single jar serves both the UI and the API. Only bootJar depends on this: `gradlew test` and
+// `bootRun` (used together with the Vite dev server) need no Node installation.
+// Pass -PprebuiltFrontend to package an already built ../frontend/dist without invoking npm
+// (the Docker build builds the frontend in its own stage).
+def isWindows = org.gradle.internal.os.OperatingSystem.current().isWindows()
+def frontendDir = layout.projectDirectory.dir('../frontend').asFile
+def npmCommand = { List<String> args -> isWindows ? ['cmd', '/c', 'npm'] + args : ['npm'] + args }
+
+tasks.register('npmInstall', Exec) {
+    workingDir frontendDir
+    commandLine npmCommand(['ci'])
+    inputs.file(new File(frontendDir, 'package-lock.json'))
+    outputs.dir(new File(frontendDir, 'node_modules'))
+}
+
+tasks.register('frontendBuild', Exec) {
+    dependsOn 'npmInstall'
+    workingDir frontendDir
+    commandLine npmCommand(['run', 'build'])
+    inputs.dir(new File(frontendDir, 'src'))
+    inputs.dir(new File(frontendDir, 'public'))
+    inputs.files(fileTree(dir: frontendDir, includes: ['index.html', 'package.json', 'vite.config.ts', 'tsconfig*.json']))
+    outputs.dir(new File(frontendDir, 'dist'))
+}
+
+tasks.named('bootJar') {
+    if (!project.hasProperty('prebuiltFrontend')) {
+        dependsOn 'frontendBuild'
+    }
+    from(new File(frontendDir, 'dist')) {
+        into 'BOOT-INF/classes/static'
+    }
+}

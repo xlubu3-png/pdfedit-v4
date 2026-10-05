@@ -1,0 +1,20 @@
+# server.port is chosen at runtime (PdfEditApplication.findAvailablePort), so no fixed value here.
+
+# Shown in the UI. Raise it by 0.001 with every change to the app.
+app:
+  version: 0.043
+  # Uploaded documents and their edits are kept here, so they survive a restart of the app.
+  # PDFEDIT_DATA_DIR moves it (Docker: a mounted volume); documents untouched for this many days are deleted.
+  data-dir: ${PDFEDIT_DATA_DIR:${user.home}/WINTECH_PDF/data}
+  retention-days: 14
+  # When set (PDFEDIT_PASSWORD), every request must carry this password (HTTP Basic, any user name):
+  # for an app reachable by others, e.g. on a NAS. Empty = no login.
+  password: ${PDFEDIT_PASSWORD:}
+
+spring:
+  application:
+    name: pdfedit-v2-backend
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 200MB

@@ -1,0 +1,16 @@
+services:
+  pdfedit:
+    image: pdfedit-v4:latest
+    container_name: pdfedit-v4
+    ports:
+      - "5907:5905"
+    environment:
+      - PDFEDIT_DATA_DIR=/data
+      # A NAS can usually be reached by others on the network: set a password (HTTP Basic, any user name).
+      - PDFEDIT_PASSWORD=change-me
+    volumes:
+      - pdfedit-v4-data:/data
+    restart: unless-stopped
+
+volumes:
+  pdfedit-v4-data:

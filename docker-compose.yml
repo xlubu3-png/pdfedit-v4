@@ -1,0 +1,26 @@
+services:
+  pdfedit:
+    build: .
+    # v4 is a program of its own: its own image, container and port, so it runs next to v3 (5905).
+    image: pdfedit-v4:latest
+    container_name: pdfedit-v4
+    ports:
+      - "5907:5905"
+    environment:
+      - PDFEDIT_FONT_DIRS=/host-fonts
+      # Uploaded documents and their edits are kept in this folder (the volume below), so they
+      # survive a restart or a rebuild of the container.
+      - PDFEDIT_DATA_DIR=/data
+      # To ask for a password (HTTP Basic, any user name) when other people can reach the port:
+      # - PDFEDIT_PASSWORD=change-me
+    volumes:
+      - pdfedit-v4-data:/data
+      # Lets the app use this PC's own fonts (Malgun Gothic, Batang, ...) instead of only the ones in
+      # the image. Windows hosts only: remove this line and PDFEDIT_FONT_DIRS on Linux or a NAS.
+      # Mounted outside /usr/share/fonts on purpose: PDFBox scans that folder itself and reading
+      # hundreds of fonts through Docker Desktop's file sharing took over two minutes.
+      - "C:/Windows/Fonts:/host-fonts:ro"
+    restart: unless-stopped
+
+volumes:
+  pdfedit-v4-data:

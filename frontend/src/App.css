@@ -1,0 +1,874 @@
+.app {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 32px 24px 48px;
+  text-align: left;
+  box-sizing: border-box;
+}
+
+.app-header h1 {
+  margin: 0 0 4px;
+  font-size: 32px;
+}
+
+.app-header .subtitle {
+  margin: 0 0 6px;
+  color: var(--text);
+}
+
+.app-meta {
+  margin: 0 0 24px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.upload-zone {
+  border: 2px dashed var(--border);
+  border-radius: 12px;
+  padding: 40px 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.upload-zone:hover,
+.upload-zone.drag-over {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.upload-zone.busy {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.upload-zone p {
+  margin: 0 0 4px;
+  color: var(--text-h);
+}
+
+.upload-zone .hint {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.error-banner {
+  margin-top: 16px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: #fde8e8;
+  color: #9b1c1c;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.error-banner button {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 24px 0 16px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toolbar-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--sans);
+  font-size: 14px;
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.toolbar-actions button:hover {
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+.toolbar-actions button.danger:hover {
+  border-color: #e57373;
+  color: #e53935;
+}
+
+.toolbar-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.selection-toolbar {
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
+  border-radius: 8px;
+  padding: 8px 14px;
+}
+
+button.primary {
+  font-family: var(--sans);
+  font-size: 15px;
+  padding: 8px 18px;
+  border-radius: 8px;
+  border: none;
+  background: var(--accent);
+  color: white;
+  cursor: pointer;
+}
+
+button.primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.page-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 16px;
+}
+
+.page-card {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px;
+  background: var(--bg);
+  cursor: grab;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.page-card.dragging {
+  opacity: 0.4;
+}
+
+.page-card.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-bg) inset, 0 0 0 1px var(--accent);
+}
+
+.page-number {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  z-index: 1;
+}
+
+.page-select {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1;
+  display: flex;
+  cursor: pointer;
+}
+
+.page-select input {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
+.thumbnail-frame {
+  aspect-ratio: 3 / 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--code-bg);
+  border-radius: 6px;
+}
+
+.thumbnail-frame img {
+  max-width: 100%;
+  max-height: 100%;
+  transition: transform 0.15s;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.page-actions {
+  display: flex;
+  gap: 3px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.page-actions button {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 0;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.page-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.page-actions button:hover {
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+.page-actions button.danger:hover {
+  border-color: #e57373;
+  color: #e53935;
+}
+
+.page-source {
+  font-size: 11px;
+  color: var(--text);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Text editor (full-screen overlay) */
+
+.te-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.te-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 20px;
+  background: #fff;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+
+.te-header button {
+  font-family: var(--sans);
+  font-size: 14px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.te-header button:hover:not(:disabled) {
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+.te-header button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.te-header button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.te-title {
+  max-width: 40vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-h);
+  font-weight: 600;
+}
+
+.te-sub {
+  color: var(--text);
+}
+
+.te-spacer {
+  flex: 1;
+}
+
+.te-status {
+  min-width: 4.5em;
+  text-align: right;
+  color: var(--accent);
+}
+
+.te-error {
+  margin: 8px 20px 0;
+}
+
+.te-main {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 20px;
+}
+
+.te-notice {
+  margin: 40px auto;
+  text-align: center;
+  color: var(--text);
+}
+
+.te-canvas {
+  position: relative;
+  flex: none;
+  background: #fff;
+  border: 1px solid #9aa0a8;
+  box-shadow: var(--shadow);
+}
+
+.te-canvas img {
+  display: block;
+  max-width: none;
+  user-select: none;
+}
+
+.te-layer {
+  position: absolute;
+  inset: 0;
+}
+
+/*
+ * Unedited boxes stay fully transparent so the real PDF rendering underneath shows through
+ * untouched - an unedited page should look pixel-identical to the original. A box only becomes
+ * visible (white background, black text) while focused, or permanently once actually edited.
+ */
+.te-item {
+  position: absolute;
+}
+
+.te-box {
+  position: relative;
+  box-sizing: border-box;
+  padding: 1px 2px;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--box-color, #000);
+  line-height: 1.1;
+  letter-spacing: normal;
+  white-space: pre;
+  overflow: hidden;
+  outline: 1px dashed transparent;
+  cursor: text;
+  transition: background-color 0.1s, outline-color 0.1s, color 0.1s;
+}
+
+.te-box:hover {
+  outline-color: var(--accent-border);
+}
+
+/* While typing the box shows the text in the chosen colour, on white (or grey for pale text). */
+.te-box:focus {
+  background: var(--box-bg, #fff);
+  color: var(--box-color, #000);
+  outline: 1px solid var(--accent);
+}
+
+/*
+ * An edited box outlines itself, but stays see-through: the preview image is re-rendered by the
+ * server after every change, so it already shows the real result. Only while that new image is
+ * still on its way (.stale) the box shows the text itself, so the change never seems to vanish.
+ */
+.te-box.edited {
+  outline: 1px solid var(--accent);
+}
+
+.te-layer.stale .te-box.edited {
+  background: var(--box-bg, #fff);
+  color: var(--box-color, #000);
+}
+
+.te-item.selected .te-box {
+  outline: 2px solid var(--accent);
+}
+
+/* The grip that moves a line: shown when the pointer is over the line, or the line is selected. */
+.te-handle {
+  position: absolute;
+  top: 0;
+  left: -20px;
+  display: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px 0 0 4px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  line-height: 20px;
+  text-align: center;
+  cursor: move;
+  user-select: none;
+  touch-action: none;
+  z-index: 2;
+}
+
+.te-item:hover .te-handle,
+.te-item.selected .te-handle {
+  display: block;
+}
+
+/* The ✕ that deletes an added box, on the side opposite the move grip. */
+.te-remove {
+  position: absolute;
+  top: 0;
+  right: -20px;
+  display: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 0 4px 4px 0;
+  background: #c62828;
+  color: #fff;
+  font-size: 12px;
+  line-height: 20px;
+  text-align: center;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.te-item:hover .te-remove,
+.te-item.selected .te-remove {
+  display: block;
+}
+
+.te-layer.adding {
+  cursor: crosshair;
+}
+
+/* While placing a new box a click always means "put it here", even on top of existing text. */
+.te-layer.adding .te-item {
+  pointer-events: none;
+}
+
+.te-stylebar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 13px;
+}
+
+.te-style-info {
+  flex: 1 1 100%;
+  color: var(--text);
+}
+
+.te-style-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+}
+
+.te-stylebar select {
+  max-width: 260px;
+}
+
+.te-stylebar input[type='number'] {
+  width: 4.5em;
+}
+
+.te-stylebar input[type='color'] {
+  width: 34px;
+  height: 26px;
+  padding: 0;
+}
+
+.te-stylebar button {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  font: inherit;
+  cursor: pointer;
+}
+
+.te-stylebar button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.te-stylebar button.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.te-stylebar button.danger {
+  color: #c62828;
+  border-color: #c62828;
+}
+
+/* Header: related buttons are grouped so the bar stays readable on a narrow window. */
+.te-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.te-more {
+  position: relative;
+}
+
+.te-more > summary {
+  list-style: none;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  cursor: pointer;
+  user-select: none;
+}
+
+.te-more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.te-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+
+.te-menu button {
+  text-align: left;
+  border: 0;
+  background: transparent;
+}
+
+.te-flatten,
+.flatten-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.info-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0;
+  padding: 8px 14px;
+  border: 1px solid #bcd0f7;
+  border-radius: 6px;
+  background: #eef4ff;
+  color: var(--text-h);
+}
+
+.info-banner span {
+  flex: 1;
+}
+
+.te-redact-note {
+  margin: 0 auto 6px;
+  max-width: 900px;
+  padding: 6px 12px;
+  border: 1px solid #f2d28b;
+  border-radius: 6px;
+  background: #fff8e6;
+  color: #7a5200;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* How an edited line is drawn: a small badge next to its font, green or amber. */
+.te-look {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.te-look.ok {
+  background: #e3f4e8;
+  color: #1b6b35;
+}
+
+.te-look.warn {
+  background: #fff1d6;
+  color: #8a5a00;
+}
+
+.te-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.te-zoom-value {
+  min-width: 3.2em;
+  text-align: center;
+  color: var(--text-h);
+}
+
+/* A selected box that is not being typed in is a thing to grab, not to write in. */
+.te-box:not(.typing) {
+  cursor: default;
+}
+
+.te-item.dragging .te-box {
+  outline: 2px solid var(--accent);
+}
+
+/* Alignment guides while a box is dragged onto another line's left edge or baseline. */
+.te-guide {
+  position: absolute;
+  pointer-events: none;
+  background: #e0368a;
+  z-index: 3;
+}
+
+.te-guide.v {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.te-guide.h {
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+
+/* Font picker: a button that opens a searchable list, each font shown in its own face. */
+.fp {
+  position: relative;
+}
+
+.fp-button {
+  min-width: 180px;
+  max-width: 260px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fp-popup {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 50;
+  width: 300px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+
+.fp-search {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 6px;
+  padding: 5px 8px;
+}
+
+.fp-list {
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.fp-list button {
+  display: block;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-h);
+  text-align: left;
+  font-size: 15px;
+}
+
+.fp-list button:hover,
+.fp-list button.on {
+  background: var(--accent-bg);
+}
+
+.fp-group,
+.fp-empty {
+  padding: 6px 8px 2px;
+  color: var(--text);
+  font-size: 11px;
+}
+
+/* Find and replace. */
+.find-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 8vh;
+  background: rgba(20, 24, 31, 0.35);
+}
+
+.find-dialog {
+  width: min(560px, 92vw);
+  max-height: 80vh;
+  overflow: auto;
+  padding: 16px 18px;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.find-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.find-dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.find-dialog input[type='text'] {
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 15px;
+}
+
+.find-dialog .find-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.find-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.find-note,
+.find-message {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.find-message {
+  color: var(--text-h);
+}
+
+.find-results {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 40vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.find-results button {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  text-align: left;
+}
+
+.find-results button:hover {
+  background: var(--accent-bg);
+}
+
+.find-where {
+  flex: none;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.find-text mark {
+  background: #ffe58f;
+}
+
+.te-hint {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 8px 20px 14px;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--text);
+}
+

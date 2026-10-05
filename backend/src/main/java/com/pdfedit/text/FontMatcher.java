@@ -51,6 +51,31 @@ public class FontMatcher {
         return systemFonts.count();
     }
 
+    /** Reads the font folders again, for a font installed while the app is running; returns how many fonts there are now. */
+    public int reloadFonts() {
+        systemFonts.reload();
+        return systemFonts.count();
+    }
+
+    /**
+     * Whether the page uses a named font that is not installed on this computer, so characters that
+     * the page's own (subset) font lacks are drawn in a stand-in. Fonts without a real name (Type 3)
+     * and the standard PDF fonts are never reported: there is nothing to install for them.
+     */
+    public boolean isMissing(PDFont font) {
+        if (font == null || font instanceof PDType3Font || font.getName() == null) {
+            return false;
+        }
+        try {
+            if (font.isStandard14()) {
+                return false;
+            }
+        } catch (RuntimeException ignored) {
+            // an odd font dictionary: judge it by its name
+        }
+        return systemFonts.findByPdfName(font.getName(), false).isEmpty();
+    }
+
     /**
      * The family and weight to use for a source font. A name tells most of it, but a Type 3 font is
      * only called "T1" or "T2": its glyphs are drawing programs, so what it looks like - serif or
@@ -61,6 +86,11 @@ public class FontMatcher {
             return typefaceChooser.choose(font, page.samples(font));
         }
         Match byName = guess(font.getName(), font);
+        // The very font the page uses, when it is installed: new characters then come out exactly like the old ones.
+        Optional<SystemFonts.Face> own = systemFonts.findByPdfName(font.getName(), byName.bold);
+        if (own.isPresent()) {
+            return new Match(own.get().family(), byName.bold);
+        }
         if (nameTellsFamily(font.getName())) {
             return byName;
         }
@@ -347,7 +377,15 @@ public class FontMatcher {
      * @throws FontUnavailableException when no suitable font is installed on this computer
      */
     public PDFont loadForExport(PDDocument outDoc, String pdfFontName, PDFont sourceFont) {
-        return loadFor(outDoc, guess(pdfFontName, sourceFont));
+        return loadFor(outDoc, bestMatch(pdfFontName, sourceFont));
+    }
+
+    /** The page's own font when it is installed, otherwise the guess from its name. */
+    private Match bestMatch(String pdfFontName, PDFont sourceFont) {
+        Match byName = guess(pdfFontName, sourceFont);
+        return systemFonts.findByPdfName(pdfFontName, byName.bold)
+                .map(face -> new Match(face.family(), byName.bold))
+                .orElse(byName);
     }
 
     /**
@@ -364,7 +402,7 @@ public class FontMatcher {
         } catch (IOException ignored) {
             // fall through to the installed fonts
         }
-        if (resolve(guess(pdfFontName, sourceFont)).isEmpty()) {
+        if (resolve(bestMatch(pdfFontName, sourceFont)).isEmpty()) {
             throw new FontUnavailableException(NO_FONT_MESSAGE);
         }
     }
@@ -389,7 +427,8 @@ public class FontMatcher {
             case "나눔명조" -> systemFonts.find(bold, "nanummyeongjo", "나눔명조");
             case "휴먼명조" -> systemFonts.findContaining(bold, "휴먼명조", "humanmyeongjo");
             case "휴먼고딕" -> systemFonts.findContaining(bold, "휴먼고딕", "humangothic");
-            default -> Optional.empty();
+            // Any other installed family, e.g. the very font a page uses.
+            default -> systemFonts.find(bold, match.cssFamily);
         };
     }
 

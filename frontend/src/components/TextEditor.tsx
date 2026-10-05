@@ -5,17 +5,20 @@ import {
   fetchFonts,
   fetchPageText,
   previewUrl,
+  reloadFonts,
   resetTextEdits,
   saveAddedTexts,
   saveTextEdits,
 } from '../api'
 import type { TextEditPayload } from '../api'
+import { fontBaseName, missingFontNames, reloadMessage } from '../fontHelp'
 import { foreignChars } from '../fontMix'
 import { History } from '../history'
 import { keyCode } from '../keys'
 import type { SnapTargets } from '../snap'
 import type { AddedText, FontChoice, PageItem, PageText, RunState, TextRun } from '../types'
 import { fitZoom, previewDpi, PX_PER_PT_AT_100, zoomStep } from '../zoom'
+import { MissingFontDialog } from './MissingFontDialog'
 import { StyleBar } from './StyleBar'
 import type { StyleView } from './StyleBar'
 import { AddedBox, RunBox } from './TextBoxes'
@@ -36,6 +39,10 @@ interface TextEditorProps {
   onFlattenChange: (flatten: boolean) => void
   /** Opens the find-and-replace dialog. */
   onOpenFind: () => void
+  /** How many fonts the app read last time, to tell what a reload found. */
+  installedFonts: number | undefined
+  /** Called after the installed fonts were read again, with the new count. */
+  onFontsReloaded: (installedFonts: number) => void
   busy: boolean
 }
 
@@ -115,6 +122,8 @@ export function TextEditor({
   flatten,
   onFlattenChange,
   onOpenFind,
+  installedFonts,
+  onFontsReloaded,
   busy,
 }: TextEditorProps) {
   const { documentId, pageIndex, key: pageKey } = page
@@ -129,6 +138,9 @@ export function TextEditor({
   const [loadedRevision, setLoadedRevision] = useState(0)
   const [reloadToken, setReloadToken] = useState(0)
   const [fonts, setFonts] = useState<FontChoice[]>([])
+  const [fontHelpOpen, setFontHelpOpen] = useState(false)
+  const [fontsBusy, setFontsBusy] = useState(false)
+  const [fontsMessage, setFontsMessage] = useState<string | null>(null)
   const [selected, setSelected] = useState<Selection>(null)
   /** The box that takes keyboard input; a selected box that is not being edited only moves and restyles. */
   const [editing, setEditing] = useState<Selection>(null)
@@ -624,6 +636,30 @@ export function TextEditor({
 
   const fit = data ? fitZoom(containerWidth, data.pageWidth) : 1
   const zoom = zoomMode === 'fit' ? fit : zoomMode
+  const missingFonts = useMemo(() => missingFontNames(data?.runs ?? []), [data])
+
+  /**
+   * Reads the installed fonts again, after the user installed one: sends what is still unsaved first,
+   * then asks the page's lines and the preview again, since they now may be drawn in the new font.
+   */
+  async function reloadInstalledFonts(): Promise<void> {
+    if (fontsBusy) return
+    setFontsBusy(true)
+    try {
+      await flush()
+      const info = await reloadFonts()
+      setFonts(await fetchFonts())
+      setFontsMessage(reloadMessage(installedFonts, info.installedFonts))
+      onFontsReloaded(info.installedFonts)
+      setReloadToken((t) => t + 1)
+      setRevision((r) => r + 1)
+    } catch (e) {
+      setFontsMessage(e instanceof Error ? e.message : '글꼴을 다시 읽지 못했습니다')
+    } finally {
+      setFontsBusy(false)
+    }
+  }
+
   const scale = data ? zoom * PX_PER_PT_AT_100 : 0
   const dpi = previewDpi(scale, window.devicePixelRatio || 1)
   const stale = loadedRevision !== revision
@@ -681,6 +717,7 @@ export function TextEditor({
       canReset: s !== undefined,
       look: s === undefined ? null : !restyled && run.glyphReuse ? 'original' : 'substitute',
       mixedChars: s !== undefined && !restyled && run.glyphReuse ? foreignChars(s.text, run.ownChars) : '',
+      missingFont: run.sourceFontMissing ? run.sourceFont : null,
     }
   } else if (selected?.kind === 'added') {
     const box = added.find((b) => b.id === selected.id)
@@ -697,6 +734,7 @@ export function TextEditor({
         canReset: false,
         look: null,
         mixedChars: '',
+        missingFont: null,
       }
     }
   }
@@ -913,6 +951,9 @@ export function TextEditor({
           onColor={(color) => patchSelected({ color })}
           onReset={resetSelectedRun}
           onUnify={unifySelectedRun}
+          onFontHelp={() => setFontHelpOpen(true)}
+          onReloadFonts={() => void reloadInstalledFonts()}
+          fontsBusy={fontsBusy}
           onDelete={() => selected?.kind === 'added' && removeAdded(selected.id)}
           onDuplicate={duplicateSelection}
           zoom={zoom}
@@ -934,6 +975,19 @@ export function TextEditor({
             ✕
           </button>
         </div>
+      )}
+
+      {missingFonts.length > 0 && !data?.rotated && (
+        <p className="te-font-notice" role="status">
+          ⚠ 이 페이지에서 쓰는 글꼴 {missingFonts.length}개가 이 PC에 없습니다: <b>{missingFonts.map(fontBaseName).join(', ')}</b>.
+          이미 쓰인 글자는 그대로이고, 새로 입력하는 글자만 비슷한 다른 글꼴로 그려집니다.{' '}
+          <button type="button" onClick={() => setFontHelpOpen(true)}>
+            받는 방법
+          </button>
+          <button type="button" onClick={() => void reloadInstalledFonts()} disabled={fontsBusy}>
+            {fontsBusy ? '읽는 중…' : '글꼴 다시 읽기'}
+          </button>
+        </p>
       )}
 
       <main className="te-main" ref={mainRef}>
@@ -1038,6 +1092,15 @@ export function TextEditor({
         Ctrl+D 복제 · Ctrl+F 찾아 바꾸기 · Ctrl+±/0 확대·축소·폭 맞춤 · Esc 단계별 빠져나오기 · T 텍스트 추가 · Delete 삭제 · 방향키 이동
         (Shift는 10배) · Ctrl+B 굵게 · Ctrl+] / [ 글자 크기 · Ctrl+←/→ 이전/다음 페이지
       </p>
+      {fontHelpOpen && (
+        <MissingFontDialog
+          fonts={missingFonts}
+          message={fontsMessage}
+          busy={fontsBusy}
+          onReload={() => void reloadInstalledFonts()}
+          onClose={() => setFontHelpOpen(false)}
+        />
+      )}
     </div>
   )
 }

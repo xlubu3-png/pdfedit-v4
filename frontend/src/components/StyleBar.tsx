@@ -24,6 +24,8 @@ export interface StyleView {
   look: 'original' | 'substitute' | null
   /** Typed characters the page's own font lacks: they are drawn in another font, so the line can look mixed. */
   mixedChars: string
+  /** The line's font as the PDF names it, when it is not installed on this PC; null when it is (or cannot be told). */
+  missingFont: string | null
 }
 
 interface StyleBarProps {
@@ -36,6 +38,11 @@ interface StyleBarProps {
   onReset: () => void
   /** Draws the whole line in one installed font, so no character looks different from its neighbours. */
   onUnify: () => void
+  /** Opens the help for fonts this PC lacks. */
+  onFontHelp: () => void
+  /** Reads the installed fonts again (after the user installed one). */
+  onReloadFonts: () => void
+  fontsBusy: boolean
   onDelete: () => void
   onDuplicate: () => void
   /** Zoom as a factor (1 = 100%). */
@@ -57,6 +64,9 @@ export function StyleBar({
   onColor,
   onReset,
   onUnify,
+  onFontHelp,
+  onReloadFonts,
+  fontsBusy,
   onDelete,
   onDuplicate,
   zoom,
@@ -76,7 +86,19 @@ export function StyleBar({
         {view ? (
           <>
             <b>{view.label}</b>
-            {view.sourceFont && <> · 원본 글꼴 {view.sourceFont}</>} · 표시 글꼴 {shownFont} · {view.size.toFixed(1)}pt
+            {view.sourceFont && <> · 원본 글꼴 {view.sourceFont}</>}
+            {view.missingFont && (
+              <button
+                type="button"
+                className="te-look warn te-missing"
+                onClick={onFontHelp}
+                title="이 원본 글꼴이 PC에 설치되어 있지 않습니다. 누르면 구하는 방법을 보여 줍니다"
+                {...keepFocus}
+              >
+                ⚠ 이 PC에 없음 · 받는 방법
+              </button>
+            )}{' '}
+            · 표시 글꼴 {shownFont} · {view.size.toFixed(1)}pt
             {view.look === 'original' && (
               <span className="te-look ok" title="바꾼 글자도 이 페이지의 원래 글리프로 그려서 모양이 그대로입니다">
                 원본 글꼴 유지
@@ -104,6 +126,17 @@ export function StyleBar({
       <span className="te-style-field">
         글꼴
         <FontPicker fonts={fonts} value={view?.family ?? null} autoLabel={autoLabel} onChange={onFamily} disabled={disabled} />
+        <button
+          type="button"
+          className="te-reload-fonts"
+          onClick={onReloadFonts}
+          disabled={fontsBusy}
+          title="글꼴을 새로 설치했다면 눌러서 설치된 글꼴을 다시 읽습니다 (앱을 다시 켤 필요 없음)"
+          aria-label="글꼴 다시 읽기"
+          {...keepFocus}
+        >
+          {fontsBusy ? '…' : '⟳'}
+        </button>
       </span>
 
       <span className="te-style-field">

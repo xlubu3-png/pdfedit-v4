@@ -76,6 +76,16 @@ export async function fetchAppInfo(): Promise<AppInfo> {
   return response.json()
 }
 
+/** Has the server read the font folders again, for a font installed while the app runs; the new font count. */
+export async function reloadFonts(): Promise<AppInfo> {
+  const response = await fetch(`${BASE}/fonts/reload`, { method: 'POST' })
+  if (!response.ok) {
+    throw await failure(response, '글꼴을 다시 읽지 못했습니다')
+  }
+  fontsRequest = null // the list of families is read again too
+  return response.json()
+}
+
 export async function createBlankDocument(): Promise<UploadResponse> {
   const response = await fetch(`${BASE}/documents/blank`, { method: 'POST' })
   if (!response.ok) {

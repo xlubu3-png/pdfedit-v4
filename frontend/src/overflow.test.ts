@@ -21,6 +21,7 @@ function run(index: number, x: number, y: number, width: number, text: string): 
     color: '#000000',
     glyphReuse: true,
     ownChars: text,
+    sourceFontMissing: false,
     editFontFamily: null,
     editFontSize: null,
     editBold: null,

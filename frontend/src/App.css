@@ -782,6 +782,105 @@ button.primary:disabled {
   font-size: 11px;
 }
 
+/* Fonts the PC lacks, and reading the installed fonts again. */
+.link-button {
+  padding: 0 2px;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.link-button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.te-missing {
+  margin-left: 6px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.te-reload-fonts {
+  min-width: 28px;
+}
+
+.te-font-notice {
+  margin: 8px 20px 0;
+  padding: 8px 12px;
+  border: 1px solid #f0b46a;
+  border-radius: 8px;
+  background: #fff4e5;
+  color: #7a4300;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.te-font-notice button {
+  margin-left: 4px;
+  padding: 2px 10px;
+  border: 1px solid #f0b46a;
+  border-radius: 6px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.te-font-notice button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.font-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.font-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.font-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.font-list small {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.font-steps {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 13px;
+  color: var(--text-h);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.font-ok {
+  margin: 0;
+  font-size: 14px;
+  color: #1b6e3a;
+}
+
 /* Find and replace. */
 .find-backdrop {
   position: fixed;

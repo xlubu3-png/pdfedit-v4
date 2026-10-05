@@ -100,6 +100,7 @@ public class TextEditService {
                 List<TextRun> runs = TextExtraction.extractRuns(doc, pageIndex);
                 RunPainter.PageGlyphs pageGlyphs = RunPainter.PageGlyphs.of(runs);
                 Map<COSDictionary, FontMatcher.Match> matchByFont = new IdentityHashMap<>();
+                Map<COSDictionary, Boolean> missingByFont = new IdentityHashMap<>();
                 for (int i = 0; i < runs.size(); i++) {
                     TextRun run = runs.get(i);
                     RunEdit existing = saved.runs().get(i);
@@ -117,7 +118,9 @@ public class TextEditService {
                             existing == null ? null : existing.bold(),
                             existing == null ? null : existing.color(),
                             existing == null ? 0f : existing.dx(), existing == null ? 0f : existing.dy(),
-                            pageGlyphs.charsOf(run)));
+                            pageGlyphs.charsOf(run),
+                            run.sourceFont() != null && missingByFont.computeIfAbsent(
+                                    run.sourceFont().getCOSObject(), k -> fontMatcher.isMissing(run.sourceFont()))));
                 }
             }
             return new PageTextDto(crop.getWidth(), crop.getHeight(), crop.getLowerLeftX(),

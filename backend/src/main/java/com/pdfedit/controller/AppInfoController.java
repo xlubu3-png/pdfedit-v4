@@ -4,6 +4,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -28,6 +29,15 @@ public class AppInfoController {
     @GetMapping("/info")
     public AppInfo info() {
         return new AppInfo(version, fontMatcher.installedFontCount());
+    }
+
+    /**
+     * Reads the font folders again, for a font the user installed while the app was running, and says
+     * how many fonts there are now. Takes a second or two.
+     */
+    @PostMapping("/fonts/reload")
+    public AppInfo reloadFonts() {
+        return new AppInfo(version, fontMatcher.reloadFonts());
     }
 
     /** The font families installed on this computer, Korean ones first, for the font pickers. */

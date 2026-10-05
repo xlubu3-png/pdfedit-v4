@@ -43,6 +43,8 @@ export interface TextRun {
   glyphReuse: boolean
   /** Characters this line's own fonts draw on the page; a typed character outside them gets another font. */
   ownChars: string
+  /** The page's font for this line is a named font that is not installed on this PC. */
+  sourceFontMissing: boolean
   /** What the user chose for this line so far; null means "as the original". */
   editFontFamily: string | null
   editFontSize: number | null

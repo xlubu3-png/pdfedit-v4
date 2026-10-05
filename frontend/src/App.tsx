@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import './App.css'
-import { createBlankDocument, deleteDocument, exportPdf, fetchAppInfo, fetchDocumentInfo, uploadDocument } from './api'
+import {
+  createBlankDocument,
+  deleteDocument,
+  exportPdf,
+  fetchAppInfo,
+  fetchDocumentInfo,
+  reloadFonts,
+  uploadDocument,
+} from './api'
+import { reloadMessage } from './fontHelp'
 import { exportFileName } from './exportName'
 import { keyCode } from './keys'
 import { dragHasFiles, pickPdfs } from './pdfFiles'
@@ -41,6 +50,7 @@ function App() {
   /** Whether the pages of the last visit have been looked up yet; nothing is saved before that. */
   const [restored, setRestored] = useState(() => loadSession().length === 0)
   const [restoredNote, setRestoredNote] = useState<string | null>(null)
+  const [fontsNote, setFontsNote] = useState<string | null>(null)
   const hadPages = useRef(false)
 
   useEffect(() => {
@@ -279,6 +289,29 @@ function App() {
     setEditorNonce((n) => n + 1)
   }
 
+  const [fontsBusy, setFontsBusy] = useState(false)
+
+  /** The installed fonts were read again: the count changes, and every picture is drawn again in case a font arrived. */
+  function handleFontsReloaded(installedFonts: number) {
+    setInfo((prev) => (prev ? { ...prev, installedFonts } : prev))
+    setPages((prev) => prev.map((p) => ({ ...p, textRevision: p.textRevision + 1 })))
+  }
+
+  async function handleReloadFontsFromList() {
+    if (fontsBusy) return
+    setFontsBusy(true)
+    try {
+      const before = info?.installedFonts
+      const next = await reloadFonts()
+      handleFontsReloaded(next.installedFonts)
+      setFontsNote(reloadMessage(before, next.installedFonts))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '글꼴을 다시 읽지 못했습니다')
+    } finally {
+      setFontsBusy(false)
+    }
+  }
+
   function handleStartOver() {
     if (!window.confirm('모든 페이지와 수정 내용을 지우고 새로 시작할까요? 저장된 문서 사본도 함께 삭제됩니다.')) return
     // The server keeps a copy of every uploaded file; starting over is the moment to remove them.
@@ -352,7 +385,18 @@ function App() {
         <p className="app-meta">
           {info
             ? `v${info.version} · 로컬 글꼴 ${info.installedFonts.toLocaleString('ko-KR')}개 읽음`
-            : '글꼴 확인 중…'}
+            : '글꼴 확인 중…'}{' '}
+          {info && (
+            <button
+              type="button"
+              className="link-button"
+              onClick={() => void handleReloadFontsFromList()}
+              disabled={fontsBusy}
+              title="글꼴을 새로 설치했다면 눌러서 설치된 글꼴을 다시 읽습니다 (앱을 다시 켤 필요 없음)"
+            >
+              {fontsBusy ? '읽는 중…' : '⟳ 글꼴 다시 읽기'}
+            </button>
+          )}
         </p>
       </header>
 
@@ -362,6 +406,15 @@ function App() {
         <div className="info-banner">
           <span>{restoredNote}</span>
           <button type="button" onClick={() => setRestoredNote(null)} aria-label="닫기">
+            ✕
+          </button>
+        </div>
+      )}
+
+      {fontsNote && (
+        <div className="info-banner">
+          <span>{fontsNote}</span>
+          <button type="button" onClick={() => setFontsNote(null)} aria-label="닫기">
             ✕
           </button>
         </div>
@@ -446,6 +499,8 @@ function App() {
           flatten={flatten}
           onFlattenChange={setFlatten}
           onOpenFind={() => setFindOpen(true)}
+          installedFonts={info?.installedFonts}
+          onFontsReloaded={handleFontsReloaded}
           busy={busy}
         />
       )}

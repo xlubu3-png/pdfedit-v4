@@ -10,6 +10,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -66,6 +67,62 @@ public final class SystemFonts {
     /** Number of fonts found in the font folders (a .ttc collection counts each of its fonts). */
     public int count() {
         return faces().size();
+    }
+
+    /**
+     * Forgets what was found: the font folders are read again on the next use. For when the user has
+     * installed a font while the app is running.
+     */
+    public void reload() {
+        synchronized (this) {
+            faces = null;
+        }
+    }
+
+    /**
+     * The installed font a PDF font name stands for ("ABCDEF+HYwulM-Bold" is HYwulM), if there is one.
+     * Prefers the requested weight but takes the other when that is all there is.
+     */
+    public Optional<Face> findByPdfName(String pdfFontName, boolean bold) {
+        List<String> candidates = pdfNameCandidates(pdfFontName);
+        if (candidates.isEmpty()) {
+            return Optional.empty();
+        }
+        return find(bold, candidates.toArray(String[]::new));
+    }
+
+    /**
+     * The names an installed font could carry for this PDF font name: the name without its subset tag
+     * ("ABCDEF+"), without a style suffix ("-Bold", ",Italic") and without the "MT"/"PS" the PostScript
+     * name of a Windows font adds ("ArialMT"). Normalized the way {@link #normalize} does.
+     */
+    static List<String> pdfNameCandidates(String pdfFontName) {
+        if (pdfFontName == null || pdfFontName.isBlank()) {
+            return List.of();
+        }
+        String name = pdfFontName.replaceFirst("^[A-Z]{6}\\+", "");
+        Set<String> candidates = new LinkedHashSet<>();
+        candidates.add(normalize(name.replace(",", "")));
+        int style = indexOfAny(name, '-', ',');
+        String base = style > 0 ? name.substring(0, style) : name;
+        candidates.add(normalize(base));
+        String bare = normalize(base).replaceFirst("(psmt|mt|ps)$", "");
+        if (bare.length() >= 3) {
+            candidates.add(bare);
+        }
+        candidates.removeIf(String::isEmpty);
+        return List.copyOf(candidates);
+    }
+
+    private static int indexOfAny(String text, char... chars) {
+        int first = -1;
+        for (char c : chars) {
+            int at = text.indexOf(c);
+            if (at >= 0 && (first < 0 || at < first)) {
+                first = at;
+            }
+        }
+        return first;
     }
 
     /**

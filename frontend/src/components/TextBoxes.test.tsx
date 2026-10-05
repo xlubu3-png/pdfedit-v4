@@ -24,6 +24,7 @@ const run: TextRun = {
   color: '#000000',
   glyphReuse: true,
   ownChars: '',
+  sourceFontMissing: false,
   editFontFamily: null,
   editFontSize: null,
   editBold: null,

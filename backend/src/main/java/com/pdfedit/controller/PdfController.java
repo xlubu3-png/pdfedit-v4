@@ -10,6 +10,7 @@ import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -67,6 +68,13 @@ public class PdfController {
     public UploadResponse documentInfo(@PathVariable String documentId) {
         PdfDocumentStore.DocumentInfo info = store.getInfo(documentId);
         return new UploadResponse(documentId, info.fileName(), info.pageCount());
+    }
+
+    /** Removes the stored copy of a document and its edits, e.g. when the user starts over. */
+    @DeleteMapping("/documents/{documentId}")
+    public ResponseEntity<Void> deleteDocument(@PathVariable String documentId) {
+        store.delete(documentId);
+        return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/documents/blank")

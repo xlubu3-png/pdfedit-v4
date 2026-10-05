@@ -51,6 +51,15 @@ export async function fetchDocumentInfo(documentId: string): Promise<UploadRespo
   return response.json()
 }
 
+/** Has the server delete its stored copy of a document; failures are ignored (the copy expires by itself). */
+export async function deleteDocument(documentId: string): Promise<void> {
+  try {
+    await fetch(`${BASE}/documents/${documentId}`, { method: 'DELETE' })
+  } catch {
+    // offline or the server is gone: nothing more to do
+  }
+}
+
 export function thumbnailUrl(documentId: string, pageIndex: number, width = 240, revision = 0): string {
   return `${BASE}/documents/${documentId}/pages/${pageIndex}/thumbnail?width=${width}&rev=${revision}`
 }

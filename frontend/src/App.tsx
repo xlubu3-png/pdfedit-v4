@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import './App.css'
-import { createBlankDocument, exportPdf, fetchAppInfo, fetchDocumentInfo, uploadDocument } from './api'
+import { createBlankDocument, deleteDocument, exportPdf, fetchAppInfo, fetchDocumentInfo, uploadDocument } from './api'
 import { exportFileName } from './exportName'
 import { keyCode } from './keys'
 import { clearSession, loadSession, saveSession } from './session'
@@ -244,7 +244,9 @@ function App() {
   }
 
   function handleStartOver() {
-    if (!window.confirm('모든 페이지와 수정 내용을 지우고 새로 시작할까요?')) return
+    if (!window.confirm('모든 페이지와 수정 내용을 지우고 새로 시작할까요? 저장된 문서 사본도 함께 삭제됩니다.')) return
+    // The server keeps a copy of every uploaded file; starting over is the moment to remove them.
+    for (const documentId of new Set(pages.map((p) => p.documentId))) void deleteDocument(documentId)
     setPages([])
     setSelectedKeys(new Set())
     setEditingKey(null)

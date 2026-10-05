@@ -950,7 +950,7 @@ export function TextEditor({
         )}
         {data?.rotated && (
           <p className="te-notice">
-            원본 PDF에서 이미 회전된 페이지(/Rotate)는 텍스트 편집을 지원하지 않습니다.
+            회전된 상태로 저장된 문서입니다. 새 버전은 올릴 때 회전을 풀어 주므로, 이 PDF를 다시 올리면 텍스트를 편집할 수 있습니다.
           </p>
         )}
         {data && !data.rotated && data.runs.length === 0 && (

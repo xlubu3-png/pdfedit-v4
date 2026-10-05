@@ -197,6 +197,13 @@ public class PdfDocumentStore {
         return entry;
     }
 
+    /** Forgets a document and removes its saved files at once; an unknown id is not an error. */
+    public void delete(String documentId) {
+        if (documents.remove(documentId) != null && dataDir != null) {
+            deleteFiles(documentId);
+        }
+    }
+
     @Scheduled(fixedRate = 10 * 60 * 1000L)
     void evictExpired() {
         Instant cutoff = Instant.now().minus(retention);

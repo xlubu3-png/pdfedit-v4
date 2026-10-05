@@ -64,7 +64,10 @@ $common = @(
     '--icon', (Join-Path $PSScriptRoot 'WINTECH_PDF.ico'),
     '--java-options', '-Dspring.profiles.active=installed',
     '--java-options', '-Dfile.encoding=UTF-8',
-    '--java-options', '-XX:MaxRAMPercentage=50'
+    # A cap instead of a share of the RAM (50% of a 64 GB PC is 32 GB the app would happily grow into),
+    # and an idle collection so the memory used for a big document is given back after a minute.
+    '--java-options', '-Xmx3g',
+    '--java-options', '-XX:G1PeriodicGCInterval=60000'
 )
 
 if ($AppImageOnly) {

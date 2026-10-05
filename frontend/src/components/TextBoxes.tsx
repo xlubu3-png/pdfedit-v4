@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ClipboardEvent, CSSProperties, KeyboardEvent, MouseEvent, PointerEvent } from 'react'
+import { overflows } from '../overflow'
 import { snapPosition } from '../snap'
 import type { SnapTargets } from '../snap'
 import type { AddedText, PageText, RunState, TextRun } from '../types'
@@ -181,6 +182,8 @@ export function RunBox({
 }: RunBoxProps) {
   const ref = useRef<HTMLDivElement>(null)
   const selectedAtPress = useRef(false)
+  /** What is being typed right now, before it is committed; null when nothing is being typed. */
+  const [typed, setTyped] = useState<string | null>(null)
   const shownText = state?.text ?? run.text
   const dx0 = state?.dx ?? 0
   const dy0 = state?.dy ?? 0
@@ -217,6 +220,15 @@ export function RunBox({
 
   const size = state?.fontSize ?? run.fontSize
   const color = state?.color ?? run.color
+  const tooLong = overflows(
+    run,
+    data,
+    typed ?? shownText,
+    state?.fontFamily ?? run.fontFamily,
+    size,
+    state?.bold ?? run.bold,
+    dx0,
+  )
 
   // boxTop/boxBottom come from the server (the same numbers that size the cover-up rectangle baked
   // into the export), so the on-screen box always matches what gets saved.
@@ -265,11 +277,18 @@ export function RunBox({
         // *before* the browser moves the focus, so the blur arrives when `editing` is already false.
         onBlur={(e) => {
           onCommitText(run, e.currentTarget.textContent ?? '')
+          setTyped(null)
           onStopEdit()
         }}
+        onInput={(e) => setTyped(e.currentTarget.textContent ?? '')}
         onKeyDown={editing ? handleKeyDown : undefined}
         onPaste={(e) => pastePlainText(e, false)}
       />
+      {tooLong && (
+        <div className="te-overflow" role="status" title="글이 길어져 오른쪽 글자나 페이지 끝과 겹칠 수 있습니다. 글자 크기를 줄이거나 글을 줄여 보세요">
+          ⚠ 글이 길어져 겹칠 수 있음
+        </div>
+      )}
     </div>
   )
 }

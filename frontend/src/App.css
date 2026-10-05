@@ -677,6 +677,24 @@ button.primary:disabled {
   outline: 2px solid var(--accent);
 }
 
+/* Under a line whose edited text has grown into the line next to it or past the page edge. */
+.te-overflow {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 2px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #fff4e5;
+  border: 1px solid #f0b46a;
+  color: #a05a00;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 4;
+}
+
 /* Alignment guides while a box is dragged onto another line's left edge or baseline. */
 .te-guide {
   position: absolute;

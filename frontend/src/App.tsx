@@ -244,11 +244,19 @@ function App() {
   }
 
   function handleStartOver() {
+    if (!window.confirm('모든 페이지와 수정 내용을 지우고 새로 시작할까요?')) return
     setPages([])
     setSelectedKeys(new Set())
+    setEditingKey(null)
     setRestoredNote(null)
     clearSession()
   }
+
+  const startOverButton = (
+    <button type="button" className="danger" onClick={handleStartOver} disabled={busy} title="모든 페이지를 지우고 처음부터 시작합니다">
+      새로 시작
+    </button>
+  )
 
   /**
    * Keyboard shortcuts of the page list (the editor has its own). Called through a ref so it always
@@ -315,11 +323,6 @@ function App() {
       {restoredNote && (
         <div className="info-banner">
           <span>{restoredNote}</span>
-          {pages.length > 0 && (
-            <button type="button" onClick={handleStartOver}>
-              새로 시작
-            </button>
-          )}
           <button type="button" onClick={() => setRestoredNote(null)} aria-label="닫기">
             ✕
           </button>
@@ -341,6 +344,7 @@ function App() {
             <div className="toolbar selection-toolbar">
               <span>{selectedKeys.size}개 선택됨</span>
               <div className="toolbar-actions">
+                {startOverButton}
                 <button type="button" onClick={() => handleBulkRotate(-90)} disabled={busy} title="왼쪽으로 회전 (Shift+R)">
                   <RotateLeftIcon /> 회전
                 </button>
@@ -362,6 +366,7 @@ function App() {
             <div className="toolbar">
               <span>{pages.length}페이지</span>
               <div className="toolbar-actions">
+                {startOverButton}
                 {flattenOption}
                 <button type="button" onClick={() => setFindOpen(true)} disabled={busy} title="찾아 바꾸기 (Ctrl+F)">
                   찾아 바꾸기

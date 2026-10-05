@@ -25,10 +25,14 @@ if (-not (Test-Path $installer)) { throw "Build the installer first: $installer 
 
 Push-Location $root
 try {
+    # git and gh write ordinary messages ("release not found", progress) to stderr, which PowerShell would
+    # turn into a terminating error: judge them by their exit codes instead.
+    $ErrorActionPreference = 'Continue'
     if (git status --porcelain) { throw 'There are uncommitted changes: commit them first, so the release matches the source.' }
-    git fetch origin 2>$null
+    git fetch origin *> $null
     if ((git rev-parse HEAD) -ne (git rev-parse '@{u}')) { throw 'The latest commit is not pushed yet (git push), so the tag would point at code that is not on GitHub.' }
-    if (gh release view $tag 2>$null) { throw "Release $tag already exists. Raise app.version for a new release." }
+    gh release view $tag *> $null
+    if ($LASTEXITCODE -eq 0) { throw "Release $tag already exists. Raise app.version for a new release." }
 
     # "<hash>  <file name>", the format sha256sum writes.
     $hash = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()

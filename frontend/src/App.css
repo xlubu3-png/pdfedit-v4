@@ -205,6 +205,7 @@ button.primary:disabled {
   overflow: hidden;
   background: var(--code-bg);
   border-radius: 6px;
+  cursor: pointer; /* a double-click opens the text editor */
 }
 
 .thumbnail-frame img {

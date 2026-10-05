@@ -54,7 +54,13 @@ export function PageThumbnail({
       <label className="page-select" title="선택">
         <input type="checkbox" checked={isSelected} disabled={busy} onChange={() => onToggleSelect(page.key)} />
       </label>
-      <div className="thumbnail-frame">
+      <div
+        className="thumbnail-frame"
+        title="더블클릭하면 이 페이지의 텍스트를 편집합니다"
+        onDoubleClick={() => {
+          if (!busy) onEditText(page.key)
+        }}
+      >
         <img
           src={thumbnailUrl(page.documentId, page.pageIndex, 240, page.textRevision)}
           alt={`${page.sourceFileName} p.${page.pageIndex + 1}`}

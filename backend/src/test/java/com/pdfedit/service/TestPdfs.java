@@ -64,6 +64,41 @@ public final class TestPdfs {
      */
     public static final int SUBPIXEL_NOISE = 20;
 
+    /**
+     * A shaded table cell (30..530 x 630..660) with a heavy black rule along its top (4 pt thick, its
+     * lower edge at {@code ruleBottom}) and one 10 pt line at (50, 648): like the heading cell of a
+     * table with heavy outer rules, where the text sits right under the line. The text may be empty.
+     */
+    static byte[] shadedCellUnderThickRule(String text, float ruleBottom) throws IOException {
+        SystemFonts.Face face = koreanFont();
+        try (PDDocument doc = new PDDocument()) {
+            PDPage page = new PDPage(PDRectangle.A4);
+            doc.addPage(page);
+            PDType0Font font;
+            try (InputStream is = face.openStandalone()) {
+                font = PDType0Font.load(doc, is, true);
+            }
+            try (PDPageContentStream cs = new PDPageContentStream(doc, page)) {
+                cs.setNonStrokingColor(0.9f, 0.9f, 0.9f);
+                cs.addRect(30, 630, 500, 30);
+                cs.fill();
+                cs.setNonStrokingColor(0f, 0f, 0f);
+                cs.addRect(30, ruleBottom, 500, 4);
+                cs.fill();
+                if (!text.isEmpty()) {
+                    cs.beginText();
+                    cs.setFont(font, 10);
+                    cs.newLineAtOffset(50, 648);
+                    cs.showText(text);
+                    cs.endText();
+                }
+            }
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            doc.save(out);
+            return out.toByteArray();
+        }
+    }
+
     /** One empty A4 page. */
     static byte[] blankPage() throws IOException {
         try (PDDocument doc = new PDDocument()) {

@@ -24,6 +24,8 @@ import org.apache.pdfbox.pdmodel.font.PDFont;
 import org.apache.pdfbox.pdmodel.font.PDType3Font;
 import org.apache.pdfbox.pdmodel.graphics.state.RenderingMode;
 import org.apache.pdfbox.rendering.PDFRenderer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import com.pdfedit.dto.PageTextDto;
@@ -49,8 +51,10 @@ import com.pdfedit.text.VerticalBounds;
 @Service
 public class TextEditService {
 
+    private static final Logger log = LoggerFactory.getLogger(TextEditService.class);
     private static final int PREVIEW_DPI = 150;
-    private static final float BACKDROP_SCALE = 2f;
+    /** Resolution of the pictures the cover-ups are made from (3x = 216 dpi: rules stay crisp in a patch). */
+    private static final float BACKDROP_SCALE = 3f;
     private static final float MIN_FONT_SIZE = 1f;
     private static final float MAX_FONT_SIZE = 500f;
     private static final float MAX_OFFSET = 10_000f;
@@ -230,7 +234,7 @@ public class TextEditService {
                 PDDocument out = new PDDocument()) {
             PDPage imported = out.importPage(src.getPage(pageIndex));
             if (!edits.isEmpty()) {
-                applyEdits(src, pageIndex, out, imported, edits, newFontCache(), "");
+                applyEdits(src, pdf, pageIndex, out, imported, edits, newFontCache(), "");
             }
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
             out.save(bos);
@@ -266,15 +270,17 @@ public class TextEditService {
      * @param fontScope distinguishes source documents sharing one {@link FontCache}: the same font
      *                  name in two documents can be two different embedded fonts
      */
-    public void applyEdits(PDDocument srcDoc, int pageIndex, PDDocument outDoc, PDPage outPage,
+    public void applyEdits(PDDocument srcDoc, byte[] srcPdf, int pageIndex, PDDocument outDoc, PDPage outPage,
             PageEdits edits, FontCache fonts, String fontScope) throws IOException {
         List<TextRun> allRuns = TextExtraction.extractRuns(srcDoc, pageIndex);
         RunPainter.PageGlyphs pageGlyphs = RunPainter.PageGlyphs.of(allRuns);
         PDRectangle crop = srcDoc.getPage(pageIndex).getCropBox();
-        // The page as it looks before any edit: what is behind each text box is read from it, so
-        // the cover-up matches a coloured table cell instead of showing up as a white patch.
+        // The page as it looks before any edit, and the same page without its text: comparing the two
+        // shows where the letters' ink is, and the second is what covers it - so the cover-up matches a
+        // coloured table cell, and leaves the table rules next to the text alone.
         BufferedImage backdrop = edits.runs().isEmpty() ? null
                 : new PDFRenderer(srcDoc).renderImage(pageIndex, BACKDROP_SCALE);
+        BufferedImage clean = backdrop == null ? null : textFree(srcPdf, pageIndex);
         try (PDPageContentStream cs = new PDPageContentStream(outDoc, outPage,
                 PDPageContentStream.AppendMode.APPEND, true, true)) {
             for (Map.Entry<Integer, RunEdit> entry : edits.runs().entrySet()) {
@@ -283,7 +289,7 @@ public class TextEditService {
                     continue;
                 }
                 applyRunEdit(cs, outDoc, allRuns, allRuns.get(runIndex), entry.getValue(), pageGlyphs, backdrop,
-                        crop, fonts, fontScope);
+                        clean, crop, fonts, fontScope);
             }
             for (AddedText box : edits.added()) {
                 drawAdded(cs, outDoc, box, fonts);
@@ -292,8 +298,8 @@ public class TextEditService {
     }
 
     private void applyRunEdit(PDPageContentStream cs, PDDocument outDoc, List<TextRun> allRuns, TextRun original,
-            RunEdit edit, RunPainter.PageGlyphs pageGlyphs, BufferedImage backdrop, PDRectangle crop,
-            FontCache fonts, String fontScope) throws IOException {
+            RunEdit edit, RunPainter.PageGlyphs pageGlyphs, BufferedImage backdrop, BufferedImage clean,
+            PDRectangle crop, FontCache fonts, String fontScope) throws IOException {
         // The white-out box is driven by fontSize, not the extracted glyph height: PDFBox's
         // per-glyph height proved unreliable across embedded fonts (e.g. ~5.97pt for text
         // rendered at ~8.3pt), leaving tall glyphs poking out above too-short boxes.
@@ -332,9 +338,15 @@ public class TextEditService {
         // drawn again where it now is.
         float coverX = original.x() - 1;
         float coverWidth = (edit.moved() ? original.width() : boxWidth) + 2;
-        cs.setNonStrokingColor(backgroundBehind(backdrop, crop, coverX, boxBottom, coverWidth, boxTop - boxBottom));
-        cs.addRect(coverX, boxBottom, coverWidth, boxTop - boxBottom);
-        cs.fill();
+        if (clean != null) {
+            TextCover.paint(cs, outDoc, backdrop, clean, crop, BACKDROP_SCALE, coverX, boxBottom, coverWidth,
+                    boxTop - boxBottom);
+        } else {
+            // The page could not be drawn without its text: a flat box in the most common colour behind it.
+            cs.setNonStrokingColor(backgroundBehind(backdrop, crop, coverX, boxBottom, coverWidth, boxTop - boxBottom));
+            cs.addRect(coverX, boxBottom, coverWidth, boxTop - boxBottom);
+            cs.fill();
+        }
 
         if (layout != null) {
             layout.draw(cs, original.y() + edit.dy(), edit.dx());
@@ -394,6 +406,16 @@ public class TextEditService {
                 drawLine(cs, styled, lines[i], box.x(), box.y() - i * box.fontSize() * LINE_SPACING,
                         box.fontSize(), colour);
             }
+        }
+    }
+
+    /** The page drawn without its text, or null when that is not possible (the cover then falls back to a flat box). */
+    private static BufferedImage textFree(byte[] pdf, int pageIndex) {
+        try {
+            return TextFreeRenderer.render(pdf, pageIndex, BACKDROP_SCALE);
+        } catch (IOException | RuntimeException e) {
+            log.warn("Could not draw page {} without its text, covering edits with a flat box: {}", pageIndex, e.toString());
+            return null;
         }
     }
 

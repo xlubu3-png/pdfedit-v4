@@ -57,8 +57,8 @@ public class PdfExportService {
 
                 PageEdits edits = store.pageEditsSnapshot(spec.documentId(), spec.pageIndex());
                 if (!edits.isEmpty()) {
-                    textEditService.applyEdits(source, spec.pageIndex(), output, imported, edits, fonts,
-                            spec.documentId());
+                    textEditService.applyEdits(source, store.getContent(spec.documentId()), spec.pageIndex(), output,
+                            imported, edits, fonts, spec.documentId());
                 }
                 if (spec.rotation() != 0) {
                     imported.setRotation((sourcePage.getRotation() + spec.rotation()) % 360);

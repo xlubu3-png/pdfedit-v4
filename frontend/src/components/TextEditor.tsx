@@ -12,12 +12,14 @@ import {
 } from '../api'
 import type { TextEditPayload } from '../api'
 import { fontBaseName, missingFontNames, reloadMessage } from '../fontHelp'
+import { editorTipSeen, markEditorTipSeen } from '../editorTip'
 import { foreignChars } from '../fontMix'
 import { History } from '../history'
 import { keyCode } from '../keys'
 import type { SnapTargets } from '../snap'
 import type { AddedText, FontChoice, PageItem, PageText, RunState, TextRun } from '../types'
 import { fitZoom, previewDpi, PX_PER_PT_AT_100, zoomStep } from '../zoom'
+import { HelpDialog } from './HelpDialog'
 import { MissingFontDialog } from './MissingFontDialog'
 import { StyleBar } from './StyleBar'
 import type { StyleView } from './StyleBar'
@@ -139,6 +141,9 @@ export function TextEditor({
   const [reloadToken, setReloadToken] = useState(0)
   const [fonts, setFonts] = useState<FontChoice[]>([])
   const [fontHelpOpen, setFontHelpOpen] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
+  /** The short how-to-use tip shows until it is closed once. */
+  const [tipOpen, setTipOpen] = useState(() => !editorTipSeen())
   const [fontsBusy, setFontsBusy] = useState(false)
   const [fontsMessage, setFontsMessage] = useState<string | null>(null)
   const [selected, setSelected] = useState<Selection>(null)
@@ -756,6 +761,15 @@ export function TextEditor({
       const ctrl = e.ctrlKey || e.metaKey
       const code = keyCode(e)
       if (el?.closest('.find-dialog')) return // the find dialog has its own keys
+      if (helpOpen || fontHelpOpen) {
+        // A help window is open: Esc closes it (and only it), the other keys wait.
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          setHelpOpen(false)
+          setFontHelpOpen(false)
+        }
+        return
+      }
 
       // Text typed into a box since it got focus keeps the browser's own text undo; the page-level
       // undo takes over as soon as there is nothing typed to take back.
@@ -833,6 +847,11 @@ export function TextEditor({
       }
       if (box || inField) return
 
+      if (!ctrl && !e.altKey && (e.key === '?' || (code === 'Slash' && e.shiftKey))) {
+        e.preventDefault()
+        setHelpOpen(true)
+        return
+      }
       if (ctrl && !e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
         e.preventDefault()
         void navigate(e.key === 'ArrowLeft' ? -1 : 1)
@@ -918,6 +937,9 @@ export function TextEditor({
             ▶
           </button>
         </span>
+        <button type="button" className="te-help-button" onClick={() => setHelpOpen(true)} title="사용 방법과 단축키 (?)">
+          ? 도움말
+        </button>
         <details className="te-more">
           <summary title="더 보기">⋯</summary>
           <div className="te-menu" onClick={(e) => e.currentTarget.parentElement?.removeAttribute('open')}>
@@ -961,6 +983,29 @@ export function TextEditor({
           onZoomOut={() => changeZoom(-1)}
           onZoomFit={() => setZoomMode('fit')}
         />
+      )}
+
+      {tipOpen && editable && (
+        <div className="te-tip" role="note">
+          <span>
+            <b>사용 방법</b> 클릭 = 선택 · 한 번 더 클릭 또는 Enter = 글자 수정 · 끌기 = 이동 · 위쪽 막대 = 글꼴·크기·굵기·색 ·{' '}
+            <kbd>?</kbd> = 도움말과 단축키
+          </span>
+          <button type="button" onClick={() => setHelpOpen(true)}>
+            도움말 보기
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              markEditorTipSeen()
+              setTipOpen(false)
+            }}
+            aria-label="안내 닫기 (다시 보지 않기)"
+            title="닫으면 다시 나타나지 않습니다. 도움말은 위쪽 ? 버튼에서 볼 수 있습니다"
+          >
+            ✕
+          </button>
+        </div>
       )}
 
       {error && (
@@ -1082,16 +1127,7 @@ export function TextEditor({
           없애려면 내보낼 때 ‘이미지로 변환’을 켜세요.
         </p>
       )}
-      <p className="te-hint">
-        클릭하면 선택되고, 한 번 더 클릭하거나 더블클릭·Enter로 글자를 고칩니다. 상자를 끌거나 방향키로 옮기면 다른 줄에 정렬선이
-        붙습니다. 위쪽 막대에서 글꼴·크기·굵기·색을 바꿉니다. 수정한 부분은 원래 배경색으로 덮은 뒤 다시 그리는 방식이라 원본 글꼴이
-        완벽히 재현되지 않을 수 있습니다.
-      </p>
-      <p className="te-hint te-keys">
-        <b>단축키</b> Ctrl+Z 실행 취소 · Ctrl+Y 다시 실행 · Ctrl+S PDF 내보내기 · Ctrl+Shift+S 수정 반영 · Ctrl+C/V 줄 복사·붙여넣기 ·
-        Ctrl+D 복제 · Ctrl+F 찾아 바꾸기 · Ctrl+±/0 확대·축소·폭 맞춤 · Esc 단계별 빠져나오기 · T 텍스트 추가 · Delete 삭제 · 방향키 이동
-        (Shift는 10배) · Ctrl+B 굵게 · Ctrl+] / [ 글자 크기 · Ctrl+←/→ 이전/다음 페이지
-      </p>
+      {helpOpen && <HelpDialog onClose={() => setHelpOpen(false)} />}
       {fontHelpOpen && (
         <MissingFontDialog
           fonts={missingFonts}

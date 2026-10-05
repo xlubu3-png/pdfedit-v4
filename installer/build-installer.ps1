@@ -20,7 +20,7 @@ $dist = Join-Path $PSScriptRoot 'dist'
 # the installed one is refused as a downgrade - the v1 installer was 1.0.1 - so Windows is told
 # 1.0.<version * 1000>: 0.035 -> 1.0.35, 0.036 -> 1.0.36, 0.100 -> 1.0.100.
 $yml = Get-Content (Join-Path $backend 'src\main\resources\application.yml') -Raw
-$appVersion = [regex]::Match($yml, '(?m)^\s*version:\s*([0-9.]+)').Groups[1].Value
+$appVersion = [regex]::Match($yml, '(?m)^\s*version:\s*"?([0-9.]+)').Groups[1].Value
 if (-not $appVersion) { throw 'app.version not found in application.yml' }
 $build = [int]([decimal]::Parse($appVersion, [Globalization.CultureInfo]::InvariantCulture) * 1000)
 $windowsVersion = "1.0.$build"

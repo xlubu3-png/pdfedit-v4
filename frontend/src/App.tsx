@@ -3,6 +3,7 @@ import './App.css'
 import { createBlankDocument, deleteDocument, exportPdf, fetchAppInfo, fetchDocumentInfo, uploadDocument } from './api'
 import { exportFileName } from './exportName'
 import { keyCode } from './keys'
+import { dragHasFiles, pickPdfs } from './pdfFiles'
 import { clearSession, loadSession, saveSession } from './session'
 import { FindReplaceDialog } from './components/FindReplaceDialog'
 import { PageGrid } from './components/PageGrid'
@@ -90,10 +91,18 @@ function App() {
   }, [pages, restored])
 
   async function handleFiles(files: File[]) {
+    const { pdfs, skipped } = pickPdfs(files)
+    const problems: string[] = []
+    if (skipped.length > 0) problems.push(`PDF가 아니라서 건너뛴 파일: ${skipped.join(', ')}`)
+    if (pdfs.length === 0) {
+      setError(problems.join('\n') || null)
+      return
+    }
     setBusy(true)
     setError(null)
-    try {
-      for (const file of files) {
+    // One bad file must not keep the others from being opened.
+    for (const file of pdfs) {
+      try {
         const uploaded = await uploadDocument(file)
         const newPages: PageItem[] = Array.from({ length: uploaded.pageCount }, (_, i) => ({
           key: `${uploaded.documentId}-${i}`,
@@ -104,13 +113,40 @@ function App() {
           textRevision: 0,
         }))
         setPages((prev) => [...prev, ...newPages])
+      } catch (e) {
+        problems.push(e instanceof Error ? e.message : `업로드 중 오류가 발생했습니다: ${file.name}`)
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '업로드 중 오류가 발생했습니다')
-    } finally {
-      setBusy(false)
     }
+    setError(problems.length > 0 ? problems.join('\n') : null)
+    setBusy(false)
   }
+
+  /**
+   * A PDF dropped anywhere on the window is opened like one dropped on the upload box; without this the
+   * browser would navigate away to show the file and the work in progress would look lost.
+   */
+  const filesDropped = useRef<(files: File[]) => void>(() => {})
+  useEffect(() => {
+    filesDropped.current = (files) => {
+      if (editingKey === null && !busy) void handleFiles(files)
+    }
+  })
+  useEffect(() => {
+    const over = (e: DragEvent) => {
+      if (dragHasFiles(e.dataTransfer?.types)) e.preventDefault()
+    }
+    const drop = (e: DragEvent) => {
+      if (e.defaultPrevented || !dragHasFiles(e.dataTransfer?.types)) return
+      e.preventDefault()
+      filesDropped.current(Array.from(e.dataTransfer?.files ?? []))
+    }
+    window.addEventListener('dragover', over)
+    window.addEventListener('drop', drop)
+    return () => {
+      window.removeEventListener('dragover', over)
+      window.removeEventListener('drop', drop)
+    }
+  }, [])
 
   function handleRotate(key: string, delta: 90 | -90) {
     setPages((prev) => prev.map((p) => (p.key === key ? rotate(p, delta) : p)))

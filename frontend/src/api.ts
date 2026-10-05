@@ -36,7 +36,7 @@ export async function uploadDocument(file: File): Promise<UploadResponse> {
     body: formData,
   })
   if (!response.ok) {
-    throw new ApiError(`업로드 실패: ${file.name} (${response.status})`, response.status)
+    throw await failure(response, `업로드 실패: ${file.name}`)
   }
   return response.json()
 }

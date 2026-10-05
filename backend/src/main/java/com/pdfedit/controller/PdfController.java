@@ -5,6 +5,7 @@ import java.io.IOException;
 
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.encryption.InvalidPasswordException;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.springframework.http.HttpHeaders;
@@ -22,6 +23,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import com.pdfedit.dto.ExportRequest;
 import com.pdfedit.dto.UploadResponse;
+import com.pdfedit.service.InvalidEditException;
 import com.pdfedit.service.PageEdits;
 import com.pdfedit.service.PageRotationBaker;
 import com.pdfedit.service.PdfDocumentStore;
@@ -32,6 +34,9 @@ import com.pdfedit.service.TextEditService;
 @RestController
 @RequestMapping("/api/v1/pdf")
 public class PdfController {
+
+    private static final int MIN_THUMBNAIL_WIDTH = 16;
+    private static final int MAX_THUMBNAIL_WIDTH = 2000;
 
     private final PdfDocumentStore store;
     private final PdfThumbnailService thumbnailService;
@@ -53,11 +58,21 @@ public class PdfController {
 
     @PostMapping(value = "/documents", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public UploadResponse upload(@RequestParam("file") MultipartFile file) throws IOException {
-        // Pages that carry a /Rotate are turned into unrotated ones once, here, so editing never has to care.
-        byte[] content = PageRotationBaker.bake(file.getBytes());
+        byte[] content;
         int pageCount;
-        try (PDDocument document = Loader.loadPDF(content)) {
-            pageCount = document.getNumberOfPages();
+        try {
+            // Pages that carry a /Rotate are turned into unrotated ones once, here, so editing never has to care.
+            content = PageRotationBaker.bake(file.getBytes());
+            try (PDDocument document = Loader.loadPDF(content)) {
+                pageCount = document.getNumberOfPages();
+            }
+        } catch (InvalidPasswordException e) {
+            throw new InvalidEditException("암호가 걸린 PDF는 열 수 없습니다. 암호를 해제한 파일을 올려 주세요.");
+        } catch (IOException e) {
+            throw new InvalidEditException("PDF 파일이 아니거나 손상되어 열 수 없습니다.");
+        }
+        if (pageCount == 0) {
+            throw new InvalidEditException("페이지가 없는 PDF입니다.");
         }
         String documentId = store.store(file.getOriginalFilename(), content, pageCount);
         return new UploadResponse(documentId, file.getOriginalFilename(), pageCount);
@@ -95,20 +110,25 @@ public class PdfController {
     @GetMapping(value = "/documents/{documentId}/pages/{pageIndex}/thumbnail", produces = MediaType.IMAGE_PNG_VALUE)
     public byte[] thumbnail(@PathVariable String documentId, @PathVariable int pageIndex,
             @RequestParam(defaultValue = "240") int width) throws IOException {
+        // A picture of absurd size would exhaust memory; the page list never asks for more than a few hundred.
+        int shown = Math.max(MIN_THUMBNAIL_WIDTH, Math.min(MAX_THUMBNAIL_WIDTH, width));
         byte[] content = store.getContent(documentId);
         PageEdits edits = store.pageEditsSnapshot(documentId, pageIndex);
         if (edits.isEmpty()) {
-            return thumbnailService.renderPage(content, pageIndex, width);
+            return thumbnailService.renderPage(content, pageIndex, shown);
         }
-        return thumbnailService.renderPage(textEditService.buildSinglePage(content, pageIndex, edits), 0, width);
+        return thumbnailService.renderPage(textEditService.buildSinglePage(content, pageIndex, edits), 0, shown);
     }
 
     @PostMapping("/export")
     public ResponseEntity<byte[]> export(@RequestBody ExportRequest request) throws IOException {
+        if (request.pages() == null || request.pages().isEmpty()) {
+            throw new InvalidEditException("내보낼 페이지가 없습니다.");
+        }
         byte[] result = exportService.export(request.pages(), Boolean.TRUE.equals(request.flatten()));
-        String fileName = (request.fileName() == null || request.fileName().isBlank())
-                ? "edited.pdf"
-                : request.fileName();
+        // Quotes, backslashes and control characters would break out of the header's quoted file name.
+        String requested = request.fileName() == null ? "" : request.fileName().replaceAll("[\\p{Cntrl}\"\\\\]", "_").trim();
+        String fileName = requested.isEmpty() ? "edited.pdf" : requested;
 
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")

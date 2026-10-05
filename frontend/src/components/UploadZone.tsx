@@ -13,7 +13,7 @@ export function UploadZone({ onFiles, busy }: UploadZoneProps) {
   function handleDrop(e: DragEvent<HTMLDivElement>) {
     e.preventDefault()
     setIsDragOver(false)
-    const files = Array.from(e.dataTransfer.files).filter((f) => f.type === 'application/pdf')
+    const files = Array.from(e.dataTransfer.files)
     if (files.length > 0) onFiles(files)
   }
 

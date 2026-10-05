@@ -261,8 +261,9 @@ export function RunBox({
         onClick={() => {
           if (!editing && !drag.consumeClick() && selectedAtPress.current) onStartEdit()
         }}
+        // Always keep what was typed when the focus leaves: a click on the page turns "editing" off
+        // *before* the browser moves the focus, so the blur arrives when `editing` is already false.
         onBlur={(e) => {
-          if (!editing) return
           onCommitText(run, e.currentTarget.textContent ?? '')
           onStopEdit()
         }}
@@ -389,8 +390,8 @@ export function AddedBox({
         onClick={() => {
           if (!editing && !drag.consumeClick() && selectedAtPress.current) onStartEdit()
         }}
+        // Always keep what was typed when the focus leaves (see RunBox: `editing` may already be false).
         onBlur={(e) => {
-          if (!editing) return
           onCommitText(box, e.currentTarget.textContent ?? '', e.relatedTarget as Element | null)
           onStopEdit()
         }}

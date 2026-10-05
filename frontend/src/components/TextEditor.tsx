@@ -536,6 +536,9 @@ export function TextEditor({
       setAdding(false)
       return
     }
+    // Finish typing first, so the text of the box that is being left is kept, then drop the selection.
+    const active = document.activeElement
+    if (active instanceof HTMLElement && active.closest('[data-index], [data-added]')) active.blur()
     setSelected(null)
     setEditing(null)
     putAdded(addedRef.current.filter(nonEmpty))

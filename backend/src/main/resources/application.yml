@@ -2,7 +2,7 @@
 
 # Shown in the UI. Raise it by 0.001 with every change to the app.
 app:
-  version: 0.043
+  version: 0.044
   # Uploaded documents and their edits are kept here, so they survive a restart of the app.
   # PDFEDIT_DATA_DIR moves it (Docker: a mounted volume); documents untouched for this many days are deleted.
   data-dir: ${PDFEDIT_DATA_DIR:${user.home}/WINTECH_PDF/data}
@@ -14,6 +14,14 @@ app:
 spring:
   application:
     name: pdfedit-v2-backend
+  web:
+    resources:
+      cache:
+        cachecontrol:
+          # The page's files are checked with the server on every load (a cheap "not modified" answer
+          # when nothing changed). Without this the browser may keep showing the previous version's
+          # screen for hours after the app was updated.
+          no-cache: true
   servlet:
     multipart:
       max-file-size: 100MB

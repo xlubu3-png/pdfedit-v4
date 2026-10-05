@@ -4,6 +4,17 @@ export interface AppInfo {
   installedFonts: number
 }
 
+/** Whether a newer version of the app is published; `enabled` is false outside the installed app. */
+export interface UpdateInfo {
+  enabled: boolean
+  current: string
+  latest: string | null
+  newer: boolean
+  releaseUrl: string | null
+  notes: string | null
+  error: string | null
+}
+
 export interface UploadResponse {
   documentId: string
   fileName: string

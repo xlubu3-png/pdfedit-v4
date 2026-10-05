@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import com.pdfedit.service.InvalidEditException;
 import com.pdfedit.service.PageNotEditableException;
+import com.pdfedit.service.UpdateFailedException;
 import com.pdfedit.text.FontUnavailableException;
 
 @RestControllerAdvice
@@ -32,6 +33,11 @@ public class ApiExceptionHandler {
     @ExceptionHandler(InvalidEditException.class)
     public ResponseEntity<String> handleInvalidEdit(InvalidEditException e) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(e.getMessage());
+    }
+
+    @ExceptionHandler(UpdateFailedException.class)
+    public ResponseEntity<String> handleUpdateFailed(UpdateFailedException e) {
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(e.getMessage());
     }
 
     @ExceptionHandler(PageNotEditableException.class)

@@ -6,6 +6,7 @@ import type {
   PageItem,
   PageText,
   ReplaceResult,
+  UpdateInfo,
   UploadResponse,
 } from './types'
 
@@ -74,6 +75,30 @@ export async function fetchAppInfo(): Promise<AppInfo> {
     throw await failure(response, '앱 정보를 불러오지 못했습니다')
   }
   return response.json()
+}
+
+/** Whether a newer version is published. `refresh` asks GitHub again instead of using an answer from hours ago. */
+export async function fetchUpdate(refresh = false): Promise<UpdateInfo> {
+  const response = await fetch(`${BASE}/update?refresh=${refresh}`)
+  if (!response.ok) {
+    throw await failure(response, '업데이트를 확인하지 못했습니다')
+  }
+  return response.json()
+}
+
+/**
+ * Has the app download the newest version and start its installer; the app quits a moment after
+ * answering. The marker header is what tells the server that the request comes from this page.
+ */
+export async function installUpdate(): Promise<string> {
+  const response = await fetch(`${BASE}/update/install`, {
+    method: 'POST',
+    headers: { 'X-Requested-With': 'WINTECH_PDF' },
+  })
+  if (!response.ok) {
+    throw await failure(response, '업데이트하지 못했습니다')
+  }
+  return response.text()
 }
 
 /** Has the server read the font folders again, for a font installed while the app runs; the new font count. */

@@ -60,7 +60,13 @@ public class FontMatcher {
         if (font instanceof PDType3Font) {
             return typefaceChooser.choose(font, page.samples(font));
         }
-        return guess(font.getName(), font);
+        Match byName = guess(font.getName(), font);
+        if (nameTellsFamily(font.getName())) {
+            return byName;
+        }
+        // The name says nothing ("HYwulM"): a heavy title font would otherwise be redrawn in the
+        // default regular sans, so judge it by the look of its glyphs like a Type 3 font.
+        return typefaceChooser.judge(font, page.samples(font)).orElse(byName);
     }
 
     /** A match for an explicit style, used when comparing candidate fonts. */
@@ -195,31 +201,47 @@ public class FontMatcher {
         boolean bold = lower.contains("bold") || lower.contains("black") || lower.contains("heavy")
                 || isBold(sourceFont);
 
-        String family;
+        String family = familyByName(name);
+        return new Match(family != null ? family : "맑은 고딕", bold);
+    }
+
+    /** The family a font name points to, or null when the name says nothing (e.g. "HYwulM", "T1"). */
+    private static String familyByName(String name) {
+        String lower = name.toLowerCase(Locale.ROOT);
         if (lower.contains("batang")) {
-            family = "Batang";
+            return "Batang";
         } else if (lower.contains("gungsuh")) {
-            family = "Gungsuh";
+            return "Gungsuh";
         } else if (lower.contains("dotum")) {
-            family = "Dotum";
+            return "Dotum";
         } else if (lower.contains("gulim")) {
-            family = "Gulim";
+            return "Gulim";
         } else if (lower.contains("malgun")) {
-            family = "맑은 고딕";
+            return "맑은 고딕";
         } else if (lower.contains("nanum")) {
-            family = lower.contains("myeongjo") ? "나눔명조" : "나눔고딕";
+            return lower.contains("myeongjo") ? "나눔명조" : "나눔고딕";
         } else if (name.contains("휴먼명조")) {
-            family = "휴먼명조";
+            return "휴먼명조";
         } else if (name.contains("휴먼고딕")) {
-            family = "휴먼고딕";
+            return "휴먼고딕";
         } else if (name.contains("명조")) {
             // Other Korean-named serif fonts (e.g. "HY신명조") never match the Latin keywords
             // above: HWP-generated PDFs embed fonts under their literal Korean names.
-            family = "나눔명조";
-        } else {
-            family = "맑은 고딕";
+            return "나눔명조";
         }
-        return new Match(family, bold);
+        return null;
+    }
+
+    private static boolean nameTellsFamily(String pdfFontName) {
+        if (pdfFontName == null) {
+            return false;
+        }
+        String name = pdfFontName;
+        int plus = name.indexOf('+');
+        if (plus >= 0 && plus <= 8) {
+            name = name.substring(plus + 1);
+        }
+        return familyByName(name) != null;
     }
 
     /**

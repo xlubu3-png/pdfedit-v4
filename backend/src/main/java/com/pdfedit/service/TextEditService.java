@@ -116,7 +116,8 @@ public class TextEditService {
                             existing == null ? null : existing.fontSize(),
                             existing == null ? null : existing.bold(),
                             existing == null ? null : existing.color(),
-                            existing == null ? 0f : existing.dx(), existing == null ? 0f : existing.dy()));
+                            existing == null ? 0f : existing.dx(), existing == null ? 0f : existing.dy(),
+                            pageGlyphs.charsOf(run)));
                 }
             }
             return new PageTextDto(crop.getWidth(), crop.getHeight(), crop.getLowerLeftX(),

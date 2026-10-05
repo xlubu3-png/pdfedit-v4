@@ -23,6 +23,7 @@ const run: TextRun = {
   sourceFont: 'Helvetica',
   color: '#000000',
   glyphReuse: true,
+  ownChars: '',
   editFontFamily: null,
   editFontSize: null,
   editBold: null,

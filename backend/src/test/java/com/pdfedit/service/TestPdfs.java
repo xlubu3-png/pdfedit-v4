@@ -59,6 +59,34 @@ public final class TestPdfs {
     }
 
     /**
+     * A 20pt Korean line in a subset-embedded font whose name says nothing about its weight or style
+     * ("HYwulM"-like), drawn in the bold or the regular face of the installed sans font.
+     */
+    static byte[] nameLessSubsetLine(String text, boolean bold) throws IOException {
+        try (PDDocument doc = new PDDocument()) {
+            PDPage page = new PDPage(PDRectangle.A4);
+            doc.addPage(page);
+            PDType0Font font;
+            try (InputStream is = koreanFont(bold).openStandalone()) {
+                font = PDType0Font.load(doc, is, true);
+            }
+            font.getCOSObject().setName(COSName.BASE_FONT, "ABCDEF+HYwulM");
+            font.getDescendantFont().getCOSObject().setName(COSName.BASE_FONT, "ABCDEF+HYwulM");
+            font.getDescendantFont().getFontDescriptor().setFontName("ABCDEF+HYwulM");
+            try (PDPageContentStream cs = new PDPageContentStream(doc, page)) {
+                cs.beginText();
+                cs.setFont(font, 20);
+                cs.newLineAtOffset(50, 700);
+                cs.showText(text);
+                cs.endText();
+            }
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            doc.save(out);
+            return out.toByteArray();
+        }
+    }
+
+    /**
      * Pixels (out of ~2 million at 2x) that may differ between two renderings of the same text:
      * glyphs placed one by one land a float rounding away from glyphs placed by a single Tj.
      */

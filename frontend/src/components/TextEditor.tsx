@@ -10,6 +10,7 @@ import {
   saveTextEdits,
 } from '../api'
 import type { TextEditPayload } from '../api'
+import { foreignChars } from '../fontMix'
 import { History } from '../history'
 import { keyCode } from '../keys'
 import type { SnapTargets } from '../snap'
@@ -447,6 +448,17 @@ export function TextEditor({
     scheduleSave()
   }
 
+  /**
+   * Redraws the selected line entirely in the installed font that stands in for its own font, so
+   * characters the page font lacks no longer stand out from the ones it has.
+   */
+  function unifySelectedRun() {
+    const current = dataRef.current
+    if (selected?.kind !== 'run' || !current) return
+    const family = installedFamily(current.runs[selected.index].fontFamily)
+    if (family) patchSelected({ fontFamily: family })
+  }
+
   /** The installed family a line's CSS family stands for, if this PC has it (a pasted line is drawn in it). */
   function installedFamily(name: string | null): string | null {
     if (!name) return null
@@ -668,6 +680,7 @@ export function TextEditor({
       color: s?.color ?? run.color,
       canReset: s !== undefined,
       look: s === undefined ? null : !restyled && run.glyphReuse ? 'original' : 'substitute',
+      mixedChars: s !== undefined && !restyled && run.glyphReuse ? foreignChars(s.text, run.ownChars) : '',
     }
   } else if (selected?.kind === 'added') {
     const box = added.find((b) => b.id === selected.id)
@@ -683,6 +696,7 @@ export function TextEditor({
         color: box.color ?? '#000000',
         canReset: false,
         look: null,
+        mixedChars: '',
       }
     }
   }
@@ -898,6 +912,7 @@ export function TextEditor({
           onBold={(bold) => patchSelected({ bold })}
           onColor={(color) => patchSelected({ color })}
           onReset={resetSelectedRun}
+          onUnify={unifySelectedRun}
           onDelete={() => selected?.kind === 'added' && removeAdded(selected.id)}
           onDuplicate={duplicateSelection}
           zoom={zoom}

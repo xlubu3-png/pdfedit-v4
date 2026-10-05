@@ -14,6 +14,7 @@ import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDFont;
+import org.apache.pdfbox.pdmodel.font.PDType0Font;
 import org.apache.pdfbox.rendering.PDFRenderer;
 
 /**
@@ -42,9 +43,13 @@ final class TypefaceChooser {
 
     /** @param samples characters the font draws, as unicode to glyph code */
     FontMatcher.Match choose(PDFont font, List<Map.Entry<String, Integer>> samples) {
-        FontMatcher.Match fallback = fontMatcher.match(false, false);
+        return judge(font, samples).orElseGet(() -> fontMatcher.match(false, false));
+    }
+
+    /** Like {@link #choose}, but empty when the glyphs could not be compared at all. */
+    Optional<FontMatcher.Match> judge(PDFont font, List<Map.Entry<String, Integer>> samples) {
         if (samples.isEmpty()) {
-            return fallback;
+            return Optional.empty();
         }
         try {
             List<boolean[]> reference = new ArrayList<>();
@@ -57,15 +62,15 @@ final class TypefaceChooser {
                 }
             }
             if (reference.isEmpty()) {
-                return fallback;
+                return Optional.empty();
             }
             int key = Arrays.deepHashCode(reference.toArray());
             FontMatcher.Match cached = CACHE.get(key);
             if (cached != null) {
-                return cached;
+                return Optional.of(cached);
             }
 
-            FontMatcher.Match best = fallback;
+            FontMatcher.Match best = null;
             double bestScore = -1;
             for (boolean serif : new boolean[] {false, true}) {
                 for (boolean bold : new boolean[] {false, true}) {
@@ -86,10 +91,13 @@ final class TypefaceChooser {
                     }
                 }
             }
+            if (best == null) {
+                return Optional.empty();
+            }
             CACHE.put(key, best);
-            return best;
+            return Optional.of(best);
         } catch (IOException | RuntimeException e) {
-            return fallback;
+            return Optional.empty();
         }
     }
 
@@ -101,7 +109,7 @@ final class TypefaceChooser {
                 cs.beginText();
                 cs.setFont(font, SIZE);
                 cs.newLineAtOffset(14, 22);
-                cs.appendRawCommands(String.format("<%02X> Tj\n", code));
+                cs.appendRawCommands(String.format(font instanceof PDType0Font ? "<%04X> Tj\n" : "<%02X> Tj\n", code));
                 cs.endText();
             }
             return new PDFRenderer(doc).renderImage(0, 1f);

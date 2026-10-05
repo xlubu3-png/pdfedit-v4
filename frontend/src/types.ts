@@ -41,6 +41,8 @@ export interface TextRun {
   color: string
   /** An edit that only changes the text can keep the page's own glyphs (the original look). */
   glyphReuse: boolean
+  /** Characters this line's own fonts draw on the page; a typed character outside them gets another font. */
+  ownChars: string
   /** What the user chose for this line so far; null means "as the original". */
   editFontFamily: string | null
   editFontSize: number | null

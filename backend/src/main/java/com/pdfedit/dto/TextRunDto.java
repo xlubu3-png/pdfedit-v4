@@ -12,11 +12,13 @@ package com.pdfedit.dto;
  *                       (the original look is kept); false when the line has to be redrawn in an installed font
  * @param editFontFamily the user's font choice for this run, or null; likewise the other {@code edit*}
  *                       fields, and {@code dx}/{@code dy} for how far the run was moved (points, y up)
+ * @param ownChars       the characters this run's own fonts already draw on the page; a typed character
+ *                       outside them cannot take the original glyph and is drawn in an installed font
  */
 public record TextRunDto(int index, String text, String currentText, boolean edited,
                          float x, float y, float width, float height, float fontSize,
                          float boxBottom, float boxTop, String fontFamily, boolean bold,
                          String sourceFont, String color, boolean glyphReuse,
                          String editFontFamily, Float editFontSize, Boolean editBold, String editColor,
-                         float dx, float dy) {
+                         float dx, float dy, String ownChars) {
 }

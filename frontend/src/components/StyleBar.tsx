@@ -22,6 +22,8 @@ export interface StyleView {
    * line in an installed font. Null for a line that was not touched.
    */
   look: 'original' | 'substitute' | null
+  /** Typed characters the page's own font lacks: they are drawn in another font, so the line can look mixed. */
+  mixedChars: string
 }
 
 interface StyleBarProps {
@@ -32,6 +34,8 @@ interface StyleBarProps {
   onBold: (bold: boolean) => void
   onColor: (color: string) => void
   onReset: () => void
+  /** Draws the whole line in one installed font, so no character looks different from its neighbours. */
+  onUnify: () => void
   onDelete: () => void
   onDuplicate: () => void
   /** Zoom as a factor (1 = 100%). */
@@ -52,6 +56,7 @@ export function StyleBar({
   onBold,
   onColor,
   onReset,
+  onUnify,
   onDelete,
   onDuplicate,
   zoom,
@@ -75,6 +80,14 @@ export function StyleBar({
             {view.look === 'original' && (
               <span className="te-look ok" title="바꾼 글자도 이 페이지의 원래 글리프로 그려서 모양이 그대로입니다">
                 원본 글꼴 유지
+              </span>
+            )}
+            {view.mixedChars && (
+              <span
+                className="te-look warn"
+                title={`'${view.mixedChars}' 글자는 원본 글꼴에 없어 대체 글꼴로 그려지므로 나머지 글자와 모양이 다를 수 있습니다`}
+              >
+                글꼴 섞임: '{view.mixedChars.length > 6 ? `${view.mixedChars.slice(0, 6)}…` : view.mixedChars}'
               </span>
             )}
             {view.look === 'substitute' && (
@@ -143,6 +156,17 @@ export function StyleBar({
       <button type="button" disabled={disabled} onClick={onDuplicate} title="복제 (Ctrl+D)" {...keepFocus}>
         복제
       </button>
+      {view?.kind === 'run' && view.mixedChars && (
+        <button
+          type="button"
+          className="te-unify"
+          onClick={onUnify}
+          title="이 줄 전체를 한 가지 대체 글꼴로 다시 그려 글자 모양을 통일합니다"
+          {...keepFocus}
+        >
+          줄 전체 글꼴 통일
+        </button>
+      )}
       {view?.kind === 'run' && (
         <button type="button" disabled={!view.canReset} onClick={onReset} {...keepFocus}>
           원위치

@@ -43,6 +43,23 @@ class TextEditServiceTest {
     }
 
     @Test
+    void aFontWhoseNameSaysNothingIsJudgedByTheLookOfItsGlyphs() throws IOException {
+        TextRunDto heavy = service.describePage(TestPdfs.nameLessSubsetLine("제5장 부록", true), 0, Map.of()).runs().get(0);
+        TextRunDto light = service.describePage(TestPdfs.nameLessSubsetLine("제5장 부록", false), 0, Map.of()).runs().get(0);
+
+        assertThat(heavy.sourceFont()).contains("HYwulM");
+        assertThat(heavy.bold()).isTrue();
+        assertThat(light.bold()).isFalse();
+    }
+
+    @Test
+    void aRunReportsTheCharactersItsOwnFontDraws() throws IOException {
+        TextRunDto run = service.describePage(TestPdfs.nameLessSubsetLine("제5장 부록", false), 0, Map.of()).runs().get(0);
+
+        assertThat(run.ownChars()).contains("제", "5", "장", "부", "록").doesNotContain("가");
+    }
+
+    @Test
     void recordEditsKeepsChangedTextAndDropsRevertedOrOutOfRangeItems() throws IOException {
         byte[] pdf = TestPdfs.koreanPage();
         TextRunDto helloRun = run(service.describePage(pdf, 0, Map.of()), "Hello World");

@@ -2,11 +2,13 @@ package com.pdfedit.text;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import org.apache.pdfbox.cos.COSDictionary;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -46,6 +48,19 @@ public final class RunPainter {
                 }
             }
             return page;
+        }
+
+        /** Every character that any font used by {@code run} draws on this page, as one string. */
+        public String charsOf(TextRun run) {
+            Set<COSDictionary> fonts = Collections.newSetFromMap(new IdentityHashMap<>());
+            StringBuilder chars = new StringBuilder();
+            for (Glyph glyph : run.glyphs()) {
+                COSDictionary font = glyph.font().getCOSObject();
+                if (fonts.add(font)) {
+                    codes.getOrDefault(font, Map.of()).keySet().forEach(chars::append);
+                }
+            }
+            return chars.toString();
         }
 
         Integer codeFor(PDFont font, String unicode) {

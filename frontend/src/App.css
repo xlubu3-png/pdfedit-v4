@@ -782,6 +782,34 @@ button.primary:disabled {
   font-size: 11px;
 }
 
+/* A newer version of the app is available. */
+.update-banner {
+  background: #eaf7ee;
+  border-color: #9fd3ae;
+}
+
+.update-banner button {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text-h);
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.update-banner button.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.update-banner button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
 /* Fonts the PC lacks, and reading the installed fonts again. */
 .link-button {
   padding: 0 2px;

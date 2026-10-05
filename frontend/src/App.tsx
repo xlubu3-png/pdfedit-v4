@@ -6,6 +6,8 @@ import {
   exportPdf,
   fetchAppInfo,
   fetchDocumentInfo,
+  fetchUpdate,
+  installUpdate,
   reloadFonts,
   uploadDocument,
 } from './api'
@@ -14,12 +16,14 @@ import { exportFileName } from './exportName'
 import { keyCode } from './keys'
 import { dragHasFiles, pickPdfs } from './pdfFiles'
 import { clearSession, loadSession, saveSession } from './session'
+import { readSkippedVersion, shouldAnnounce, skipVersion } from './updateNotice'
 import { FindReplaceDialog } from './components/FindReplaceDialog'
+import { UpdateBanner } from './components/UpdateBanner'
 import { PageGrid } from './components/PageGrid'
 import { TextEditor } from './components/TextEditor'
 import { UploadZone } from './components/UploadZone'
 import { RotateLeftIcon, RotateRightIcon } from './components/icons'
-import type { AppInfo, PageItem, ReplaceResult } from './types'
+import type { AppInfo, PageItem, ReplaceResult, UpdateInfo } from './types'
 
 function downloadBlob(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob)
@@ -52,6 +56,19 @@ function App() {
   const [restoredNote, setRestoredNote] = useState<string | null>(null)
   const [fontsNote, setFontsNote] = useState<string | null>(null)
   const hadPages = useRef(false)
+  /** The newest published version (null until the check answered, or when updating is off). */
+  const [update, setUpdate] = useState<UpdateInfo | null>(null)
+  const [updateState, setUpdateState] = useState<'idle' | 'installing' | 'launched'>('idle')
+  const [skippedVersion, setSkippedVersion] = useState<string | null>(readSkippedVersion)
+  const [updateChecking, setUpdateChecking] = useState(false)
+  const [updateNote, setUpdateNote] = useState<string | null>(null)
+
+  // Looked up once at start; the server remembers the answer for a few hours, so this costs nothing.
+  useEffect(() => {
+    fetchUpdate(false)
+      .then(setUpdate)
+      .catch(() => setUpdate(null))
+  }, [])
 
   useEffect(() => {
     fetchAppInfo()
@@ -312,6 +329,51 @@ function App() {
     }
   }
 
+  /** The "업데이트 확인" link: asks GitHub again, and says so when this is already the newest version. */
+  async function handleCheckUpdate() {
+    if (updateChecking) return
+    setUpdateChecking(true)
+    setUpdateNote(null)
+    try {
+      const result = await fetchUpdate(true)
+      setUpdate(result)
+      if (result.newer) {
+        skipVersion('') // asked for it: show the notice even for a version skipped before
+        setSkippedVersion(null)
+      } else if (result.error) {
+        setUpdateNote(result.error)
+      } else {
+        setUpdateNote(`최신 버전입니다 (v${result.current}).`)
+      }
+    } catch (e) {
+      setUpdateNote(e instanceof Error ? e.message : '업데이트를 확인하지 못했습니다')
+    } finally {
+      setUpdateChecking(false)
+    }
+  }
+
+  async function handleInstallUpdate() {
+    if (!update || updateState !== 'idle') return
+    const ok = window.confirm(
+      `v${update.latest} 업데이트를 내려받아 설치합니다.\n\n설치 프로그램이 열리고 이 앱은 종료됩니다. 작업 중인 문서는 저장되어 있어 다시 열면 이어집니다. Windows의 권한 확인 창이 뜨면 '예'를 눌러 주세요.\n\n계속할까요?`,
+    )
+    if (!ok) return
+    setUpdateState('installing')
+    try {
+      await installUpdate()
+      setUpdateState('launched')
+    } catch (e) {
+      setUpdateState('idle')
+      setError(e instanceof Error ? e.message : '업데이트하지 못했습니다')
+    }
+  }
+
+  function handleSkipUpdate() {
+    if (!update?.latest) return
+    skipVersion(update.latest)
+    setSkippedVersion(update.latest)
+  }
+
   function handleStartOver() {
     if (!window.confirm('모든 페이지와 수정 내용을 지우고 새로 시작할까요? 저장된 문서 사본도 함께 삭제됩니다.')) return
     // The server keeps a copy of every uploaded file; starting over is the moment to remove them.
@@ -397,6 +459,20 @@ function App() {
               {fontsBusy ? '읽는 중…' : '⟳ 글꼴 다시 읽기'}
             </button>
           )}
+          {update?.enabled && (
+            <>
+              {' '}
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => void handleCheckUpdate()}
+                disabled={updateChecking}
+                title="새 버전이 있는지 GitHub에서 확인합니다"
+              >
+                {updateChecking ? '확인 중…' : '업데이트 확인'}
+              </button>
+            </>
+          )}
         </p>
       </header>
 
@@ -406,6 +482,19 @@ function App() {
         <div className="info-banner">
           <span>{restoredNote}</span>
           <button type="button" onClick={() => setRestoredNote(null)} aria-label="닫기">
+            ✕
+          </button>
+        </div>
+      )}
+
+      {update && (updateState === 'launched' || shouldAnnounce(update, skippedVersion)) && (
+        <UpdateBanner info={update} state={updateState} onInstall={handleInstallUpdate} onSkip={handleSkipUpdate} />
+      )}
+
+      {updateNote && (
+        <div className="info-banner">
+          <span>{updateNote}</span>
+          <button type="button" onClick={() => setUpdateNote(null)} aria-label="닫기">
             ✕
           </button>
         </div>

@@ -3,7 +3,7 @@
 # Shown in the UI. Raise it by 0.001 with every change to the app. Keep it in quotes: unquoted, YAML reads
 # 0.050 as the number 0.05 and the screen would show "v0.05".
 app:
-  version: "0.056"
+  version: "0.057"
   # Uploaded documents and their edits are kept here, so they survive a restart of the app.
   # PDFEDIT_DATA_DIR moves it (Docker: a mounted volume); documents untouched for this many days are deleted.
   data-dir: ${PDFEDIT_DATA_DIR:${user.home}/WINTECH_PDF/data}

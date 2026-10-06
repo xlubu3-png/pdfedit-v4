@@ -63,7 +63,8 @@ public class FontMatcher {
      * and the standard PDF fonts are never reported: there is nothing to install for them.
      */
     public boolean isMissing(PDFont font) {
-        if (font == null || font instanceof PDType3Font || font.getName() == null) {
+        if (font == null || font instanceof PDType3Font || font.getName() == null
+                || isPlaceholderName(font.getName())) {
             return false;
         }
         try {
@@ -74,6 +75,23 @@ public class FontMatcher {
             // an odd font dictionary: judge it by its name
         }
         return systemFonts.findByPdfName(font.getName(), false).isEmpty();
+    }
+
+    private static final java.util.regex.Pattern SUBSET_TAG = java.util.regex.Pattern.compile("^[A-Z]{6}\\+");
+    private static final java.util.regex.Pattern GENERATED_NAME =
+            java.util.regex.Pattern.compile("(?i)(?:F|Font|T|TT)\\d+");
+
+    /**
+     * Whether a PDF font name is just a label the PDF producer made up ("CIDFont+F1", "F2") rather
+     * than the name of a font family. There is nothing to install for such a font, so it is not
+     * reported as missing; its look is judged from its glyphs instead.
+     */
+    static boolean isPlaceholderName(String pdfFontName) {
+        String name = SUBSET_TAG.matcher(pdfFontName.trim()).replaceFirst("");
+        if (name.regionMatches(true, 0, "CIDFont+", 0, 8)) {
+            return true;
+        }
+        return GENERATED_NAME.matcher(name).matches();
     }
 
     /**

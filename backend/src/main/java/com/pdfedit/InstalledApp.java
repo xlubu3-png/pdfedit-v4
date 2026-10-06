@@ -86,7 +86,7 @@ final class InstalledApp {
             try {
                 int port = Integer.parseInt(Files.readString(PORT_FILE).trim());
                 try (Socket socket = new Socket()) {
-                    socket.connect(new InetSocketAddress("localhost", port), 300);
+                    socket.connect(new InetSocketAddress("127.0.0.1", port), 300);
                     return port;
                 }
             } catch (IOException | NumberFormatException notYet) {

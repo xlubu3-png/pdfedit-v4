@@ -44,6 +44,7 @@ public class PdfDocumentStore {
 
     private static final Logger log = LoggerFactory.getLogger(PdfDocumentStore.class);
     private static final Duration TOUCH_INTERVAL = Duration.ofHours(1);
+    private static final Duration CONTENT_IDLE = Duration.ofMinutes(10);
 
     private final Map<String, Entry> documents = new ConcurrentHashMap<>();
     private final Path dataDir;
@@ -204,8 +205,26 @@ public class PdfDocumentStore {
         }
     }
 
+    /**
+     * Lets go of the in-memory copy of documents nobody used for a while. The file on disk stays and
+     * is read again on the next use, so big PDFs opened earlier don't fill the heap until they expire.
+     * Without a data folder the memory is the only copy, so nothing is released.
+     */
+    void releaseIdleContent(Duration idle) {
+        if (dataDir == null) {
+            return;
+        }
+        Instant cutoff = Instant.now().minus(idle);
+        documents.values().forEach(entry -> {
+            if (entry.content != null && !entry.lastAccessed.isAfter(cutoff)) {
+                entry.content = null;
+            }
+        });
+    }
+
     @Scheduled(fixedRate = 10 * 60 * 1000L)
     void evictExpired() {
+        releaseIdleContent(CONTENT_IDLE);
         Instant cutoff = Instant.now().minus(retention);
         documents.entrySet().removeIf(e -> {
             boolean expired = e.getValue().lastAccessed.isBefore(cutoff);

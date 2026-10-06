@@ -43,6 +43,33 @@ class PdfDocumentStorePersistenceTest {
     }
 
     @Test
+    void anIdleDocumentIsDroppedFromMemoryAndReadFromDiskWhenNeededAgain() throws IOException {
+        byte[] pdf = TestPdfs.koreanPage();
+        PdfDocumentStore store = new PdfDocumentStore(folder, Duration.ofDays(14));
+        String id = store.store("a.pdf", pdf, 1);
+
+        store.releaseIdleContent(Duration.ZERO);
+        Files.delete(folder.resolve(id + ".pdf"));
+        assertThatThrownBy(() -> store.getContent(id)).as("memory copy is gone, so the file is read").isInstanceOf(java.io.UncheckedIOException.class);
+
+        String second = store.store("b.pdf", pdf, 1);
+        store.releaseIdleContent(Duration.ofHours(1));
+        Files.delete(folder.resolve(second + ".pdf"));
+        assertThat(store.getContent(second)).as("recently used: still in memory").isEqualTo(pdf);
+    }
+
+    @Test
+    void aMemoryOnlyStoreNeverDropsDocuments() throws IOException {
+        byte[] pdf = TestPdfs.koreanPage();
+        PdfDocumentStore store = new PdfDocumentStore();
+        String id = store.store("a.pdf", pdf, 1);
+
+        store.releaseIdleContent(Duration.ZERO);
+
+        assertThat(store.getContent(id)).isEqualTo(pdf);
+    }
+
+    @Test
     void resettingAPageIsRememberedToo() throws IOException {
         PdfDocumentStore first = new PdfDocumentStore(folder, Duration.ofDays(14));
         String id = first.store("a.pdf", TestPdfs.koreanPage(), 1);

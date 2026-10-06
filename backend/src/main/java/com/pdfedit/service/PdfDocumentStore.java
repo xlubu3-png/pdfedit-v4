@@ -67,7 +67,7 @@ public class PdfDocumentStore {
     }
 
     @Autowired
-    public PdfDocumentStore(@Value("${app.data-dir}") String dataDir, @Value("${app.retention-days:14}") int days) {
+    public PdfDocumentStore(@Value("${app.data-dir}") String dataDir, @Value("${app.retention-days:7}") int days) {
         this(dataDir == null || dataDir.isBlank() ? null : Path.of(dataDir), Duration.ofDays(days));
     }
 

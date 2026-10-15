@@ -5,6 +5,7 @@ import java.io.InputStream;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 
 import org.apache.fontbox.ttf.TTFParser;
@@ -117,6 +118,27 @@ public class FontMatcher {
         return typefaceChooser.judge(font, page.samples(font)).orElse(byName);
     }
 
+    /**
+     * Every installed font made for Korean, in its regular and its bold cut: the pool a font whose look has
+     * to be judged is compared against.
+     */
+    List<SystemFonts.Face> koreanFaces() {
+        List<SystemFonts.Face> faces = new java.util.ArrayList<>();
+        Set<String> seen = new java.util.HashSet<>();
+        for (SystemFonts.Family family : systemFonts.families()) {
+            if (!family.korean()) {
+                continue;
+            }
+            for (boolean bold : new boolean[] {false, true}) {
+                systemFonts.find(bold, family.name())
+                        .filter(face -> face.bold() == bold && !face.italic())
+                        .filter(face -> seen.add(face.file() + "|" + face.collectionFontName()))
+                        .ifPresent(faces::add);
+            }
+        }
+        return faces;
+    }
+
     /** A match for an explicit style, used when comparing candidate fonts. */
     Match match(boolean serif, boolean bold) {
         return new Match(serif ? "Batang" : "맑은 고딕", bold);
@@ -216,9 +238,17 @@ public class FontMatcher {
         public final String cssFamily;
         public final boolean bold;
 
+        /** How closely the chosen font's glyphs matched the page's own (0 to 1), or NaN when it was not compared. */
+        public final double similarity;
+
         Match(String cssFamily, boolean bold) {
+            this(cssFamily, bold, Double.NaN);
+        }
+
+        Match(String cssFamily, boolean bold, double similarity) {
             this.cssFamily = cssFamily;
             this.bold = bold;
+            this.similarity = similarity;
         }
 
         private boolean serif() {

@@ -26,6 +26,7 @@ const run: TextRun = {
   ownChars: '',
   sourceFontMissing: false,
   originalRemoved: false,
+  matchSimilarity: null,
   editFontFamily: null,
   editFontSize: null,
   editBold: null,

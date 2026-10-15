@@ -13,7 +13,7 @@ import {
 import type { TextEditPayload } from '../api'
 import { fontBaseName, missingFontNames, reloadMessage } from '../fontHelp'
 import { editorTipSeen, markEditorTipSeen } from '../editorTip'
-import { foreignChars } from '../fontMix'
+import { foreignChars, SIMILAR_ENOUGH } from '../fontMix'
 import { History } from '../history'
 import { keyCode } from '../keys'
 import type { SnapTargets } from '../snap'
@@ -756,11 +756,16 @@ export function TextEditor({
       // A character the page's font lacks is drawn in another font only when the page's own font is not
       // installed here (or has no name to find it by, like a Type 3 font); an installed one supplies it.
       mixedChars:
-        s !== undefined && !restyled && run.glyphReuse && (run.sourceFontMissing || run.sourceFont.startsWith('Type3'))
+        s !== undefined &&
+        !restyled &&
+        run.glyphReuse &&
+        (run.sourceFontMissing ||
+          (run.sourceFont.startsWith('Type3') && !(run.matchSimilarity !== null && run.matchSimilarity >= SIMILAR_ENOUGH)))
           ? foreignChars(s.text, run.ownChars)
           : '',
       missingFont: run.sourceFontMissing ? run.sourceFont : null,
       original: s === undefined || removalPending ? null : run.originalRemoved ? 'removed' : 'covered',
+      similarity: run.matchSimilarity,
     }
   } else if (selected?.kind === 'added') {
     const box = added.find((b) => b.id === selected.id)
@@ -779,6 +784,7 @@ export function TextEditor({
         mixedChars: '',
         missingFont: null,
         original: null,
+        similarity: null,
       }
     }
   }

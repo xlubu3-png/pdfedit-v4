@@ -70,6 +70,7 @@ final class TypefaceChooser {
                 return Optional.of(cached);
             }
 
+            // The two stock families first: the answer when nothing installed does clearly better.
             FontMatcher.Match best = null;
             double bestScore = -1;
             for (boolean serif : new boolean[] {false, true}) {
@@ -79,12 +80,7 @@ final class TypefaceChooser {
                     if (face.isEmpty()) {
                         continue;
                     }
-                    List<boolean[]> candidateMasks = installedGlyphMasks(face.get(), texts);
-                    double score = 0;
-                    for (int i = 0; i < reference.size(); i++) {
-                        score += dice(reference.get(i), candidateMasks.get(i));
-                    }
-                    score /= reference.size();
+                    double score = similarity(reference, installedGlyphMasks(face.get(), texts));
                     if (score > bestScore) {
                         bestScore = score;
                         best = candidate;
@@ -94,11 +90,43 @@ final class TypefaceChooser {
             if (best == null) {
                 return Optional.empty();
             }
-            CACHE.put(key, best);
-            return Optional.of(best);
+
+            // Then every installed Korean font: a Type 3 font (HWP output) says nothing about what it is,
+            // and the real one - HY견고딕, 함초롬돋움 - is often installed and fits far better.
+            FontMatcher.Match winner = new FontMatcher.Match(best.cssFamily, best.bold, bestScore);
+            double winnerScore = bestScore;
+            for (SystemFonts.Face face : fontMatcher.koreanFaces()) {
+                try {
+                    double score = similarity(reference, installedGlyphMasks(face, texts));
+                    if (score > winnerScore && beats(score, bestScore)) {
+                        winnerScore = score;
+                        winner = new FontMatcher.Match(face.family(), face.bold(), score);
+                    }
+                } catch (IOException | RuntimeException unusable) {
+                    // a font that cannot be read is simply not a candidate
+                }
+            }
+            CACHE.put(key, winner);
+            return Optional.of(winner);
         } catch (IOException | RuntimeException e) {
             return Optional.empty();
         }
+    }
+
+    /** How much better than the stock choice another font has to be before it replaces it: no churn for a hair. */
+    private static final double MARGIN = 0.03;
+
+    static boolean beats(double score, double stockScore) {
+        return score >= stockScore + MARGIN;
+    }
+
+    /** Average overlap, 0 to 1, between the page's glyphs and a candidate's. */
+    private static double similarity(List<boolean[]> reference, List<boolean[]> candidate) {
+        double score = 0;
+        for (int i = 0; i < reference.size(); i++) {
+            score += dice(reference.get(i), candidate.get(i));
+        }
+        return score / reference.size();
     }
 
     private static BufferedImage renderSourceGlyph(PDFont font, int code) throws IOException {

@@ -126,7 +126,8 @@ public class TextEditService {
                             pageGlyphs.charsOf(run),
                             run.sourceFont() != null && missingByFont.computeIfAbsent(
                                     run.sourceFont().getCOSObject(), k -> fontMatcher.isMissing(run.sourceFont())),
-                            existing != null && cutOut.contains(i)));
+                            existing != null && cutOut.contains(i),
+                            Double.isNaN(match.similarity) ? null : (float) match.similarity));
                 }
             }
             return new PageTextDto(crop.getWidth(), crop.getHeight(), crop.getLowerLeftX(),

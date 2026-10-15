@@ -1,3 +1,6 @@
+/** From this similarity on, the font chosen for a font with no name looks like the original for practical purposes. */
+export const SIMILAR_ENOUGH = 0.75
+
 /**
  * Characters of an edited line that the page's own font cannot draw. A subset font only holds the
  * characters the document used, so these are drawn in an installed font and can look different from

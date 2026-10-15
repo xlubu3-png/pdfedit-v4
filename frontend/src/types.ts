@@ -58,6 +58,11 @@ export interface TextRun {
   sourceFontMissing: boolean
   /** An edited line: its original letters were cut out of the page (true) rather than painted over (false). */
   originalRemoved: boolean
+  /**
+   * How closely the installed font chosen for this line looks like the page's own (0 to 1), when that had to be
+   * judged from the glyphs because the font has no name to go by; null otherwise.
+   */
+  matchSimilarity: number | null
   /** What the user chose for this line so far; null means "as the original". */
   editFontFamily: string | null
   editFontSize: number | null

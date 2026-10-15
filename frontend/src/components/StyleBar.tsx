@@ -1,3 +1,4 @@
+import { SIMILAR_ENOUGH } from '../fontMix'
 import type { FontChoice } from '../types'
 import { FontPicker } from './FontPicker'
 
@@ -31,6 +32,8 @@ export interface StyleView {
    * the file under a cover-up. Null for a line that was not edited, or while the server is still checking.
    */
   original: 'removed' | 'covered' | null
+  /** How closely the font chosen for a line whose own font has no name resembles it (0 to 1); null when not judged. */
+  similarity: number | null
 }
 
 interface StyleBarProps {
@@ -81,9 +84,14 @@ export function StyleBar({
 }: StyleBarProps) {
   const disabled = view === null
   const shownFont = view
-    ? `${view.family ? (fonts.find((f) => f.name === view.family)?.label ?? view.family) : view.autoFamily}${view.bold ? ' (굵게)' : ''}`
+    ? `${
+        view.family
+          ? (fonts.find((f) => f.name === view.family)?.label ?? view.family)
+          : (fonts.find((f) => f.name === view.autoFamily)?.label ?? view.autoFamily)
+      }${view.bold ? ' (굵게)' : ''}`
     : ''
-  const autoLabel = `${view?.kind === 'added' ? '기본' : '자동'} (${view?.autoFamily ?? '-'})`
+  const autoName = fonts.find((f) => f.name === view?.autoFamily)?.label ?? view?.autoFamily ?? '-'
+  const autoLabel = `${view?.kind === 'added' ? '기본' : '자동'} (${autoName})`
 
   return (
     <div className="te-stylebar" role="toolbar" aria-label="글자 모양">
@@ -107,6 +115,18 @@ export function StyleBar({
             {view.look === 'original' && (
               <span className="te-look ok" title="바꾼 글자도 이 페이지의 원래 글리프로 그려서 모양이 그대로입니다">
                 원본 글꼴 유지
+              </span>
+            )}
+            {view.similarity !== null && (
+              <span
+                className={`te-look ${view.similarity >= SIMILAR_ENOUGH ? 'ok' : 'warn'}`}
+                title={
+                  view.similarity >= SIMILAR_ENOUGH
+                    ? '이 글꼴 정보에는 이름이 없어서, 글자 모양을 설치된 글꼴과 비교해 가장 비슷한 것을 골랐습니다'
+                    : '원본과 닮은 설치 글꼴이 없어 모양이 조금 다를 수 있습니다. 글꼴 목록에서 직접 골라 보세요'
+                }
+              >
+                {view.similarity >= SIMILAR_ENOUGH ? '원본과 비슷' : '원본과 다를 수 있음'} {Math.round(view.similarity * 100)}%
               </span>
             )}
             {view.original === 'removed' && (

@@ -638,6 +638,13 @@ button.primary:disabled {
   line-height: 1.5;
 }
 
+/* All edited lines have their original letters cut out of the page: nothing is left under a cover-up. */
+.te-redact-note.te-redact-ok {
+  border-color: #9fd3ae;
+  background: #eaf7ee;
+  color: #1b6e3a;
+}
+
 /* How an edited line is drawn: a small badge next to its font, green or amber. */
 .te-look {
   margin-left: 8px;

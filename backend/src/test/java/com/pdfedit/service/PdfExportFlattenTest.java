@@ -39,13 +39,15 @@ class PdfExportFlattenTest {
     }
 
     @Test
-    void anOrdinaryExportStillHoldsTheTextThatWasCoveredUp() throws IOException {
+    void anOrdinaryExportNoLongerHoldsTheOriginalOfAnEditedLine() throws IOException {
         String id = editedDocument();
 
         String text = textOf(export.export(List.of(new PageSpec(id, 0, 0))));
 
-        // the original is still in the file, unseen under the cover-up: that is what flattening removes
-        assertThat(text).contains("Hello");
+        // the edited line's operator is cut out of the page, not hidden under a cover-up...
+        assertThat(text).doesNotContain("Hello");
+        // ...and the line that was not edited is untouched
+        assertThat(text).contains("안녕하세요");
     }
 
     @Test

@@ -22,6 +22,7 @@ function run(index: number, x: number, y: number, width: number, text: string): 
     glyphReuse: true,
     ownChars: text,
     sourceFontMissing: false,
+    originalRemoved: false,
     editFontFamily: null,
     editFontSize: null,
     editBold: null,

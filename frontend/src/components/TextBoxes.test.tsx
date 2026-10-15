@@ -25,6 +25,7 @@ const run: TextRun = {
   glyphReuse: true,
   ownChars: '',
   sourceFontMissing: false,
+  originalRemoved: false,
   editFontFamily: null,
   editFontSize: null,
   editBold: null,

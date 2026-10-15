@@ -34,6 +34,7 @@ import com.pdfedit.dto.TextRunDto;
 import com.pdfedit.text.AddedText;
 import com.pdfedit.text.FontMatcher;
 import com.pdfedit.text.Glyph;
+import com.pdfedit.text.PageExtraction;
 import com.pdfedit.text.RunEdit;
 import com.pdfedit.text.RunPainter;
 import com.pdfedit.text.TextExtraction;
@@ -43,10 +44,10 @@ import com.pdfedit.text.VerticalBounds;
 /**
  * Text editing on top of PDFBox: lists a page's editable runs, records what the user did to them
  * (new text, another font/size/weight/colour, a move) and the text boxes they added, and bakes it
- * all into a page. An edited run is a cover-up rectangle in the colour behind it followed by the
- * new text, redrawn with the run's own original embedded font when possible (see
- * {@link FontMatcher#tryLoadOriginalEmbedded}), falling back to an installed substitute. The
- * original text stays in the content stream underneath, so this is not a redaction tool.
+ * all into a page. An edited run's original text is cut out of the page's content when that can be
+ * proven harmless (see {@link TextRemoval}); otherwise a cover-up rectangle in the colour behind it
+ * hides it and the original text stays in the content stream underneath. The new text is redrawn with
+ * the run's own glyphs when possible, falling back to an installed substitute font.
  */
 @Service
 public class TextEditService {
@@ -97,7 +98,11 @@ public class TextEditService {
             boolean rotated = isRotated(page);
             List<TextRunDto> dtos = new ArrayList<>();
             if (!rotated) {
-                List<TextRun> runs = TextExtraction.extractRuns(doc, pageIndex);
+                PageExtraction extraction = TextExtraction.extractWithOps(doc, pageIndex);
+                List<TextRun> runs = extraction.runs();
+                // Which edited lines have their original letters cut out of the file rather than covered.
+                Set<Integer> cutOut = saved.runs().isEmpty() ? Set.of()
+                        : TextRemoval.plan(doc, pageIndex, extraction, saved.runs().keySet()).runs();
                 RunPainter.PageGlyphs pageGlyphs = RunPainter.PageGlyphs.of(runs);
                 Map<COSDictionary, FontMatcher.Match> matchByFont = new IdentityHashMap<>();
                 Map<COSDictionary, Boolean> missingByFont = new IdentityHashMap<>();
@@ -120,7 +125,8 @@ public class TextEditService {
                             existing == null ? 0f : existing.dx(), existing == null ? 0f : existing.dy(),
                             pageGlyphs.charsOf(run),
                             run.sourceFont() != null && missingByFont.computeIfAbsent(
-                                    run.sourceFont().getCOSObject(), k -> fontMatcher.isMissing(run.sourceFont()))));
+                                    run.sourceFont().getCOSObject(), k -> fontMatcher.isMissing(run.sourceFont())),
+                            existing != null && cutOut.contains(i)));
                 }
             }
             return new PageTextDto(crop.getWidth(), crop.getHeight(), crop.getLowerLeftX(),
@@ -276,14 +282,24 @@ public class TextEditService {
      */
     public void applyEdits(PDDocument srcDoc, byte[] srcPdf, int pageIndex, PDDocument outDoc, PDPage outPage,
             PageEdits edits, FontCache fonts, String fontScope) throws IOException {
-        List<TextRun> allRuns = TextExtraction.extractRuns(srcDoc, pageIndex);
+        PageExtraction extraction = TextExtraction.extractWithOps(srcDoc, pageIndex);
+        List<TextRun> allRuns = extraction.runs();
         RunPainter.PageGlyphs pageGlyphs = RunPainter.PageGlyphs.of(allRuns);
         PDRectangle crop = srcDoc.getPage(pageIndex).getCropBox();
+
+        // Lines whose original letters can be cut out of the page are not covered at all.
+        TextRemoval.Plan cuts = edits.runs().isEmpty() ? TextRemoval.Plan.NONE
+                : TextRemoval.plan(srcDoc, pageIndex, extraction, edits.runs().keySet());
+        if (!cuts.isEmpty()) {
+            TextRemoval.apply(srcDoc.getPage(pageIndex), outDoc, outPage, cuts.ops());
+        }
+        boolean needsCover = edits.runs().keySet().stream()
+                .anyMatch(i -> i >= 0 && i < allRuns.size() && !cuts.runs().contains(i));
+
         // The page as it looks before any edit, and the same page without its text: comparing the two
         // shows where the letters' ink is, and the second is what covers it - so the cover-up matches a
         // coloured table cell, and leaves the table rules next to the text alone.
-        BufferedImage backdrop = edits.runs().isEmpty() ? null
-                : new PDFRenderer(srcDoc).renderImage(pageIndex, BACKDROP_SCALE);
+        BufferedImage backdrop = needsCover ? new PDFRenderer(srcDoc).renderImage(pageIndex, BACKDROP_SCALE) : null;
         BufferedImage clean = backdrop == null ? null : textFree(srcPdf, pageIndex);
         try (PDPageContentStream cs = new PDPageContentStream(outDoc, outPage,
                 PDPageContentStream.AppendMode.APPEND, true, true)) {
@@ -293,7 +309,7 @@ public class TextEditService {
                     continue;
                 }
                 applyRunEdit(cs, outDoc, allRuns, allRuns.get(runIndex), entry.getValue(), pageGlyphs, backdrop,
-                        clean, crop, fonts, fontScope);
+                        clean, crop, fonts, fontScope, cuts.runs().contains(runIndex));
             }
             for (AddedText box : edits.added()) {
                 drawAdded(cs, outDoc, box, fonts);
@@ -303,7 +319,7 @@ public class TextEditService {
 
     private void applyRunEdit(PDPageContentStream cs, PDDocument outDoc, List<TextRun> allRuns, TextRun original,
             RunEdit edit, RunPainter.PageGlyphs pageGlyphs, BufferedImage backdrop, BufferedImage clean,
-            PDRectangle crop, FontCache fonts, String fontScope) throws IOException {
+            PDRectangle crop, FontCache fonts, String fontScope, boolean cutOut) throws IOException {
         // The white-out box is driven by fontSize, not the extracted glyph height: PDFBox's
         // per-glyph height proved unreliable across embedded fonts (e.g. ~5.97pt for text
         // rendered at ~8.3pt), leaving tall glyphs poking out above too-short boxes.
@@ -330,19 +346,24 @@ public class TextEditService {
         }
 
         FontMatcher.Styled styled = null;
+        float fit = 1f;
         if (hasText && layout == null) {
             styled = fontFor(outDoc, original, edit, text, size, pageGlyphs, fonts, fontScope);
+            fit = widthFit(styled.font(), original, edit, size);
             Float measured = tryMeasureWidth(styled.font(), text, size);
             // The new text may render wider than the original run; a white-out only as wide
             // as the original would expose original text under the spilled tail.
-            boxWidth = Math.max(original.width(), measured != null ? measured : text.length() * size * 0.6f);
+            boxWidth = Math.max(original.width(),
+                    (measured != null ? measured : text.length() * size * 0.6f) * fit);
         }
 
         // A moved line leaves its old place behind: only that place is covered, the line is
         // drawn again where it now is.
         float coverX = original.x() - 1;
         float coverWidth = (edit.moved() ? original.width() : boxWidth) + 2;
-        if (clean != null) {
+        if (cutOut) {
+            // The original letters are no longer in the page: there is nothing to cover.
+        } else if (clean != null) {
             TextCover.paint(cs, outDoc, backdrop, clean, crop, BACKDROP_SCALE, coverX, boxBottom, coverWidth,
                     boxTop - boxBottom);
         } else {
@@ -355,8 +376,35 @@ public class TextEditService {
         if (layout != null) {
             layout.draw(cs, original.y() + edit.dy(), edit.dx());
         } else if (hasText) {
-            drawLine(cs, styled, text, original.x() + edit.dx(), original.y() + edit.dy(), size, colour);
+            drawLine(cs, styled, text, original.x() + edit.dx(), original.y() + edit.dy(), size, colour, fit);
         }
+    }
+
+    /** Narrowest and widest a substitute font is squeezed or stretched to match the original's width. */
+    private static final float MIN_FIT = 0.7f;
+    private static final float MAX_FIT = 1.15f;
+
+    /**
+     * How much wider or narrower than natural a line set in a stand-in font is drawn so that it takes the
+     * room the original text did. The original wording is measured in the stand-in font and compared with
+     * the width it really had, so the same sentence comes out as wide as before whatever font stands in.
+     * A font the user picked is drawn as it is, and so is a line whose original cannot be measured.
+     */
+    static float widthFit(PDFont font, TextRun original, RunEdit edit, float size) {
+        if (edit.fontFamily() != null || original.width() < 1f || original.fontSize() <= 0f) {
+            return 1f;
+        }
+        String reference = original.text().strip();
+        Float natural = reference.isEmpty() ? null : tryMeasureWidth(font, reference, size);
+        if (natural == null || natural < 1f) {
+            return 1f;
+        }
+        float target = original.width() * (size / original.fontSize());
+        float fit = target / natural;
+        if (fit > 0.97f && fit < 1.03f) {
+            return 1f; // already as wide as it was: leave the letters alone
+        }
+        return Math.max(MIN_FIT, Math.min(MAX_FIT, fit));
     }
 
     /** The font an edited run is redrawn in: the user's pick, else the run's own font or its nearest installed one. */
@@ -500,6 +548,12 @@ public class TextEditService {
 
     private static void drawLine(PDPageContentStream cs, FontMatcher.Styled styled, String text, float x, float y,
             float fontSize, Color colour) throws IOException {
+        drawLine(cs, styled, text, x, y, fontSize, colour, 1f);
+    }
+
+    /** {@code hScale}: 1 is the font's natural width, 0.9 draws the letters 10% narrower. */
+    private static void drawLine(PDPageContentStream cs, FontMatcher.Styled styled, String text, float x, float y,
+            float fontSize, Color colour, float hScale) throws IOException {
         cs.saveGraphicsState();
         try {
             cs.setNonStrokingColor(colour);
@@ -514,6 +568,9 @@ public class TextEditService {
             cs.beginText();
             try {
                 cs.setFont(styled.font(), fontSize);
+                if (hScale != 1f) {
+                    cs.setHorizontalScaling(hScale * 100f);
+                }
                 cs.newLineAtOffset(x, y);
                 cs.showText(text);
             } catch (IllegalArgumentException glyphError) {

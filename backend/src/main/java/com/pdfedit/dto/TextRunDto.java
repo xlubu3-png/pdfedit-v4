@@ -14,6 +14,8 @@ package com.pdfedit.dto;
  *                       fields, and {@code dx}/{@code dy} for how far the run was moved (points, y up)
  * @param sourceFontMissing the page uses a named font that is not installed on this PC, so characters its
  *                       own (subset) font lacks are drawn in a stand-in; the user can install it
+ * @param originalRemoved the edited line's original letters are cut out of the page's content (true), not just
+ *                       painted over (false); only meaningful for an edited line
  * @param ownChars       the characters this run's own fonts already draw on the page; a typed character
  *                       outside them cannot take the original glyph and is drawn in an installed font
  */
@@ -22,5 +24,6 @@ public record TextRunDto(int index, String text, String currentText, boolean edi
                          float boxBottom, float boxTop, String fontFamily, boolean bold,
                          String sourceFont, String color, boolean glyphReuse,
                          String editFontFamily, Float editFontSize, Boolean editBold, String editColor,
-                         float dx, float dy, String ownChars, boolean sourceFontMissing) {
+                         float dx, float dy, String ownChars, boolean sourceFontMissing,
+                         boolean originalRemoved) {
 }

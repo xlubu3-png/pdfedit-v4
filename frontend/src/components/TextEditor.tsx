@@ -140,6 +140,9 @@ export function TextEditor({
   const [loadedRevision, setLoadedRevision] = useState(0)
   const [reloadToken, setReloadToken] = useState(0)
   const [fonts, setFonts] = useState<FontChoice[]>([])
+  /** The server is still working out which edited lines have their original letters cut out. */
+  const [removalPending, setRemovalPending] = useState(false)
+  const removalSeq = useRef(0)
   const [fontHelpOpen, setFontHelpOpen] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
   /** The short how-to-use tip shows until it is closed once. */
@@ -233,6 +236,34 @@ export function TextEditor({
     }
   }, [documentId, pageIndex, reloadToken, putStates, putAdded])
 
+  /**
+   * After a save: which edited lines have their original letters cut out of the page and which are only
+   * covered. The server works that out when it draws the page, so it is asked again - and only those flags
+   * are taken over, so nothing the user is typing or moving is disturbed.
+   */
+  const refreshRemoval = useCallback(() => {
+    const seq = ++removalSeq.current
+    setRemovalPending(true)
+    fetchPageText(documentId, pageIndex)
+      .then((loaded) => {
+        if (seq !== removalSeq.current) return // a newer save has asked again
+        const flags = new Map(loaded.runs.map((r) => [r.index, r.originalRemoved]))
+        const current = dataRef.current
+        if (current) {
+          const next = {
+            ...current,
+            runs: current.runs.map((r) => (flags.has(r.index) ? { ...r, originalRemoved: flags.get(r.index) === true } : r)),
+          }
+          dataRef.current = next
+          setData(next)
+        }
+        setRemovalPending(false)
+      })
+      .catch(() => {
+        if (seq === removalSeq.current) setRemovalPending(false)
+      })
+  }, [documentId, pageIndex])
+
   const flush = useCallback(() => {
     window.clearTimeout(saveTimer.current)
     const run = async () => {
@@ -273,6 +304,7 @@ export function TextEditor({
         setStatus(savedLabel())
         setRevision((r) => r + 1)
         onEdited(pageKey)
+        refreshRemoval()
       } catch (e) {
         lastSaveFailed.current = true
         setStatus('저장 실패')
@@ -294,7 +326,7 @@ export function TextEditor({
     // Serialize saves so a slow request can never overwrite a newer one.
     queue.current = queue.current.then(run)
     return queue.current
-  }, [documentId, pageIndex, pageKey, onEdited])
+  }, [documentId, pageIndex, pageKey, onEdited, refreshRemoval])
 
   const scheduleSave = useCallback(() => {
     window.clearTimeout(saveTimer.current)
@@ -721,8 +753,14 @@ export function TextEditor({
       color: s?.color ?? run.color,
       canReset: s !== undefined,
       look: s === undefined ? null : !restyled && run.glyphReuse ? 'original' : 'substitute',
-      mixedChars: s !== undefined && !restyled && run.glyphReuse ? foreignChars(s.text, run.ownChars) : '',
+      // A character the page's font lacks is drawn in another font only when the page's own font is not
+      // installed here (or has no name to find it by, like a Type 3 font); an installed one supplies it.
+      mixedChars:
+        s !== undefined && !restyled && run.glyphReuse && (run.sourceFontMissing || run.sourceFont.startsWith('Type3'))
+          ? foreignChars(s.text, run.ownChars)
+          : '',
       missingFont: run.sourceFontMissing ? run.sourceFont : null,
+      original: s === undefined || removalPending ? null : run.originalRemoved ? 'removed' : 'covered',
     }
   } else if (selected?.kind === 'added') {
     const box = added.find((b) => b.id === selected.id)
@@ -740,11 +778,24 @@ export function TextEditor({
         look: null,
         mixedChars: '',
         missingFont: null,
+        original: null,
       }
     }
   }
 
   const editable = data !== null && !data.rotated
+
+  // What became of the original letters of the edited lines (once the server has said so).
+  let removedCount = 0
+  let coveredCount = 0
+  if (data && !removalPending) {
+    for (const index of runStates.keys()) {
+      const run = data.runs[index]
+      if (!run) continue
+      if (run.originalRemoved) removedCount++
+      else coveredCount++
+    }
+  }
 
   /**
    * Keyboard shortcuts. The listener is installed once and calls the handler of the latest render, so
@@ -1121,11 +1172,14 @@ export function TextEditor({
         )}
       </main>
 
-      {runStates.size > 0 && (
+      {coveredCount > 0 && (
         <p className="te-redact-note">
-          ⚠ 수정한 줄의 원래 글자는 PDF 안에 가려진 채 남아 있어서, 다른 프로그램에서 검색하거나 복사하면 보일 수 있습니다. 완전히
-          없애려면 내보낼 때 ‘이미지로 변환’을 켜세요.
+          ⚠ 수정한 줄 중 {coveredCount}개는 원래 글자가 PDF 안에 가려진 채 남아 있어서, 다른 프로그램에서 검색하거나 복사하면 보일 수
+          있습니다. 완전히 없애려면 내보낼 때 ‘이미지로 변환’을 켜세요.
         </p>
+      )}
+      {coveredCount === 0 && removedCount > 0 && (
+        <p className="te-redact-note te-redact-ok">✓ 수정한 줄의 원래 글자는 PDF에서 지워졌습니다 (가리기만 한 것이 아닙니다).</p>
       )}
       {helpOpen && <HelpDialog onClose={() => setHelpOpen(false)} />}
       {fontHelpOpen && (

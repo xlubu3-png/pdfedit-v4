@@ -26,6 +26,11 @@ export interface StyleView {
   mixedChars: string
   /** The line's font as the PDF names it, when it is not installed on this PC; null when it is (or cannot be told). */
   missingFont: string | null
+  /**
+   * What became of the original letters of an edited line: "removed" cut out of the page, "covered" still in
+   * the file under a cover-up. Null for a line that was not edited, or while the server is still checking.
+   */
+  original: 'removed' | 'covered' | null
 }
 
 interface StyleBarProps {
@@ -102,6 +107,19 @@ export function StyleBar({
             {view.look === 'original' && (
               <span className="te-look ok" title="바꾼 글자도 이 페이지의 원래 글리프로 그려서 모양이 그대로입니다">
                 원본 글꼴 유지
+              </span>
+            )}
+            {view.original === 'removed' && (
+              <span className="te-look ok" title="수정한 줄의 원래 글자를 PDF 안에서 지웠습니다. 파일에서 검색하거나 복사해도 나오지 않습니다">
+                원본 글자 삭제됨
+              </span>
+            )}
+            {view.original === 'covered' && (
+              <span
+                className="te-look warn"
+                title="원래 글자가 PDF 안에 남아 있고 그 위를 덮었습니다. 완전히 없애려면 내보낼 때 ‘이미지로 변환’을 켜세요"
+              >
+                원본 글자 가려짐
               </span>
             )}
             {view.mixedChars && (

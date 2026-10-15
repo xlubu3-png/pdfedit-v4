@@ -202,7 +202,7 @@ public final class RunPainter {
         }
 
         // New characters look like the character they replace, or like the one before an insertion.
-        Glyph base = (n - prefix - suffix > 0 || prefix == 0) ? glyphs.get(prefix) : glyphs.get(prefix - 1);
+        Glyph base = styleGlyph(glyphs, (n - prefix - suffix > 0 || prefix == 0) ? prefix : prefix - 1);
         float cursor = prefix < n ? glyphs.get(prefix).x() : originalEnd;
         for (int k = prefix; k < m - suffix; k++) {
             char c = text.charAt(k);
@@ -233,6 +233,31 @@ public final class RunPainter {
         }
         float rightEdge = suffix > 0 ? originalEnd + delta : cursor;
         return Optional.of(new Layout(placed, Math.max(rightEdge, cursor)));
+    }
+
+    /**
+     * The glyph whose look (font, size, colour, weight) new characters take: the one at {@code index},
+     * unless that is a blank. A blank is often drawn in another font or colour than the letters around it -
+     * a line's trailing space can even come from the next, blue, piece of text - and letters typed after
+     * it must not turn blue or thin because of it; the nearest letter is used instead.
+     */
+    static Glyph styleGlyph(List<Glyph> glyphs, int index) {
+        int n = glyphs.size();
+        int at = Math.max(0, Math.min(n - 1, index));
+        if (!glyphs.get(at).unicode().isBlank()) {
+            return glyphs.get(at);
+        }
+        for (int distance = 1; distance < n; distance++) {
+            int before = at - distance;
+            if (before >= 0 && !glyphs.get(before).unicode().isBlank()) {
+                return glyphs.get(before);
+            }
+            int after = at + distance;
+            if (after < n && !glyphs.get(after).unicode().isBlank()) {
+                return glyphs.get(after);
+            }
+        }
+        return glyphs.get(at);
     }
 
     private static Placed retained(Glyph glyph, float x) {

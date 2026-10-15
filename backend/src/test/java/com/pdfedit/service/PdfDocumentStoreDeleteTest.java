@@ -11,7 +11,7 @@ import java.util.NoSuchElementException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/** "새로 시작" must really remove the stored copy of a document, not just forget it in the browser. */
+/** "모두 지우기" must really remove the stored copy of a document, not just forget it in the browser. */
 class PdfDocumentStoreDeleteTest {
 
     @TempDir

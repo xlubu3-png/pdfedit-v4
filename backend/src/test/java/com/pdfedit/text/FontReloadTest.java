@@ -75,6 +75,20 @@ class FontReloadTest {
     }
 
     @Test
+    void namesAProducerMadeUpAreNotFontsToInstall() {
+        assertThat(FontMatcher.isPlaceholderName("CIDFont+F1")).isTrue();
+        assertThat(FontMatcher.isPlaceholderName("CIDFont+F2")).isTrue();
+        assertThat(FontMatcher.isPlaceholderName("ABCDEF+CIDFont+F1")).isTrue();
+        assertThat(FontMatcher.isPlaceholderName("F3")).isTrue();
+        assertThat(FontMatcher.isPlaceholderName("ABCDEF+Font12")).isTrue();
+
+        assertThat(FontMatcher.isPlaceholderName("ABCDEF+HYwulM-Bold")).isFalse();
+        assertThat(FontMatcher.isPlaceholderName("Arial,Bold")).isFalse();
+        assertThat(FontMatcher.isPlaceholderName("ABCDEF+HCR Batang")).isFalse();
+        assertThat(FontMatcher.isPlaceholderName("F1Gothic")).isFalse();
+    }
+
+    @Test
     void fontsWithNothingToInstallAreNeverReportedMissing() {
         FontMatcher matcher = new FontMatcher(new SystemFonts(List.of(folder)));
 

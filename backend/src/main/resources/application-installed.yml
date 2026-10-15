@@ -8,3 +8,8 @@ logging:
 app:
   update:
     enabled: true
+
+# The installed app is for the person at this PC only: listen on the loopback address so other computers
+# on the network cannot reach it (it listens on every network card otherwise).
+server:
+  address: 127.0.0.1

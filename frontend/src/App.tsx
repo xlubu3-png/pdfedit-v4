@@ -375,7 +375,7 @@ function App() {
   }
 
   function handleStartOver() {
-    if (!window.confirm('모든 페이지와 수정 내용을 지우고 새로 시작할까요? 저장된 문서 사본도 함께 삭제됩니다.')) return
+    if (!window.confirm('모든 페이지와 수정 내용이 삭제되며 되돌릴 수 없습니다. 저장된 문서 사본도 함께 삭제됩니다. 모두 지울까요?')) return
     // The server keeps a copy of every uploaded file; starting over is the moment to remove them.
     for (const documentId of new Set(pages.map((p) => p.documentId))) void deleteDocument(documentId)
     setPages([])
@@ -386,8 +386,8 @@ function App() {
   }
 
   const startOverButton = (
-    <button type="button" className="danger" onClick={handleStartOver} disabled={busy} title="모든 페이지를 지우고 처음부터 시작합니다">
-      새로 시작
+    <button type="button" className="danger" onClick={handleStartOver} disabled={busy} title="모든 페이지와 수정 내용을 지웁니다 (되돌릴 수 없음)">
+      모두 지우기
     </button>
   )
 

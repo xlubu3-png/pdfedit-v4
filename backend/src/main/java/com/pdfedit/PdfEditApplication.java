@@ -22,15 +22,20 @@ public class PdfEditApplication {
         boolean installed = InstalledApp.isInstalled();
         if (installed) {
             // Double-clicking the shortcut again should bring up the running copy, not start another.
-            int running = InstalledApp.findRunningInstance(DEFAULT_PORT, MAX_PORT_ATTEMPTS);
-            if (running > 0) {
-                openBrowser("http://localhost:" + running);
+            if (!InstalledApp.claimSingleInstance()) {
+                int running = InstalledApp.awaitRunningInstance(60_000);
+                if (running > 0) {
+                    openBrowser("http://localhost:" + running);
+                }
                 return;
             }
         }
 
         int port = findAvailablePort(resolvePreferredPort());
         System.setProperty("server.port", String.valueOf(port));
+        if (installed) {
+            InstalledApp.publishPort(port);
+        }
         // Spring Boot forces java.awt.headless=true by default, which turns Desktop.getDesktop()
         // into a no-op, so it is switched off - but only where a desktop really exists. On a
         // display-less Linux server/container, headless=false makes Java AWT load its X11 library

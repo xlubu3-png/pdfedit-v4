@@ -22,6 +22,7 @@ import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDFont;
 import org.apache.pdfbox.pdmodel.font.PDType3Font;
+import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 import org.apache.pdfbox.pdmodel.graphics.state.RenderingMode;
 import org.apache.pdfbox.rendering.PDFRenderer;
 import org.slf4j.Logger;
@@ -31,6 +32,7 @@ import org.springframework.stereotype.Service;
 import com.pdfedit.dto.PageTextDto;
 import com.pdfedit.dto.TextEditItem;
 import com.pdfedit.dto.TextRunDto;
+import com.pdfedit.text.AddedImage;
 import com.pdfedit.text.AddedText;
 import com.pdfedit.text.FontMatcher;
 import com.pdfedit.text.Glyph;
@@ -76,6 +78,8 @@ public class TextEditService {
         private final Map<String, PDFont> primary = new HashMap<>();
         private final Map<String, PDFont> fallback = new HashMap<>();
         private final Map<String, FontMatcher.Styled> styled = new HashMap<>();
+        /** Pictures embedded into the output document, by picture and how they are drawn. */
+        private final Map<String, PDImageXObject> images = new HashMap<>();
         private final RunPainter painter;
 
         private FontCache(FontMatcher fontMatcher) {
@@ -133,7 +137,7 @@ public class TextEditService {
                 }
             }
             return new PageTextDto(crop.getWidth(), crop.getHeight(), crop.getLowerLeftX(),
-                    crop.getLowerLeftY(), rotated, dtos, saved.added());
+                    crop.getLowerLeftY(), rotated, dtos, saved.added(), saved.imageBoxes());
         }
     }
 
@@ -326,10 +330,41 @@ public class TextEditService {
                 applyRunEdit(cs, outDoc, allRuns, allRuns.get(runIndex), entry.getValue(), pageGlyphs, backdrop,
                         clean, crop, fonts, fontScope, cuts.runs().contains(runIndex));
             }
+            for (PageEdits.PlacedImage placed : edits.images()) {
+                drawImage(cs, outDoc, placed, fonts);
+            }
             for (AddedText box : edits.added()) {
                 drawAdded(cs, outDoc, box, fonts);
             }
         }
+    }
+
+    private void drawImage(PDPageContentStream cs, PDDocument outDoc, PageEdits.PlacedImage placed, FontCache fonts)
+            throws IOException {
+        AddedImage box = placed.box();
+        String key = box.imageId() + "|" + box.keyOutWhite();
+        PDImageXObject image = fonts.images.get(key);
+        if (image == null) {
+            try {
+                image = ImageDrawing.create(outDoc, placed.data(), box.keyOutWhite());
+            } catch (IOException | RuntimeException unreadable) {
+                log.warn("A picture on the page could not be drawn: {}", unreadable.toString());
+                return;
+            }
+            fonts.images.put(key, image);
+        }
+        cs.drawImage(image, box.x(), box.y(), box.width(), box.height());
+    }
+
+    /** Checks the picture boxes submitted for a page and returns them, ready to store. */
+    public List<AddedImage> checkImages(byte[] pdf, int pageIndex, List<AddedImage> boxes) throws IOException {
+        try (PDDocument doc = Loader.loadPDF(pdf)) {
+            if (isRotated(doc.getPage(pageIndex))) {
+                throw new PageNotEditableException("회전된 페이지에는 그림을 넣을 수 없습니다.");
+            }
+        }
+        ImageDrawing.checkBoxes(boxes);
+        return boxes;
     }
 
     private void applyRunEdit(PDPageContentStream cs, PDDocument outDoc, List<TextRun> allRuns, TextRun original,

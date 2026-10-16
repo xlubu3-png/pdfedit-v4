@@ -1,4 +1,5 @@
 import type {
+  AddedImage,
   AddedText,
   AppInfo,
   FindMatch,
@@ -154,6 +155,39 @@ export interface TextEditPayload {
   spans: Span[]
   dx: number
   dy: number
+}
+
+/** A picture the server keeps for a document; its pixel size tells how big to draw it at first. */
+export interface UploadedImage {
+  imageId: string
+  width: number
+  height: number
+}
+
+export async function uploadImage(documentId: string, file: File): Promise<UploadedImage> {
+  const formData = new FormData()
+  formData.append('file', file)
+  const response = await fetch(`${BASE}/documents/${documentId}/images`, { method: 'POST', body: formData })
+  if (!response.ok) {
+    throw await failure(response, `그림을 올리지 못했습니다: ${file.name}`)
+  }
+  return response.json()
+}
+
+export function imageUrl(documentId: string, imageId: string): string {
+  return `${BASE}/documents/${documentId}/images/${imageId}`
+}
+
+/** Replaces the pictures placed on a page with this list. */
+export async function saveAddedImages(documentId: string, pageIndex: number, boxes: AddedImage[]): Promise<void> {
+  const response = await fetch(`${BASE}/documents/${documentId}/pages/${pageIndex}/added-images`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(boxes),
+  })
+  if (!response.ok) {
+    throw await failure(response, '그림을 저장하지 못했습니다')
+  }
 }
 
 /** Replaces the text boxes added to a page with this list. */

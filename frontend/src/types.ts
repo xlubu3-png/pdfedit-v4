@@ -101,6 +101,19 @@ export interface AddedText {
   color: string | null
 }
 
+/** A picture (stamp, signature, logo) the user put on the page; coordinates are PDF user space, `y` is the bottom edge. */
+export interface AddedImage {
+  id: string
+  /** The uploaded picture this box shows. */
+  imageId: string
+  x: number
+  y: number
+  width: number
+  height: number
+  /** The white of the picture is made see-through (a photographed signature on paper). */
+  keyOutWhite: boolean
+}
+
 /** Everything the user did to one text line: its text, look and place. Nulls mean "as the original". */
 export interface RunState {
   text: string
@@ -145,4 +158,5 @@ export interface PageText {
   rotated: boolean
   runs: TextRun[]
   added: AddedText[]
+  images: AddedImage[]
 }

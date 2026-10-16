@@ -1141,3 +1141,53 @@ kbd {
   color: var(--text);
 }
 
+
+/*
+ * A picture put on the page. The server draws it into the preview image, so the frame stays see-through;
+ * only while a new preview is still on its way (.stale) the box shows the picture itself.
+ */
+.te-image {
+  position: relative;
+  box-sizing: border-box;
+  outline: 1px solid var(--accent);
+  cursor: move;
+  touch-action: none;
+}
+
+.te-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  pointer-events: none;
+  user-select: none;
+}
+
+.te-layer.stale .te-image img {
+  opacity: 1;
+}
+
+.te-item.selected .te-image {
+  outline: 2px solid var(--accent);
+}
+
+/* The corner that resizes a picture. */
+.te-resize {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  display: none;
+  width: 12px;
+  height: 12px;
+  border: 2px solid #fff;
+  border-radius: 3px;
+  background: var(--accent);
+  cursor: nwse-resize;
+  touch-action: none;
+  z-index: 3;
+}
+
+.te-item:hover .te-resize,
+.te-item.selected .te-resize {
+  display: block;
+}

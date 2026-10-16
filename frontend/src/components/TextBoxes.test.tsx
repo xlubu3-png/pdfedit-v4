@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { AddedText, PageText, TextRun } from '../types'
-import { AddedBox, RunBox } from './TextBoxes'
+import type { AddedImage, AddedText, PageText, TextRun } from '../types'
+import { AddedBox, ImageBox, RunBox } from './TextBoxes'
 
 afterEach(cleanup)
 
@@ -44,6 +44,7 @@ const data: PageText = {
   rotated: false,
   runs: [run],
   added: [],
+  images: [],
 }
 
 const targets = { xs: [], ys: [] }
@@ -131,5 +132,58 @@ describe('AddedBox', () => {
     fireEvent.blur(box)
 
     expect(onCommitText).toHaveBeenCalledWith(added, '새 글자 더', null)
+  })
+})
+
+describe('ImageBox', () => {
+  const box: AddedImage = { id: 'i1', imageId: 'p1', x: 100, y: 600, width: 80, height: 40, keyOutWhite: false }
+
+  function renderImage(overrides: Partial<Parameters<typeof ImageBox>[0]> = {}) {
+    const props = {
+      box,
+      documentId: 'd1',
+      scale: 2,
+      data,
+      selected: true,
+      onSelect: vi.fn(),
+      onMoveTo: vi.fn(),
+      onResize: vi.fn(),
+      onRemove: vi.fn(),
+      ...overrides,
+    }
+    const view = render(<ImageBox {...props} />)
+    return { props, view, frame: () => view.container.querySelector<HTMLElement>('.te-image')! }
+  }
+
+  it('frames the picture at its place and size on the page', () => {
+    const { frame, view } = renderImage()
+
+    expect(frame().style.width).toBe('160px') // 80pt at 2 px per point
+    expect(frame().style.height).toBe('80px')
+    const item = view.container.querySelector<HTMLElement>('.te-item')!
+    expect(item.style.left).toBe('200px')
+    // the top edge is at y = 640 of a 842pt page
+    expect(item.style.top).toBe(`${(842 - 640) * 2}px`)
+    expect(view.container.querySelector('img')!.getAttribute('src')).toBe('/api/v1/pdf/documents/d1/images/p1')
+  })
+
+  it('removes the picture from its ✕', () => {
+    const { props, view } = renderImage()
+
+    fireEvent.click(view.getByLabelText('그림 삭제'))
+
+    expect(props.onRemove).toHaveBeenCalledWith(box)
+  })
+
+  it('resizes by the corner keeping the proportions and the top left corner', () => {
+    const { props, view } = renderImage()
+    const corner = view.container.querySelector<HTMLElement>('.te-resize')!
+    corner.setPointerCapture = vi.fn()
+
+    fireEvent.pointerDown(corner, { button: 0, pointerId: 1, clientX: 100 })
+    fireEvent.pointerUp(corner, { pointerId: 1, clientX: 140 }) // 40 px = 20 pt wider
+
+    // the top edge stays at 640, so a 50pt tall picture has its bottom at 590
+    expect(props.onResize).toHaveBeenCalledWith(box, 100, 590, 100, 50)
   })
 })

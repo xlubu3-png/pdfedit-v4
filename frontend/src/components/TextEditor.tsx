@@ -7,8 +7,10 @@ import {
   previewUrl,
   reloadFonts,
   resetTextEdits,
+  saveAddedImages,
   saveAddedTexts,
   saveTextEdits,
+  uploadImage,
 } from '../api'
 import type { TextEditPayload } from '../api'
 import { fontBaseName, missingFontNames, reloadMessage } from '../fontHelp'
@@ -19,13 +21,13 @@ import { keyCode } from '../keys'
 import type { SnapTargets } from '../snap'
 import { clearField, formatRange, lookAt, remapSpans, toggleFor } from '../spans'
 import type { LookPatch } from '../spans'
-import type { AddedText, FontChoice, PageItem, PageText, RunState, TextRun } from '../types'
+import type { AddedImage, AddedText, FontChoice, PageItem, PageText, RunState, TextRun } from '../types'
 import { fitZoom, previewDpi, PX_PER_PT_AT_100, zoomStep } from '../zoom'
 import { HelpDialog } from './HelpDialog'
 import { MissingFontDialog } from './MissingFontDialog'
 import { StyleBar } from './StyleBar'
-import type { StyleView } from './StyleBar'
-import { AddedBox, RunBox } from './TextBoxes'
+import type { ImageView, StyleView } from './StyleBar'
+import { AddedBox, ImageBox, RunBox } from './TextBoxes'
 import type { Guides } from './TextBoxes'
 
 interface TextEditorProps {
@@ -59,7 +61,7 @@ const HISTORY_LIMIT = 100
 /** Changes to the same thing within this many ms (typing in the size box, nudging with arrows) are one undo step. */
 const COALESCE_MS = 800
 
-type Selection = { kind: 'run'; index: number } | { kind: 'added'; id: string } | null
+type Selection = { kind: 'run'; index: number } | { kind: 'added'; id: string } | { kind: 'image'; id: string } | null
 
 /** Letters `start` to `end` picked inside the text of line `index`. */
 interface PickedRange {
@@ -72,7 +74,11 @@ interface PickedRange {
 interface Snapshot {
   runs: Map<number, RunState>
   added: AddedText[]
+  images: AddedImage[]
 }
+
+/** How wide a picture is first put on the page: its own size at 96 dpi, but at most this part of the page. */
+const FIRST_IMAGE_SHARE = 0.4
 
 /** A copied line or box, ready to be pasted (also onto another page: this outlives the editor). */
 interface Copied extends Omit<AddedText, 'id'> {
@@ -178,8 +184,12 @@ export function TextEditor({
    */
   const [runStates, setRunStates] = useState(new Map<number, RunState>())
   const [added, setAdded] = useState<AddedText[]>([])
+  const [images, setImages] = useState<AddedImage[]>([])
   const statesRef = useRef(runStates)
   const addedRef = useRef(added)
+  const imagesRef = useRef(images)
+  const imagesDirty = useRef(false)
+  const imageInput = useRef<HTMLInputElement>(null)
   const putStates = useCallback((next: Map<number, RunState>) => {
     statesRef.current = next
     setRunStates(next)
@@ -187,6 +197,10 @@ export function TextEditor({
   const putAdded = useCallback((next: AddedText[]) => {
     addedRef.current = next
     setAdded(next)
+  }, [])
+  const putImages = useCallback((next: AddedImage[]) => {
+    imagesRef.current = next
+    setImages(next)
   }, [])
   const pendingRuns = useRef(new Set<number>())
   const addedDirty = useRef(false)
@@ -234,8 +248,10 @@ export function TextEditor({
         if (cancelled) return
         putStates(new Map(loaded.runs.filter((r) => r.edited).map((r) => [r.index, stateFromServer(r)])))
         putAdded(loaded.added ?? [])
+        putImages(loaded.images ?? [])
         pendingRuns.current.clear()
         addedDirty.current = false
+        imagesDirty.current = false
         dataRef.current = loaded
         setData(loaded)
       })
@@ -245,7 +261,7 @@ export function TextEditor({
     return () => {
       cancelled = true
     }
-  }, [documentId, pageIndex, reloadToken, putStates, putAdded])
+  }, [documentId, pageIndex, reloadToken, putStates, putAdded, putImages])
 
   /**
    * After a save: which edited lines have their original letters cut out of the page and which are only
@@ -284,7 +300,9 @@ export function TextEditor({
       pendingRuns.current.clear()
       const sendAdded = addedDirty.current
       addedDirty.current = false
-      if (indices.length === 0 && !sendAdded) return
+      const sendImages = imagesDirty.current
+      imagesDirty.current = false
+      if (indices.length === 0 && !sendAdded && !sendImages) return
       setStatus('저장 중…')
       lastSaveFailed.current = false
       try {
@@ -312,6 +330,9 @@ export function TextEditor({
             addedRef.current.filter(nonEmpty),
           )
         }
+        if (sendImages) {
+          await saveAddedImages(documentId, pageIndex, imagesRef.current)
+        }
         setRetryable(false)
         setStatus(savedLabel())
         setRevision((r) => r + 1)
@@ -330,6 +351,7 @@ export function TextEditor({
           // The server could not be reached: nothing is lost, the edits are still here to send again.
           indices.forEach((index) => pendingRuns.current.add(index))
           if (sendAdded) addedDirty.current = true
+          if (sendImages) imagesDirty.current = true
           setError('서버에 저장하지 못했습니다. 입력한 내용은 화면에 그대로 있으니 다시 시도하세요.')
           setRetryable(true)
         }
@@ -349,12 +371,22 @@ export function TextEditor({
     setHistory({ undo: historyRef.current.undoCount, redo: historyRef.current.redoCount })
   }, [])
 
-  const currentSnapshot = (): Snapshot => ({ runs: statesRef.current, added: addedRef.current.filter(nonEmpty) })
+  const currentSnapshot = (): Snapshot => ({
+    runs: statesRef.current,
+    added: addedRef.current.filter(nonEmpty),
+    images: imagesRef.current,
+  })
 
   /** Call before changing anything: remembers the page as it is now, so Ctrl+Z can return to it. */
   const checkpoint = useCallback(
     (key: string) => {
-      if (historyRef.current.record(key, { runs: statesRef.current, added: addedRef.current.filter(nonEmpty) })) {
+      if (
+        historyRef.current.record(key, {
+          runs: statesRef.current,
+          added: addedRef.current.filter(nonEmpty),
+          images: imagesRef.current,
+        })
+      ) {
         syncHistory()
       }
     },
@@ -371,13 +403,19 @@ export function TextEditor({
         }
       }
       if (JSON.stringify(addedRef.current) !== JSON.stringify(snapshot.added)) addedDirty.current = true
+      if (JSON.stringify(imagesRef.current) !== JSON.stringify(snapshot.images)) imagesDirty.current = true
       putStates(snapshot.runs)
       putAdded(snapshot.added)
-      setSelected((s) => (s?.kind === 'added' && !snapshot.added.some((b) => b.id === s.id) ? null : s))
+      putImages(snapshot.images)
+      setSelected((s) => {
+        if (s?.kind === 'added' && !snapshot.added.some((b) => b.id === s.id)) return null
+        if (s?.kind === 'image' && !snapshot.images.some((b) => b.id === s.id)) return null
+        return s
+      })
       setEditing(null)
       scheduleSave()
     },
-    [putStates, putAdded, scheduleSave],
+    [putStates, putAdded, putImages, scheduleSave],
   )
 
   const undo = useCallback(() => {
@@ -527,6 +565,71 @@ export function TextEditor({
     [removeAdded, updateAdded],
   )
 
+  const updateImage = useCallback(
+    (id: string, patch: Partial<AddedImage>) => {
+      checkpoint(`image:${id}:${Object.keys(patch).join('+')}`)
+      putImages(imagesRef.current.map((b) => (b.id === id ? { ...b, ...patch } : b)))
+      imagesDirty.current = true
+      scheduleSave()
+    },
+    [checkpoint, putImages, scheduleSave],
+  )
+
+  const removeImage = useCallback(
+    (id: string) => {
+      checkpoint(`remove-image:${id}:${Date.now()}`)
+      putImages(imagesRef.current.filter((b) => b.id !== id))
+      setSelected((s) => (s?.kind === 'image' && s.id === id ? null : s))
+      imagesDirty.current = true
+      scheduleSave()
+    },
+    [checkpoint, putImages, scheduleSave],
+  )
+
+  function duplicateImage(id: string) {
+    const source = imagesRef.current.find((b) => b.id === id)
+    if (!source) return
+    checkpoint(`dup-image:${Date.now()}`)
+    const copy: AddedImage = { ...source, id: newId(), x: round(source.x + PASTE_OFFSET), y: round(source.y - PASTE_OFFSET) }
+    putImages([...imagesRef.current, copy])
+    setSelected({ kind: 'image', id: copy.id })
+    imagesDirty.current = true
+    scheduleSave()
+  }
+
+  /** Uploads a picture and puts it in the middle of the page, at its own size unless that is too big for the page. */
+  async function addImageFromFile(file: File) {
+    const current = dataRef.current
+    if (!current) return
+    setStatus('그림을 올리는 중…')
+    try {
+      const uploaded = await uploadImage(documentId, file)
+      // 96 dpi pixels to points, then no wider than a share of the page, whatever the picture's own size.
+      const naturalWidth = (uploaded.width * 72) / 96
+      const width = round(Math.max(8, Math.min(naturalWidth, current.pageWidth * FIRST_IMAGE_SHARE)))
+      const height = round((width * uploaded.height) / uploaded.width)
+      const box: AddedImage = {
+        id: newId(),
+        imageId: uploaded.imageId,
+        x: round(current.originX + (current.pageWidth - width) / 2),
+        y: round(current.originY + (current.pageHeight - height) / 2),
+        width,
+        height,
+        keyOutWhite: false,
+      }
+      checkpoint(`add-image:${box.id}`)
+      putImages([...imagesRef.current, box])
+      setSelected({ kind: 'image', id: box.id })
+      setEditing(null)
+      imagesDirty.current = true
+      scheduleSave()
+      setStatus('')
+    } catch (e) {
+      setStatus('')
+      setError(e instanceof Error ? e.message : '그림을 올리지 못했습니다')
+    }
+  }
+
   /** Selects a box; a box that was being typed in is left first, so its text is kept. */
   const select = useCallback((next: Selection) => {
     const active = document.activeElement
@@ -565,7 +668,7 @@ export function TextEditor({
       if (patch.color !== undefined) spans = clearField(spans, 'color')
       if (patch.fontSize !== undefined) spans = clearField(spans, 'size')
       updateRun(run, { ...patch, spans })
-    } else if (patch.underline === undefined) {
+    } else if (selected.kind === 'added' && patch.underline === undefined) {
       updateAdded(selected.id, patch) // an added box has no underline
     }
   }
@@ -654,6 +757,10 @@ export function TextEditor({
   }
 
   function duplicateSelection() {
+    if (selected?.kind === 'image') {
+      duplicateImage(selected.id)
+      return
+    }
     const look = describeSelection()
     if (look) addBoxFrom(look, PASTE_OFFSET)
   }
@@ -730,6 +837,7 @@ export function TextEditor({
     window.clearTimeout(saveTimer.current)
     pendingRuns.current.clear()
     addedDirty.current = false
+    imagesDirty.current = false
     try {
       await resetTextEdits(documentId, pageIndex)
       setSelected(null)
@@ -746,7 +854,7 @@ export function TextEditor({
   // Closing the tab while a change has not reached the server would lose it; everything else is kept.
   useEffect(() => {
     const warn = (e: BeforeUnloadEvent) => {
-      if (pendingRuns.current.size > 0 || addedDirty.current || lastSaveFailed.current) {
+      if (pendingRuns.current.size > 0 || addedDirty.current || imagesDirty.current || lastSaveFailed.current) {
         e.preventDefault()
         e.returnValue = ''
       }
@@ -883,6 +991,18 @@ export function TextEditor({
         partial: 0,
       }
     }
+  }
+
+  const pickedImage = selected?.kind === 'image' ? (images.find((b) => b.id === selected.id) ?? null) : null
+  const imageView: ImageView | null = pickedImage
+    ? { width: pickedImage.width, height: pickedImage.height, keyOutWhite: pickedImage.keyOutWhite }
+    : null
+
+  /** A new width for the selected picture, its proportions kept and its top left corner where it was. */
+  function resizeSelectedImage(width: number) {
+    if (!pickedImage || !(width >= 8 && width <= 5000)) return
+    const height = round((width * pickedImage.height) / pickedImage.width)
+    updateImage(pickedImage.id, { width: round(width), height, y: round(pickedImage.y + pickedImage.height - height) })
   }
 
   const editable = data !== null && !data.rotated
@@ -1031,6 +1151,11 @@ export function TextEditor({
         removeAdded(selected.id)
         return
       }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selected?.kind === 'image') {
+        e.preventDefault()
+        removeImage(selected.id)
+        return
+      }
       const arrow = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].indexOf(e.key)
       if (arrow >= 0 && !ctrl && !e.altKey && selected) {
         e.preventDefault()
@@ -1041,6 +1166,9 @@ export function TextEditor({
           const run = dataRef.current?.runs[selected.index]
           const s = statesRef.current.get(selected.index)
           if (run) updateRun(run, { dx: round((s?.dx ?? 0) + dx), dy: round((s?.dy ?? 0) + dy) })
+        } else if (selected.kind === 'image') {
+          const target = imagesRef.current.find((b) => b.id === selected.id)
+          if (target) updateImage(target.id, { x: round(target.x + dx), y: round(target.y + dy) })
         } else {
           const target = addedRef.current.find((b) => b.id === selected.id)
           if (target) updateAdded(target.id, { x: round(target.x + dx), y: round(target.y + dy) })
@@ -1085,6 +1213,26 @@ export function TextEditor({
         >
           ＋ 텍스트 추가
         </button>
+        <button
+          type="button"
+          onClick={() => imageInput.current?.click()}
+          disabled={!editable}
+          title="도장·서명·로고 같은 그림 파일(PNG, JPG)을 페이지에 넣습니다"
+        >
+          ＋ 그림 추가
+        </button>
+        <input
+          ref={imageInput}
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/bmp"
+          hidden
+          data-testid="image-input"
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            e.target.value = '' // the same file can be picked again
+            if (file) void addImageFromFile(file)
+          }}
+        />
         <span className="te-group">
           <button type="button" onClick={() => navigate(-1)} disabled={position <= 0} title="이전 페이지 (Ctrl+←)">
             ◀
@@ -1138,6 +1286,10 @@ export function TextEditor({
           fontsBusy={fontsBusy}
           onDelete={() => selected?.kind === 'added' && removeAdded(selected.id)}
           onDuplicate={duplicateSelection}
+          image={imageView}
+          onImageWidth={resizeSelectedImage}
+          onImageKeyOut={(keyOutWhite) => pickedImage && updateImage(pickedImage.id, { keyOutWhite })}
+          onImageDelete={() => pickedImage && removeImage(pickedImage.id)}
           zoom={zoom}
           onZoomIn={() => changeZoom(1)}
           onZoomOut={() => changeZoom(-1)}
@@ -1252,6 +1404,20 @@ export function TextEditor({
                     onMoveTo={moveRun}
                     onGuides={setGuides}
                     onSelection={onTextRange}
+                  />
+                ))}
+                {images.map((box) => (
+                  <ImageBox
+                    key={box.id}
+                    box={box}
+                    documentId={documentId}
+                    scale={scale}
+                    data={data}
+                    selected={selected?.kind === 'image' && selected.id === box.id}
+                    onSelect={() => select({ kind: 'image', id: box.id })}
+                    onMoveTo={(b, x, y) => updateImage(b.id, { x, y })}
+                    onResize={(b, x, y, width, height) => updateImage(b.id, { x, y, width, height })}
+                    onRemove={(b) => removeImage(b.id)}
                   />
                 ))}
                 {added.map((box) => (

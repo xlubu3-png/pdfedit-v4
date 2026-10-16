@@ -24,6 +24,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import com.pdfedit.text.AddedImage;
 import com.pdfedit.text.AddedText;
 import com.pdfedit.text.RunEdit;
 
@@ -58,8 +59,12 @@ public class PdfDocumentStore {
 
     /** What is written next to the PDF; page and run numbers are strings because JSON keys are. */
     record Stored(String fileName, int pageCount, Map<String, Map<String, RunEdit>> edits,
-                  Map<String, List<AddedText>> added) {
+                  Map<String, List<AddedText>> added, Map<String, List<AddedImage>> images) {
     }
+
+    /** Most pictures uploaded for one document, and the biggest one (bytes). */
+    public static final int MAX_IMAGES = 50;
+    public static final int MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
     /** In memory only. */
     public PdfDocumentStore() {
@@ -137,18 +142,80 @@ public class PdfDocumentStore {
         persist(documentId);
     }
 
+    /** Replaces the picture boxes the user added to a page. */
+    public void setAddedImages(String documentId, int pageIndex, List<AddedImage> images) {
+        Entry entry = require(documentId);
+        if (images.isEmpty()) {
+            entry.imagesByPage.remove(pageIndex);
+        } else {
+            entry.imagesByPage.put(pageIndex, List.copyOf(images));
+        }
+        persist(documentId);
+    }
+
+    /**
+     * Keeps an uploaded picture for the document and returns the id boxes refer to it by.
+     *
+     * @throws InvalidEditException when the document already has as many pictures as it may
+     */
+    public String storeImage(String documentId, byte[] data) {
+        Entry entry = require(documentId);
+        synchronized (entry) {
+            if (entry.imageIds.size() >= MAX_IMAGES) {
+                throw new InvalidEditException("한 문서에는 그림을 " + MAX_IMAGES + "개까지 올릴 수 있습니다.");
+            }
+            String imageId = UUID.randomUUID().toString();
+            if (dataDir != null) {
+                try {
+                    Files.write(imagePath(documentId, imageId), data);
+                } catch (IOException e) {
+                    throw new UncheckedIOException("Cannot save the picture", e);
+                }
+            } else {
+                entry.imagesInMemory.put(imageId, data);
+            }
+            entry.imageIds.add(imageId);
+            return imageId;
+        }
+    }
+
+    /** The bytes of a picture uploaded for the document, or null if there is no such picture. */
+    public byte[] imageBytes(String documentId, String imageId) {
+        Entry entry = require(documentId);
+        if (!entry.imageIds.contains(imageId)) {
+            return null;
+        }
+        byte[] inMemory = entry.imagesInMemory.get(imageId);
+        if (inMemory != null || dataDir == null) {
+            return inMemory;
+        }
+        try {
+            return Files.readAllBytes(imagePath(documentId, imageId));
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
     /** A copy of everything edited on the page, safe to use while other requests keep editing. */
     public PageEdits pageEditsSnapshot(String documentId, int pageIndex) {
         Entry entry = require(documentId);
         Map<Integer, RunEdit> runs = entry.editsByPage.get(pageIndex);
+        List<PageEdits.PlacedImage> images = new java.util.ArrayList<>();
+        for (AddedImage box : entry.imagesByPage.getOrDefault(pageIndex, List.of())) {
+            byte[] data = imageBytes(documentId, box.imageId());
+            if (data != null) {
+                images.add(new PageEdits.PlacedImage(box, data));
+            }
+        }
         return new PageEdits(runs == null ? Map.of() : new HashMap<>(runs),
-                entry.addedByPage.getOrDefault(pageIndex, List.of()));
+                entry.addedByPage.getOrDefault(pageIndex, List.of()), images);
     }
 
     public void clearPageEdits(String documentId, int pageIndex) {
         Entry entry = require(documentId);
         entry.editsByPage.remove(pageIndex);
         entry.addedByPage.remove(pageIndex);
+        entry.imagesByPage.remove(pageIndex);
         persist(documentId);
     }
 
@@ -168,11 +235,14 @@ public class PdfDocumentStore {
         });
         Map<String, List<AddedText>> added = new LinkedHashMap<>();
         entry.addedByPage.forEach((page, boxes) -> added.put(String.valueOf(page), boxes));
+        Map<String, List<AddedImage>> images = new LinkedHashMap<>();
+        entry.imagesByPage.forEach((page, boxes) -> images.put(String.valueOf(page), boxes));
         synchronized (entry) {
             Path target = metaPath(documentId);
             Path temp = target.resolveSibling(target.getFileName() + ".tmp");
             try {
-                Files.write(temp, mapper.writeValueAsBytes(new Stored(entry.fileName, entry.pageCount, edits, added)));
+                Files.write(temp,
+                        mapper.writeValueAsBytes(new Stored(entry.fileName, entry.pageCount, edits, added, images)));
                 Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
             } catch (IOException e) {
                 log.warn("Could not save the edits of {}: {}", documentId, e.toString());
@@ -266,6 +336,10 @@ public class PdfDocumentStore {
             if (stored.added() != null) {
                 stored.added().forEach((page, boxes) -> entry.addedByPage.put(Integer.valueOf(page), List.copyOf(boxes)));
             }
+            if (stored.images() != null) {
+                stored.images().forEach((page, boxes) -> entry.imagesByPage.put(Integer.valueOf(page), List.copyOf(boxes)));
+            }
+            entry.imageIds.addAll(savedImageIds(documentId));
             documents.put(documentId, entry);
         } catch (IOException | RuntimeException e) {
             log.warn("Skipping the unreadable saved document {}: {}", documentId, e.toString());
@@ -274,11 +348,35 @@ public class PdfDocumentStore {
 
     private void deleteFiles(String documentId) {
         try {
+            for (String imageId : savedImageIds(documentId)) {
+                Files.deleteIfExists(imagePath(documentId, imageId));
+            }
             Files.deleteIfExists(pdfPath(documentId));
             Files.deleteIfExists(metaPath(documentId));
         } catch (IOException e) {
             log.warn("Could not delete the expired document {}: {}", documentId, e.toString());
         }
+    }
+
+    /** The pictures kept on disk for a document: files named {@code <id>.<imageId>.img} next to its PDF. */
+    private List<String> savedImageIds(String documentId) {
+        String prefix = safe(documentId) + ".";
+        try (Stream<Path> files = Files.list(dataDir)) {
+            return files.map(p -> p.getFileName().toString())
+                    .filter(name -> name.startsWith(prefix) && name.endsWith(".img"))
+                    .map(name -> name.substring(prefix.length(), name.length() - ".img".length()))
+                    .filter(id -> id.matches("[A-Za-z0-9-]{1,64}"))
+                    .toList();
+        } catch (IOException e) {
+            return List.of();
+        }
+    }
+
+    private Path imagePath(String documentId, String imageId) {
+        if (!imageId.matches("[A-Za-z0-9-]{1,64}")) {
+            throw new NoSuchElementException("Unknown picture id: " + imageId);
+        }
+        return dataDir.resolve(safe(documentId) + "." + imageId + ".img");
     }
 
     private Path pdfPath(String documentId) {
@@ -306,6 +404,11 @@ public class PdfDocumentStore {
         final Map<Integer, Map<Integer, RunEdit>> editsByPage = new ConcurrentHashMap<>();
         /** pageIndex to the text boxes added to that page. */
         final Map<Integer, List<AddedText>> addedByPage = new ConcurrentHashMap<>();
+        /** pageIndex to the picture boxes added to that page. */
+        final Map<Integer, List<AddedImage>> imagesByPage = new ConcurrentHashMap<>();
+        /** Pictures uploaded for the document; their bytes are on disk, or here when there is no data folder. */
+        final java.util.Set<String> imageIds = ConcurrentHashMap.newKeySet();
+        final Map<String, byte[]> imagesInMemory = new ConcurrentHashMap<>();
         volatile Instant lastAccessed = Instant.now();
 
         Entry(String fileName, byte[] content, int pageCount) {

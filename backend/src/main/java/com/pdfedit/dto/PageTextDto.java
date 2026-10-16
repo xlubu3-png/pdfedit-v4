@@ -2,6 +2,7 @@ package com.pdfedit.dto;
 
 import java.util.List;
 
+import com.pdfedit.text.AddedImage;
 import com.pdfedit.text.AddedText;
 
 /**
@@ -14,7 +15,13 @@ import com.pdfedit.text.AddedText;
  * @param rotated    true when the page carries a /Rotate entry; run coordinates are not mapped back
  *                   to the unrotated space for such pages, so the UI must not offer editing
  * @param added      the text boxes the user has put on this page
+ * @param images     the pictures the user has put on this page
  */
 public record PageTextDto(float pageWidth, float pageHeight, float originX, float originY,
-                          boolean rotated, List<TextRunDto> runs, List<AddedText> added) {
+                          boolean rotated, List<TextRunDto> runs, List<AddedText> added, List<AddedImage> images) {
+
+    public PageTextDto(float pageWidth, float pageHeight, float originX, float originY, boolean rotated,
+                       List<TextRunDto> runs, List<AddedText> added) {
+        this(pageWidth, pageHeight, originX, originY, rotated, runs, added, List.of());
+    }
 }

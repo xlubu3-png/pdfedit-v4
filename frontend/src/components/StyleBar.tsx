@@ -40,6 +40,14 @@ export interface StyleView {
   partial: number
 }
 
+/** What the bar shows of a selected picture. */
+export interface ImageView {
+  /** Points. */
+  width: number
+  height: number
+  keyOutWhite: boolean
+}
+
 interface StyleBarProps {
   view: StyleView | null
   fonts: FontChoice[]
@@ -59,6 +67,12 @@ interface StyleBarProps {
   fontsBusy: boolean
   onDelete: () => void
   onDuplicate: () => void
+  /** A picture is selected: the bar then holds its tools instead of the text styles. */
+  image: ImageView | null
+  /** A new width in points; the height follows. */
+  onImageWidth: (width: number) => void
+  onImageKeyOut: (keyOutWhite: boolean) => void
+  onImageDelete: () => void
   /** Zoom as a factor (1 = 100%). */
   zoom: number
   onZoomIn: () => void
@@ -84,11 +98,69 @@ export function StyleBar({
   fontsBusy,
   onDelete,
   onDuplicate,
+  image,
+  onImageWidth,
+  onImageKeyOut,
+  onImageDelete,
   zoom,
   onZoomIn,
   onZoomOut,
   onZoomFit,
 }: StyleBarProps) {
+  const zoomGroup = (
+    <span className="te-zoom" role="group" aria-label="화면 크기">
+      <button type="button" onClick={onZoomOut} title="축소 (Ctrl+−)">
+        −
+      </button>
+      <span className="te-zoom-value" aria-live="polite">
+        {Math.round(zoom * 100)}%
+      </span>
+      <button type="button" onClick={onZoomIn} title="확대 (Ctrl++)">
+        +
+      </button>
+      <button type="button" onClick={onZoomFit} title="폭에 맞춤 (Ctrl+0)">
+        폭 맞춤
+      </button>
+    </span>
+  )
+
+  if (image) {
+    return (
+      <div className="te-stylebar" role="toolbar" aria-label="그림">
+        <span className="te-style-info">
+          <b>그림</b> · 끌어서 이동, 모서리를 끌어서 크기 조절 (비율 유지) · {image.width.toFixed(1)} × {image.height.toFixed(1)}pt
+        </span>
+        <span className="te-style-field">
+          너비
+          <input
+            type="number"
+            min={8}
+            max={5000}
+            step={1}
+            value={Number(image.width.toFixed(1))}
+            onChange={(e) => onImageWidth(Number(e.target.value))}
+            aria-label="그림 너비 (pt)"
+          />
+          pt
+        </span>
+        <label
+          className="te-style-field"
+          title="사진으로 찍은 서명처럼 흰 종이가 있는 그림에서 흰색을 투명하게 만듭니다"
+        >
+          <input type="checkbox" checked={image.keyOutWhite} onChange={(e) => onImageKeyOut(e.target.checked)} />
+          흰 배경 투명
+        </label>
+        <button type="button" onClick={onDuplicate} title="복제 (Ctrl+D)" {...keepFocus}>
+          복제
+        </button>
+        <button type="button" className="danger" onClick={onImageDelete} title="삭제 (Delete)" {...keepFocus}>
+          삭제
+        </button>
+        {zoomGroup}
+      </div>
+    )
+  }
+
   const disabled = view === null
   const shownFont = view
     ? `${
@@ -277,20 +349,7 @@ export function StyleBar({
         </button>
       )}
 
-      <span className="te-zoom" role="group" aria-label="화면 크기">
-        <button type="button" onClick={onZoomOut} title="축소 (Ctrl+−)">
-          −
-        </button>
-        <span className="te-zoom-value" aria-live="polite">
-          {Math.round(zoom * 100)}%
-        </span>
-        <button type="button" onClick={onZoomIn} title="확대 (Ctrl++)">
-          +
-        </button>
-        <button type="button" onClick={onZoomFit} title="폭에 맞춤 (Ctrl+0)">
-          폭 맞춤
-        </button>
-      </span>
+      {zoomGroup}
     </div>
   )
 }

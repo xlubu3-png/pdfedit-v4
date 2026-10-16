@@ -35,7 +35,7 @@ function run(index: number, x: number, y: number, width: number, text: string): 
 }
 
 function page(runs: TextRun[]): PageText {
-  return { pageWidth: 600, pageHeight: 800, originX: 0, originY: 0, rotated: false, runs, added: [] }
+  return { pageWidth: 600, pageHeight: 800, originX: 0, originY: 0, rotated: false, runs, added: [], images: [] }
 }
 
 describe('rightLimit', () => {

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ClipboardEvent, CSSProperties, KeyboardEvent, MouseEvent, PointerEvent } from 'react'
+import { imageUrl } from '../api'
 import { estimatedWidth, overflows, overlayFit } from '../overflow'
 import { snapPosition } from '../snap'
 import type { SnapTargets } from '../snap'
 import { cleanSpans } from '../spans'
-import type { AddedText, PageText, RunState, Span, TextRun } from '../types'
+import type { AddedImage, AddedText, PageText, RunState, Span, TextRun } from '../types'
 
 /** Fractions of a line height: where a text box's top edge sits above the baseline of its first line. */
 const ADDED_ASCENT = 1.0
@@ -508,6 +509,97 @@ export function AddedBox({
         onKeyDown={editing ? handleKeyDown : undefined}
         onPaste={(e) => pastePlainText(e, true)}
       />
+    </div>
+  )
+}
+
+interface ImageBoxProps {
+  box: AddedImage
+  documentId: string
+  scale: number
+  data: PageText
+  selected: boolean
+  onSelect: () => void
+  onMoveTo: (box: AddedImage, x: number, y: number) => void
+  /** The new place and size after the corner was dragged; the top left corner stays where it was. */
+  onResize: (box: AddedImage, x: number, y: number, width: number, height: number) => void
+  onRemove: (box: AddedImage) => void
+}
+
+/** The smallest a picture can be dragged down to, in points. */
+const MIN_IMAGE_SIDE = 8
+
+/**
+ * A picture the user put on the page. The server draws it into the preview like the rest of the page, so the
+ * box only frames it (and shows the picture itself while a new preview is still on its way). A drag moves it,
+ * the corner resizes it keeping its proportions.
+ */
+export function ImageBox({ box, documentId, scale, data, selected, onSelect, onMoveTo, onResize, onRemove }: ImageBoxProps) {
+  const drag = useDrag(scale, onSelect, (ddx, ddy) => onMoveTo(box, round(box.x + ddx), round(box.y + ddy)))
+  const [size, setSize] = useState<{ w: number; h: number } | null>(null)
+  const resizing = useRef<{ x: number; w: number; h: number } | null>(null)
+
+  const width = size?.w ?? box.width
+  const height = size?.h ?? box.height
+  const x = box.x + (drag.delta?.x ?? 0)
+  const topEdge = box.y + (drag.delta?.y ?? 0) + box.height
+  const dragging = drag.delta !== null
+
+  /** The size the pointer at `clientX` asks for, in the picture's own proportions. */
+  const sizeFor = (clientX: number) => {
+    const start = resizing.current
+    if (!start) return null
+    const w = Math.max(MIN_IMAGE_SIDE, round(start.w + (clientX - start.x) / scale))
+    return { w, h: round((w * start.h) / start.w) }
+  }
+
+  return (
+    <div
+      className={`te-item te-image-item${selected ? ' selected' : ''}${dragging ? ' dragging' : ''}`}
+      style={{ left: (x - data.originX) * scale, top: (data.pageHeight - (topEdge - data.originY)) * scale }}
+    >
+      <div className="te-handle" title="끌어서 이동 (방향키: 1pt, Shift+방향키: 10pt)" {...drag.handlers}>
+        ✥
+      </div>
+      <button
+        type="button"
+        className="te-remove"
+        title="이 그림 삭제 (Delete)"
+        aria-label="그림 삭제"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => onRemove(box)}
+      >
+        ✕
+      </button>
+      <div className="te-image" data-image={box.id} style={{ width: width * scale, height: height * scale }} {...drag.handlers}>
+        <img src={imageUrl(documentId, box.imageId)} alt="" draggable={false} />
+        <div
+          className="te-resize"
+          title="끌어서 크기 조절"
+          onPointerDown={(e) => {
+            if (e.button !== 0) return
+            e.preventDefault()
+            e.stopPropagation()
+            e.currentTarget.setPointerCapture(e.pointerId)
+            resizing.current = { x: e.clientX, w: box.width, h: box.height }
+            onSelect()
+          }}
+          onPointerMove={(e) => {
+            const next = sizeFor(e.clientX)
+            if (next) setSize(next)
+          }}
+          onPointerUp={(e) => {
+            const next = sizeFor(e.clientX)
+            resizing.current = null
+            setSize(null)
+            if (next && next.w !== box.width) onResize(box, box.x, round(box.y + box.height - next.h), next.w, next.h)
+          }}
+          onPointerCancel={() => {
+            resizing.current = null
+            setSize(null)
+          }}
+        />
+      </div>
     </div>
   )
 }

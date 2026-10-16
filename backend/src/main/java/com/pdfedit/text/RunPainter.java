@@ -19,6 +19,7 @@ import org.apache.pdfbox.pdmodel.font.PDType0Font;
 import org.apache.pdfbox.pdmodel.font.PDType3Font;
 import org.apache.pdfbox.pdmodel.graphics.color.PDColor;
 import org.apache.pdfbox.pdmodel.graphics.color.PDDeviceGray;
+import org.apache.pdfbox.pdmodel.graphics.color.PDDeviceRGB;
 import org.apache.pdfbox.pdmodel.graphics.state.RenderingMode;
 
 /**
@@ -103,13 +104,19 @@ public final class RunPainter {
     private record Fallback(PDFont font, float scale) {
     }
 
+    /** A line under letters {@code x0} to {@code x1} (user space), as thick as {@code size} says. */
+    private record Underline(float x0, float x1, float size, PDColor color) {
+    }
+
     /** Where every character of an edited run goes; drawn once the white-out has been laid down. */
     public static final class Layout {
         private final List<Placed> items;
+        private final List<Underline> underlines;
         private final float rightEdge;
 
-        private Layout(List<Placed> items, float rightEdge) {
+        private Layout(List<Placed> items, List<Underline> underlines, float rightEdge) {
             this.items = items;
+            this.underlines = underlines;
             this.rightEdge = rightEdge;
         }
 
@@ -153,6 +160,14 @@ public final class RunPainter {
                         cs.endText();
                     }
                 }
+                for (Underline line : underlines) {
+                    cs.setStrokingColor(colorOrBlack(line.color()));
+                    cs.setLineWidth(Math.max(0.3f, line.size() * 0.05f));
+                    float y = baselineY - line.size() * 0.12f;
+                    cs.moveTo(line.x0() + dx, y);
+                    cs.lineTo(line.x1() + dx, y);
+                    cs.stroke();
+                }
             } finally {
                 cs.restoreGraphicsState();
             }
@@ -181,6 +196,16 @@ public final class RunPainter {
      */
     public Optional<Layout> layout(PDDocument outDoc, TextRun original, String text, PageGlyphs page, String scope)
             throws IOException {
+        return layout(outDoc, original, text, page, scope, List.of());
+    }
+
+    /**
+     * Like {@link #layout(PDDocument, TextRun, String, PageGlyphs, String)}, with parts of the text in a weight,
+     * colour, size or underline of their own ({@code segments}, which cover the text without gaps). The letters
+     * keep the page's own glyphs whatever look they are given.
+     */
+    public Optional<Layout> layout(PDDocument outDoc, TextRun original, String text, PageGlyphs page, String scope,
+            List<RunEdit.Segment> segments) throws IOException {
         if (!reproducible(original)) {
             return Optional.empty();
         }
@@ -189,7 +214,7 @@ public final class RunPainter {
         int n = glyphs.size();
         int m = text.length();
 
-        // What stays the same at the start and at the end keeps its original glyphs untouched.
+        // What stays the same at the start and at the end keeps its original glyphs.
         int prefix = 0;
         while (prefix < n && prefix < m && text.charAt(prefix) == before.charAt(prefix)) {
             prefix++;
@@ -200,45 +225,125 @@ public final class RunPainter {
             suffix++;
         }
 
+        RunEdit.Segment[] looks = new RunEdit.Segment[m];
+        for (RunEdit.Segment segment : segments) {
+            for (int k = Math.max(0, segment.start()); k < Math.min(m, segment.end()); k++) {
+                looks[k] = segment;
+            }
+        }
+
         float spacing = averageExtraSpacing(glyphs);
         float originalEnd = original.x() + original.width();
         List<Placed> placed = new ArrayList<>();
-        for (int i = 0; i < prefix; i++) {
-            placed.add(retained(glyphs.get(i), glyphs.get(i).x()));
-        }
+        List<Underline> underlines = new ArrayList<>();
 
         // New characters look like the character they replace, or like the one before an insertion.
         Glyph base = styleGlyph(glyphs, (n - prefix - suffix > 0 || prefix == 0) ? prefix : prefix - 1);
-        float cursor = prefix < n ? glyphs.get(prefix).x() : originalEnd;
-        for (int k = prefix; k < m - suffix; k++) {
+        float cursor = glyphs.get(0).x();
+        // How far the page's glyphs have moved from where it drew them, and whether the glyph just before the
+        // next one is itself an untouched original: then the next keeps the page's own spacing to it.
+        float shift = 0f;
+        boolean intact = true;
+        int lastOriginal = -1;
+        for (int k = 0; k < m; k++) {
             char c = text.charAt(k);
             String ch = String.valueOf(c);
-            if (Character.isWhitespace(c)) {
-                cursor += spaceAdvance(base, page) + spacing;
-                continue;
+            RunEdit.Segment look = looks[k];
+            int gi = k < prefix ? k : (k >= m - suffix ? n - (m - k) : -1);
+            float startX;
+            Glyph style;
+            if (gi >= 0) {
+                Glyph g = glyphs.get(gi);
+                if (intact && lastOriginal == gi - 1) {
+                    startX = g.x() + shift;
+                } else {
+                    shift = cursor - g.x();
+                    startX = cursor;
+                }
+                style = looked(g, look, original);
+                float advance = (gi + 1 < n ? glyphs.get(gi + 1).x() : originalEnd) - g.x();
+                float resize = style.size() / g.size();
+                placed.add(new Placed(style, g.font(), true, g.code(), g.unicode(), startX, 1f));
+                cursor = startX + advance * resize;
+                intact = resize == 1f;
+                lastOriginal = gi;
+            } else {
+                intact = false;
+                startX = cursor;
+                style = looked(base, look, original);
+                if (Character.isWhitespace(c)) {
+                    cursor += spaceAdvance(style, page) + spacing;
+                } else {
+                    Integer code = page.codeFor(base.font(), ch);
+                    if (code != null) {
+                        placed.add(new Placed(style, base.font(), true, code, ch, cursor, 1f));
+                        cursor += advance(base.font(), code, style) + spacing;
+                    } else {
+                        Fallback fallback = fallbackFont(outDoc, base, ch, page, scope);
+                        if (fallback == null) {
+                            cursor += style.size() * 0.5f;
+                        } else {
+                            placed.add(new Placed(style, fallback.font(), false, -1, ch, cursor, fallback.scale()));
+                            cursor += stringAdvance(fallback.font(), ch, style) * fallback.scale() + spacing;
+                        }
+                    }
+                }
             }
-            Integer code = page.codeFor(base.font(), ch);
-            if (code != null) {
-                placed.add(new Placed(base, base.font(), true, code, ch, cursor, 1f));
-                cursor += advance(base.font(), code, base) + spacing;
-                continue;
+            if (look != null && Boolean.TRUE.equals(look.underline())) {
+                addUnderline(underlines, startX, cursor, style);
             }
-            Fallback fallback = fallbackFont(outDoc, base, ch, page, scope);
-            if (fallback == null) {
-                cursor += base.size() * 0.5f;
-                continue;
-            }
-            placed.add(new Placed(base, fallback.font(), false, -1, ch, cursor, fallback.scale()));
-            cursor += stringAdvance(fallback.font(), ch, base) * fallback.scale() + spacing;
         }
+        return Optional.of(new Layout(placed, underlines, cursor));
+    }
 
-        // The rest of the line moves along with the edit, keeping its own spacing.
-        float delta = cursor - (suffix > 0 ? glyphs.get(n - suffix).x() : originalEnd);
-        for (int i = n - suffix; i < n; i++) {
-            placed.add(retained(glyphs.get(i), glyphs.get(i).x() + delta));
+    /** One more underlined letter, joined to the line already running up to it when it has the same look. */
+    private static void addUnderline(List<Underline> lines, float x0, float x1, Glyph style) {
+        if (!lines.isEmpty()) {
+            Underline last = lines.get(lines.size() - 1);
+            if (Math.abs(last.x1() - x0) < 0.01f && last.size() == style.size() && sameColour(last.color(), style.fill())) {
+                lines.set(lines.size() - 1, new Underline(last.x0(), x1, last.size(), last.color()));
+                return;
+            }
         }
-        float rightEdge = suffix > 0 ? originalEnd + delta : cursor;
-        return Optional.of(new Layout(placed, Math.max(rightEdge, cursor)));
+        lines.add(new Underline(x0, x1, style.size(), style.fill()));
+    }
+
+    /**
+     * {@code glyph} with the weight, colour and size a span asks for. Bold is the page's usual stand-in, a
+     * thickened outline; taking bold away only works on such an outline, not on a bold font.
+     */
+    private static Glyph looked(Glyph glyph, RunEdit.Segment look, TextRun original) {
+        if (look == null) {
+            return glyph;
+        }
+        float size = glyph.size();
+        if (look.size() != null && original.fontSize() > 0f) {
+            size = glyph.size() * look.size() / original.fontSize();
+        }
+        int mode = glyph.renderMode();
+        float lineWidth = glyph.lineWidth();
+        PDColor fill = glyph.fill();
+        PDColor stroke = glyph.stroke();
+        java.awt.Color colour = look.color() == null ? null : RunEdit.colour(look.color(), null);
+        if (colour != null) {
+            fill = new PDColor(new float[] {colour.getRed() / 255f, colour.getGreen() / 255f, colour.getBlue() / 255f},
+                    PDDeviceRGB.INSTANCE);
+            stroke = fill;
+        }
+        if (Boolean.TRUE.equals(look.bold())) {
+            if (mode != 2) {
+                mode = 2;
+                lineWidth = size * 0.03f;
+                stroke = fill;
+            }
+        } else if (Boolean.FALSE.equals(look.bold()) && mode == 2) {
+            mode = 0;
+        }
+        if (mode == 2 && look.size() != null && glyph.size() > 0f) {
+            lineWidth = lineWidth * size / glyph.size();
+        }
+        return new Glyph(glyph.unicode(), glyph.font(), glyph.code(), glyph.x(), size, glyph.hScale(), mode,
+                lineWidth, fill, stroke);
     }
 
     /**
@@ -266,8 +371,9 @@ public final class RunPainter {
         return glyphs.get(at);
     }
 
-    private static Placed retained(Glyph glyph, float x) {
-        return new Placed(glyph, glyph.font(), true, glyph.code(), glyph.unicode(), x, 1f);
+    private static boolean sameColour(PDColor a, PDColor b) {
+        return a == b || (a != null && b != null && a.getColorSpace() == b.getColorSpace()
+                && java.util.Arrays.equals(a.getComponents(), b.getComponents()));
     }
 
     /**

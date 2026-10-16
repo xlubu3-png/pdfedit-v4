@@ -32,6 +32,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     title: '모양 바꾸기',
     items: [
       { keys: ['Ctrl', 'B'], label: '굵게 (글자를 끌어 고른 뒤 누르면 고른 글자만)' },
+      { keys: ['Ctrl', 'U'], label: '밑줄 (고른 글자만, 고르지 않으면 줄 전체)' },
       { keys: ['Ctrl', ']'], label: '글자 크기 1pt 키우기' },
       { keys: ['Ctrl', '['], label: '글자 크기 1pt 줄이기' },
     ],

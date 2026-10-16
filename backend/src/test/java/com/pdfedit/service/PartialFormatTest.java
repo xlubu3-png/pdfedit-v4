@@ -100,6 +100,86 @@ class PartialFormatTest {
         assertThat(worldPartial).as("World is heavier").isGreaterThan(worldPlain + worldPlain / 10);
     }
 
+    /** Pixels that visibly differ between two equally sized images, between columns {@code from} and {@code to}. */
+    private static long differing(BufferedImage a, BufferedImage b, int from, int to) {
+        long n = 0;
+        for (int y = 0; y < a.getHeight(); y++) {
+            for (int x = Math.max(0, from); x < Math.min(a.getWidth(), to); x++) {
+                Color p = new Color(a.getRGB(x, y));
+                Color q = new Color(b.getRGB(x, y));
+                if (Math.abs(p.getRed() - q.getRed()) > 64 || Math.abs(p.getGreen() - q.getGreen()) > 64
+                        || Math.abs(p.getBlue() - q.getBlue()) > 64) {
+                    n++;
+                }
+            }
+        }
+        return n;
+    }
+
+    /** Height in pixels of the ink between columns {@code from} and {@code to}. */
+    private static int inkHeight(BufferedImage image, int from, int to) {
+        int top = Integer.MAX_VALUE;
+        int bottom = -1;
+        for (int y = 0; y < image.getHeight(); y++) {
+            for (int x = Math.max(0, from); x < Math.min(image.getWidth(), to); x++) {
+                if (isInk(new Color(image.getRGB(x, y)))) {
+                    top = Math.min(top, y);
+                    bottom = Math.max(bottom, y);
+                    break;
+                }
+            }
+        }
+        return bottom < 0 ? 0 : bottom - top + 1;
+    }
+
+    @Test
+    void theLettersWithoutFormattingStayExactlyAsThePageDrewThem() throws IOException {
+        byte[] pdf = helloWorld();
+        BufferedImage original = TestPdfs.render(pdf);
+        BufferedImage edited = TestPdfs.render(bake(pdf, new RunEdit("Hello World", null, null, null, null, 0f, 0f,
+                List.of(new Span(6, 11, true, "#ff0000")))));
+
+        assertThat(differing(original, edited, 0, 205)).as("Hello is the page's own glyphs").isLessThan(30);
+        assertThat(differing(original, edited, 215, original.getWidth())).as("World changed").isGreaterThan(100);
+    }
+
+    @Test
+    void anUnderlineRunsOnlyUnderItsLetters() throws IOException {
+        byte[] baked = bake(helloWorld(), new RunEdit("Hello World", null, null, null, null, 0f, 0f,
+                List.of(new Span(6, 11, null, null, null, true))));
+        BufferedImage image = TestPdfs.render(baked);
+
+        // baseline 700 on a 842pt page, 2x: the line sits a few points below it
+        int under = 2 * (842 - 700) + 4;
+        assertThat(inkInRows(image, under, under + 10, 0, 205)).as("none under Hello").isZero();
+        assertThat(inkInRows(image, under, under + 10, 225, image.getWidth())).as("a line under World")
+                .isGreaterThan(80);
+    }
+
+    private static int inkInRows(BufferedImage image, int fromRow, int toRow, int fromCol, int toCol) {
+        int n = 0;
+        for (int y = fromRow; y < toRow; y++) {
+            for (int x = Math.max(0, fromCol); x < Math.min(image.getWidth(), toCol); x++) {
+                if (isInk(new Color(image.getRGB(x, y)))) {
+                    n++;
+                }
+            }
+        }
+        return n;
+    }
+
+    @Test
+    void aSizeOnPartOfTheLineMakesOnlyThoseLettersBigger() throws IOException {
+        byte[] pdf = helloWorld();
+        BufferedImage plain = TestPdfs.render(pdf);
+        BufferedImage bigger = TestPdfs.render(bake(pdf, new RunEdit("Hello World", null, null, null, null, 0f, 0f,
+                List.of(new Span(6, 11, null, null, 48f, null)))));
+
+        assertThat(inkHeight(bigger, 0, 205)).as("Hello keeps its height").isEqualTo(inkHeight(plain, 0, 205));
+        assertThat(inkHeight(bigger, 215, bigger.getWidth())).as("World is twice as tall")
+                .isGreaterThan((int) (inkHeight(plain, 215, plain.getWidth()) * 1.6));
+    }
+
     @Test
     void theSpansComeBackWithTheRunAfterTheyAreRecorded() throws IOException {
         byte[] pdf = helloWorld();

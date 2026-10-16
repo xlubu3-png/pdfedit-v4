@@ -16,6 +16,8 @@ export interface StyleView {
   size: number
   bold: boolean
   color: string
+  /** The letters picked, or the whole line when none are, are underlined. */
+  underline: boolean
   /** The line was edited, restyled or moved; "원위치" undoes all of it. */
   canReset: boolean
   /**
@@ -44,6 +46,8 @@ interface StyleBarProps {
   onFamily: (family: string | null) => void
   onSize: (size: number) => void
   onBold: (bold: boolean) => void
+  /** Underlines the picked letters (or the whole line), or takes the underline off. */
+  onUnderline: () => void
   onColor: (color: string) => void
   onReset: () => void
   /** Draws the whole line in one installed font, so no character looks different from its neighbours. */
@@ -71,6 +75,7 @@ export function StyleBar({
   onFamily,
   onSize,
   onBold,
+  onUnderline,
   onColor,
   onReset,
   onUnify,
@@ -221,6 +226,18 @@ export function StyleBar({
         {...keepFocus}
       >
         <b>B</b> 굵게
+      </button>
+
+      <button
+        type="button"
+        className={`te-bold${view?.underline ? ' on' : ''}`}
+        disabled={disabled || view?.kind === 'added'}
+        aria-pressed={view?.underline ?? false}
+        onClick={onUnderline}
+        title="밑줄 (Ctrl+U) — 글자를 드래그해 고르면 고른 글자만, 고르지 않으면 줄 전체"
+        {...keepFocus}
+      >
+        <u>U</u> 밑줄
       </button>
 
       <label className="te-style-field">

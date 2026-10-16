@@ -84,6 +84,9 @@ export interface Span {
   end: number
   bold: boolean | null
   color: string | null
+  /** Size in points. */
+  size: number | null
+  underline: boolean | null
 }
 
 /** A text box the user put on the page; coordinates are PDF user space, `y` is the first baseline. */

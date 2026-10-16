@@ -200,7 +200,7 @@ function restoreOffsets(el: HTMLElement, start: number, end: number) {
 }
 
 /** Fills a box with its text, the stretches that have a look of their own in their own weight and colour. */
-function paintBox(el: HTMLElement, text: string, spans: Span[]) {
+function paintBox(el: HTMLElement, text: string, spans: Span[], lineSize: number) {
   el.textContent = ''
   let at = 0
   for (const span of cleanSpans(spans, text.length)) {
@@ -209,6 +209,8 @@ function paintBox(el: HTMLElement, text: string, spans: Span[]) {
     part.textContent = text.slice(span.start, span.end)
     if (span.bold !== null) part.style.fontWeight = span.bold ? 'bold' : 'normal'
     if (span.color !== null) part.style.color = span.color
+    if (span.size !== null && lineSize > 0) part.style.fontSize = `${span.size / lineSize}em`
+    if (span.underline) part.style.textDecoration = 'underline'
     el.append(part)
     at = span.end
   }
@@ -244,6 +246,7 @@ export function RunBox({
   const shownText = state?.text ?? run.text
   const spans = state?.spans
   const spansKey = JSON.stringify(spans ?? [])
+  const lineSize = state?.fontSize ?? run.fontSize
   const dx0 = state?.dx ?? 0
   const dy0 = state?.dy ?? 0
   const base = { x: run.x + dx0, y: run.y + dy0 }
@@ -253,9 +256,9 @@ export function RunBox({
     if (!el) return
     // Redrawing the content while the user has letters picked would drop the pick: take it up again after.
     const picked = document.activeElement === el ? selectionOffsets(el) : null
-    paintBox(el, shownText, JSON.parse(spansKey) as Span[])
+    paintBox(el, shownText, JSON.parse(spansKey) as Span[], lineSize)
     if (picked) restoreOffsets(el, picked.start, picked.end)
-  }, [run, shownText, spansKey])
+  }, [run, shownText, spansKey, lineSize])
 
   useEffect(() => {
     if (editing) focusAtEnd(ref.current)

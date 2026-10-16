@@ -22,14 +22,27 @@ public record RunEdit(String text, String fontFamily, Float fontSize, Boolean bo
                       float dx, float dy, List<Span> spans) {
 
     /**
-     * Characters {@code start} (included) to {@code end} (excluded) of the new text, drawn bold or not and in
-     * a colour of their own; a null {@code bold} or {@code color} leaves that to the line.
+     * Characters {@code start} (included) to {@code end} (excluded) of the new text, drawn bold or not, in a
+     * colour, at a size (points) and underlined or not of their own; a null field leaves that to the line.
      */
-    public record Span(int start, int end, Boolean bold, String color) {
+    public record Span(int start, int end, Boolean bold, String color, Float size, Boolean underline) {
+
+        public Span(int start, int end, Boolean bold, String color) {
+            this(start, end, bold, color, null, null);
+        }
+
+        /** True when the span changes something about its letters. */
+        boolean changesLook() {
+            return bold != null || color != null || size != null || underline != null;
+        }
     }
 
     /** A stretch of the new text with one look: the line's, or a span's. */
-    public record Segment(int start, int end, Boolean bold, String color) {
+    public record Segment(int start, int end, Boolean bold, String color, Float size, Boolean underline) {
+
+        public Segment(int start, int end, Boolean bold, String color) {
+            this(start, end, bold, color, null, null);
+        }
     }
 
     public RunEdit {
@@ -44,9 +57,17 @@ public record RunEdit(String text, String fontFamily, Float fontSize, Boolean bo
         return new RunEdit(text, null, null, null, null, 0f, 0f);
     }
 
-    /** True when the font, size, weight or colour differ from the original: the run can't be redrawn glyph by glyph then. */
+    /** True when anything about the look differs from the original: the font, size, weight or colour, or parts of the line. */
     public boolean restyled() {
-        return fontFamily != null || fontSize != null || bold != null || color != null || !spans.isEmpty();
+        return lineRestyled() || !spans.isEmpty();
+    }
+
+    /**
+     * True when the whole line has another font, size, weight or colour: a glyph-for-glyph copy of the original
+     * can't honour that. Parts of the line with a look of their own (spans) can be drawn with the page's glyphs.
+     */
+    public boolean lineRestyled() {
+        return fontFamily != null || fontSize != null || bold != null || color != null;
     }
 
     public boolean moved() {
@@ -95,7 +116,7 @@ public record RunEdit(String text, String fontFamily, Float fontSize, Boolean bo
                 end = span.end() > oldEnd ? span.end() + delta : newEnd;
             }
             if (end > start) {
-                out.add(new Span(start, end, span.bold(), span.color()));
+                out.add(new Span(start, end, span.bold(), span.color(), span.size(), span.underline()));
             }
         }
         return out;
@@ -110,8 +131,9 @@ public record RunEdit(String text, String fontFamily, Float fontSize, Boolean bo
             return List.of();
         }
         List<Span> sorted = spans.stream()
-                .filter(s -> s != null && (s.bold() != null || s.color() != null))
-                .map(s -> new Span(Math.max(0, s.start()), Math.min(textLength, s.end()), s.bold(), s.color()))
+                .filter(s -> s != null && s.changesLook())
+                .map(s -> new Span(Math.max(0, s.start()), Math.min(textLength, s.end()), s.bold(), s.color(),
+                        s.size(), s.underline()))
                 .filter(s -> s.end() > s.start())
                 .sorted(Comparator.comparingInt(Span::start).thenComparingInt(Span::end))
                 .toList();
@@ -120,7 +142,8 @@ public record RunEdit(String text, String fontFamily, Float fontSize, Boolean bo
             if (!out.isEmpty() && out.get(out.size() - 1).end() > span.start()) {
                 Span previous = out.remove(out.size() - 1);
                 if (span.start() > previous.start()) {
-                    out.add(new Span(previous.start(), span.start(), previous.bold(), previous.color()));
+                    out.add(new Span(previous.start(), span.start(), previous.bold(), previous.color(), previous.size(),
+                        previous.underline()));
                 }
             }
             out.add(span);
@@ -137,7 +160,7 @@ public record RunEdit(String text, String fontFamily, Float fontSize, Boolean bo
             if (span.start() > at) {
                 out.add(new Segment(at, span.start(), null, null));
             }
-            out.add(new Segment(span.start(), span.end(), span.bold(), span.color()));
+            out.add(new Segment(span.start(), span.end(), span.bold(), span.color(), span.size(), span.underline()));
             at = span.end();
         }
         if (at < length) {

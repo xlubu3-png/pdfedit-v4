@@ -17,7 +17,8 @@ import { foreignChars, SIMILAR_ENOUGH } from '../fontMix'
 import { History } from '../history'
 import { keyCode } from '../keys'
 import type { SnapTargets } from '../snap'
-import { boldToggleFor, clearField, formatRange, remapSpans } from '../spans'
+import { clearField, formatRange, lookAt, remapSpans, toggleFor } from '../spans'
+import type { LookPatch } from '../spans'
 import type { AddedText, FontChoice, PageItem, PageText, RunState, TextRun } from '../types'
 import { fitZoom, previewDpi, PX_PER_PT_AT_100, zoomStep } from '../zoom'
 import { HelpDialog } from './HelpDialog'
@@ -59,6 +60,13 @@ const HISTORY_LIMIT = 100
 const COALESCE_MS = 800
 
 type Selection = { kind: 'run'; index: number } | { kind: 'added'; id: string } | null
+
+/** Letters `start` to `end` picked inside the text of line `index`. */
+interface PickedRange {
+  index: number
+  start: number
+  end: number
+}
 
 /** Everything undo can bring back: what was done to each line, and the boxes that were added. */
 interface Snapshot {
@@ -425,17 +433,33 @@ export function TextEditor({
     [updateRun],
   )
 
-  /** The letters picked inside the line being typed in: bold and colour then go to just those. */
-  const textRange = useRef<{ index: number; start: number; end: number } | null>(null)
-  const onTextRange = useCallback((run: TextRun, range: { start: number; end: number } | null) => {
-    textRange.current = range ? { index: run.index, ...range } : null
+  /**
+   * The letters picked inside the line being typed in: bold, colour, size and underline then go to just those.
+   * Held twice, like the other states: in a ref for the handlers, as state so the style bar shows their look.
+   */
+  const [picked, setPicked] = useState<PickedRange | null>(null)
+  const textRange = useRef<PickedRange | null>(null)
+  const putRange = useCallback((range: PickedRange | null) => {
+    const was = textRange.current
+    if (was?.index === range?.index && was?.start === range?.start && was?.end === range?.end) return
+    textRange.current = range
+    setPicked(range)
   }, [])
+  const onTextRange = useCallback(
+    (run: TextRun, range: { start: number; end: number } | null) => putRange(range ? { index: run.index, ...range } : null),
+    [putRange],
+  )
   useEffect(() => {
-    textRange.current = null
-  }, [selected])
+    putRange(null)
+  }, [selected, putRange])
 
-  /** Lays bold or a colour over just the picked letters of a line (partial formatting). */
-  function formatPicked(run: TextRun, range: { start: number; end: number }, patch: { bold?: boolean; color?: string }) {
+  /** The line's own look, which the spans are laid over. */
+  function lineLookOf(run: TextRun, s: RunState | undefined) {
+    return { bold: s?.bold ?? run.bold, color: s?.color ?? run.color, size: s?.fontSize ?? run.fontSize }
+  }
+
+  /** Lays a look over just the picked letters of a line (partial formatting). */
+  function formatPicked(run: TextRun, range: { start: number; end: number }, patch: LookPatch) {
     const s = statesRef.current.get(run.index)
     const before = s?.text ?? run.text
     // What is in the box is what the user sees, typed text not yet committed included.
@@ -444,10 +468,13 @@ export function TextEditor({
     const start = Math.min(range.start, text.length)
     const end = Math.min(range.end, text.length)
     if (end <= start) return
-    const line = { bold: s?.bold ?? run.bold, color: s?.color ?? run.color }
+    const line = lineLookOf(run, s)
     const base = remapSpans(s?.spans ?? [], before, text)
-    const bold = patch.bold === undefined ? undefined : boldToggleFor(base, start, end, line)
-    updateRun(run, { text, spans: formatRange(base, start, end, text.length, { bold, color: patch.color }, line) })
+    // Bold and underline switch: on unless every picked letter has it already.
+    const next: LookPatch = { ...patch }
+    if (patch.bold !== undefined) next.bold = toggleFor(base, start, end, 'bold', line)
+    if (patch.underline !== undefined) next.underline = toggleFor(base, start, end, 'underline', line)
+    updateRun(run, { text, spans: formatRange(base, start, end, text.length, next, line) })
   }
 
   const moveRun = useCallback((run: TextRun, dx: number, dy: number) => updateRun(run, { dx, dy }), [updateRun])
@@ -508,23 +535,38 @@ export function TextEditor({
     setEditing(null)
   }, [])
 
-  function patchSelected(patch: { fontFamily?: string | null; fontSize?: number; bold?: boolean; color?: string }) {
+  function patchSelected(patch: {
+    fontFamily?: string | null
+    fontSize?: number
+    bold?: boolean
+    color?: string
+    underline?: boolean
+  }) {
     const current = dataRef.current
     if (!selected || !current) return
     if (selected.kind === 'run') {
       const run = current.runs[selected.index]
       const range = textRange.current
-      if (range && range.index === run.index && (patch.bold !== undefined || patch.color !== undefined)) {
-        formatPicked(run, range, patch) // letters are picked: only they change
+      const look: LookPatch = { bold: patch.bold, color: patch.color, size: patch.fontSize, underline: patch.underline }
+      const looks = Object.values(look).some((v) => v !== undefined)
+      if (range && range.index === run.index && looks) {
+        formatPicked(run, range, look) // letters are picked: only they change
         return
       }
-      // A change to the whole line also takes over what the bold / coloured stretches said about it.
+      if (patch.underline !== undefined) {
+        // An underline has no line-wide setting: with nothing picked it goes under the whole line.
+        const text = statesRef.current.get(run.index)?.text ?? run.text
+        if (text.length > 0) formatPicked(run, { start: 0, end: text.length }, { underline: true })
+        return
+      }
+      // A change to the whole line also takes over what the stretches with a look of their own said about it.
       let spans = statesRef.current.get(run.index)?.spans ?? []
       if (patch.bold !== undefined) spans = clearField(spans, 'bold')
       if (patch.color !== undefined) spans = clearField(spans, 'color')
+      if (patch.fontSize !== undefined) spans = clearField(spans, 'size')
       updateRun(run, { ...patch, spans })
-    } else {
-      updateAdded(selected.id, patch)
+    } else if (patch.underline === undefined) {
+      updateAdded(selected.id, patch) // an added box has no underline
     }
   }
 
@@ -783,17 +825,25 @@ export function TextEditor({
   if (data && selected?.kind === 'run') {
     const run = data.runs[selected.index]
     const s = runStates.get(run.index)
-    const restyled =
-      s !== undefined && (s.fontFamily !== null || s.fontSize !== null || s.bold !== null || s.color !== null || s.spans.length > 0)
+    // Letters with a look of their own are drawn with the page's glyphs too: only a change to the whole line is not.
+    const restyled = s !== undefined && (s.fontFamily !== null || s.fontSize !== null || s.bold !== null || s.color !== null)
+    // With letters picked the bar shows how the first of them looks, since that is what a change goes to.
+    const lineLook = lineLookOf(run, s)
+    const text = s?.text ?? run.text
+    const range = picked?.index === run.index && picked.start < text.length ? picked : null
+    const shown = range ? lookAt(s?.spans ?? [], range.start, lineLook) : lineLook
+    const underlined =
+      text.length > 0 && !toggleFor(s?.spans ?? [], range?.start ?? 0, Math.min(range?.end ?? text.length, text.length), 'underline', lineLook)
     view = {
       kind: 'run',
       label: `줄 ${run.index + 1}`,
       sourceFont: run.sourceFont,
       autoFamily: run.fontFamily,
       family: s?.fontFamily ?? null,
-      size: s?.fontSize ?? run.fontSize,
-      bold: s?.bold ?? run.bold,
-      color: s?.color ?? run.color,
+      size: shown.size,
+      bold: shown.bold,
+      color: shown.color,
+      underline: underlined,
       canReset: s !== undefined,
       look: s === undefined ? null : !restyled && run.glyphReuse ? 'original' : 'substitute',
       // A character the page's font lacks is drawn in another font only when the page's own font is not
@@ -823,6 +873,7 @@ export function TextEditor({
         size: box.fontSize,
         bold: box.bold,
         color: box.color ?? '#000000',
+        underline: false,
         canReset: false,
         look: null,
         mixedChars: '',
@@ -929,7 +980,7 @@ export function TextEditor({
         return
       }
       if (e.key === 'Escape') {
-        textRange.current = null
+        putRange(null)
         if (adding) setAdding(false)
         else if (box || inField) el?.blur()
         else if (editing) setEditing(null)
@@ -940,6 +991,11 @@ export function TextEditor({
       if (ctrl && code === 'KeyB' && view && !inField) {
         e.preventDefault()
         patchSelected({ bold: !view.bold })
+        return
+      }
+      if (ctrl && code === 'KeyU' && view?.kind === 'run' && !inField) {
+        e.preventDefault() // the browser would show the page source
+        patchSelected({ underline: true })
         return
       }
       const bracket = code === 'BracketRight' || e.key === ']' ? 1 : code === 'BracketLeft' || e.key === '[' ? -1 : 0
@@ -1073,6 +1129,7 @@ export function TextEditor({
           onFamily={(family) => patchSelected({ fontFamily: family })}
           onSize={(size) => patchSelected({ fontSize: round(Math.min(500, Math.max(1, size))) })}
           onBold={(bold) => patchSelected({ bold })}
+          onUnderline={() => patchSelected({ underline: true })}
           onColor={(color) => patchSelected({ color })}
           onReset={resetSelectedRun}
           onUnify={unifySelectedRun}

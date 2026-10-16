@@ -206,6 +206,9 @@ public class TextEditService {
             if (span.color() != null && !span.color().matches(COLOUR_PATTERN)) {
                 throw new InvalidEditException("글자 색은 #rrggbb 형식이어야 합니다.");
             }
+            if (span.size() != null && !(span.size() >= MIN_FONT_SIZE && span.size() <= MAX_FONT_SIZE)) {
+                throw new InvalidEditException("글자 크기는 " + (int) MIN_FONT_SIZE + "~" + (int) MAX_FONT_SIZE + "pt 사이여야 합니다.");
+            }
         }
         return new RunEdit(text, family, size, item.bold(), color, dx, dy, spans);
     }
@@ -350,8 +353,9 @@ public class TextEditService {
         // the source characters can't be reproduced individually - or when the user chose another
         // font, size, weight or colour, which a glyph-for-glyph copy of the original can't honour.
         RunPainter.Layout layout = null;
-        if (hasText && !edit.restyled()) {
-            layout = fonts.painter.layout(outDoc, original, text, pageGlyphs, fontScope).orElse(null);
+        if (hasText && !edit.lineRestyled()) {
+            layout = fonts.painter.layout(outDoc, original, text, pageGlyphs, fontScope,
+                    edit.spans().isEmpty() ? List.of() : edit.segments()).orElse(null);
             if (layout != null) {
                 boxWidth = Math.max(original.width(), layout.rightEdge() - original.x());
             }
@@ -364,7 +368,7 @@ public class TextEditService {
             // Parts of the line have a look of their own: drawn piece by piece, each in its own weight and colour.
             pieces = piecesOf(outDoc, original, edit, text, size, colour, pageGlyphs, fonts, fontScope);
             fit = widthFit(pieces.get(0).styled().font(), original, edit, size);
-            boxWidth = Math.max(original.width(), widthOf(pieces, size) * fit);
+            boxWidth = Math.max(original.width(), widthOf(pieces) * fit);
         } else if (hasText && layout == null) {
             styled = fontFor(outDoc, original, edit, text, size, pageGlyphs, fonts, fontScope);
             fit = widthFit(styled.font(), original, edit, size);
@@ -395,17 +399,37 @@ public class TextEditService {
             layout.draw(cs, original.y() + edit.dy(), edit.dx());
         } else if (pieces != null) {
             float cursor = original.x() + edit.dx();
+            float baseline = original.y() + edit.dy();
             for (Piece piece : pieces) {
-                drawLine(cs, piece.styled(), piece.text(), cursor, original.y() + edit.dy(), size, piece.colour(), fit);
-                cursor += widthOf(piece, size) * fit;
+                drawLine(cs, piece.styled(), piece.text(), cursor, baseline, piece.size(), piece.colour(), fit);
+                float width = widthOf(piece) * fit;
+                if (piece.underline()) {
+                    underline(cs, cursor, cursor + width, baseline, piece.size(), piece.colour());
+                }
+                cursor += width;
             }
         } else if (hasText) {
             drawLine(cs, styled, text, original.x() + edit.dx(), original.y() + edit.dy(), size, colour, fit);
         }
     }
 
-    /** One stretch of an edited line with its own font (weight) and colour. */
-    private record Piece(String text, FontMatcher.Styled styled, Color colour) {
+    /** One stretch of an edited line with its own font (weight), colour, size and underline. */
+    private record Piece(String text, FontMatcher.Styled styled, Color colour, float size, boolean underline) {
+    }
+
+    /** A line under {@code x0} to {@code x1}, below the baseline by the usual fraction of the size. */
+    private static void underline(PDPageContentStream cs, float x0, float x1, float baseline, float size, Color colour)
+            throws IOException {
+        cs.saveGraphicsState();
+        try {
+            cs.setStrokingColor(colour);
+            cs.setLineWidth(Math.max(0.3f, size * 0.05f));
+            cs.moveTo(x0, baseline - size * 0.12f);
+            cs.lineTo(x1, baseline - size * 0.12f);
+            cs.stroke();
+        } finally {
+            cs.restoreGraphicsState();
+        }
     }
 
     /** The line cut where its look changes, each stretch with the font and colour it is drawn in. */
@@ -421,21 +445,23 @@ public class TextEditService {
             boolean bold = segment.bold() != null ? segment.bold() : lineBold;
             RunEdit forPiece = new RunEdit(part, edit.fontFamily(), edit.fontSize(), bold, edit.color(), 0f, 0f);
             Color colour = segment.color() != null ? RunEdit.colour(segment.color(), lineColour) : lineColour;
-            pieces.add(new Piece(part, fontFor(outDoc, original, forPiece, part, size, pageGlyphs, fonts, fontScope),
-                    colour));
+            float pieceSize = segment.size() != null ? segment.size() : size;
+            pieces.add(new Piece(part,
+                    fontFor(outDoc, original, forPiece, part, pieceSize, pageGlyphs, fonts, fontScope),
+                    colour, pieceSize, Boolean.TRUE.equals(segment.underline())));
         }
         return pieces;
     }
 
-    private static float widthOf(Piece piece, float size) {
-        Float measured = tryMeasureWidth(piece.styled().font(), piece.text(), size);
-        return measured != null ? measured : piece.text().length() * size * 0.6f;
+    private static float widthOf(Piece piece) {
+        Float measured = tryMeasureWidth(piece.styled().font(), piece.text(), piece.size());
+        return measured != null ? measured : piece.text().length() * piece.size() * 0.6f;
     }
 
-    private static float widthOf(List<Piece> pieces, float size) {
+    private static float widthOf(List<Piece> pieces) {
         float total = 0f;
         for (Piece piece : pieces) {
-            total += widthOf(piece, size);
+            total += widthOf(piece);
         }
         return total;
     }

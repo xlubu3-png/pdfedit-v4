@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { overflows, rightLimit } from './overflow'
+import { fitFactor, overflows, overlayFit, rightLimit } from './overflow'
 import type { PageText, TextRun } from './types'
 
 function run(index: number, x: number, y: number, width: number, text: string): TextRun {
@@ -68,5 +68,22 @@ describe('overflows', () => {
   it('is false for text that is not longer than before', () => {
     expect(overflows(left, data, '가나', '맑은 고딕', 12, false, 0)).toBe(false)
     expect(overflows(left, data, left.text, '맑은 고딕', 12, false, 0)).toBe(false)
+  })
+})
+
+describe('fitFactor', () => {
+  it('shrinks a stand-in font whose letters are wider than the real ones', () => {
+    expect(fitFactor(93, 100)).toBeCloseTo(0.93)
+  })
+
+  it('keeps within sane bounds and ignores missing measurements', () => {
+    expect(fitFactor(10, 100)).toBe(0.75)
+    expect(fitFactor(500, 100)).toBe(1.05)
+    expect(fitFactor(0, 100)).toBe(1)
+    expect(fitFactor(100, 0)).toBe(1)
+  })
+
+  it('leaves the size alone when there is no canvas to measure with', () => {
+    expect(overlayFit(run(0, 10, 100, 80, 'abc'))).toBe(1)
   })
 })

@@ -33,6 +33,22 @@ export function estimatedWidth(run: TextRun, text: string, family: string, size:
   return run.width * (size / run.fontSize) * (text.length / Math.max(run.text.length, 1))
 }
 
+/** The factor that brings a stand-in font's letters to the width the real ones have, kept within sane bounds. */
+export function fitFactor(realWidth: number, standInWidth: number): number {
+  if (!(realWidth > 0) || !(standInWidth > 0)) return 1
+  return Math.min(1.05, Math.max(0.75, realWidth / standInWidth))
+}
+
+/**
+ * How much smaller than the nominal size the text of a line has to be set in the browser, so that it takes
+ * the room the page's own letters take: a PDF font often has narrower, smaller letters than the installed font
+ * the browser shows in its place, and the stand-in would look too big beside the rest of the page.
+ */
+export function overlayFit(run: TextRun): number {
+  const standIn = measure(run.text, run.fontFamily, run.fontSize, run.bold)
+  return standIn === null ? 1 : fitFactor(run.width, standIn)
+}
+
 /** The x (points) the line must not run past: the next line on the same baseline, or the page's edge. */
 export function rightLimit(run: TextRun, data: PageText): number {
   let limit = data.originX + data.pageWidth

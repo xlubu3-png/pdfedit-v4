@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ClipboardEvent, CSSProperties, KeyboardEvent, MouseEvent, PointerEvent } from 'react'
-import { overflows } from '../overflow'
+import { estimatedWidth, overflows, overlayFit } from '../overflow'
 import { snapPosition } from '../snap'
 import type { SnapTargets } from '../snap'
 import { cleanSpans } from '../spans'
@@ -298,6 +298,16 @@ export function RunBox({
 
   const size = state?.fontSize ?? run.fontSize
   const color = state?.color ?? run.color
+  // The text shown while typing is set in the browser's version of the font: shrunk the way the page's own
+  // narrower letters are, so it does not look bigger than the finished line (a font the user chose is as it is).
+  const ownFit = useMemo(() => overlayFit(run), [run])
+  const standInFit = state?.fontFamily ? 1 : ownFit
+  // The box is at least as wide as the finished line will be, so its frame covers all of the new text.
+  const textNow = typed ?? shownText
+  const grownWidth =
+    textNow === run.text
+      ? run.width
+      : estimatedWidth(run, textNow, state?.fontFamily ?? run.fontFamily, size, state?.bold ?? run.bold)
   const tooLong = overflows(
     run,
     data,
@@ -315,9 +325,9 @@ export function RunBox({
     top: (data.pageHeight - (run.boxTop + dy - data.originY)) * scale,
   }
   const boxStyle: CSSProperties = {
-    minWidth: Math.max(run.width * scale, 1),
+    minWidth: Math.max(Math.max(run.width, grownWidth) * scale, 1),
     minHeight: Math.max((run.boxTop - run.boxBottom) * scale, 1),
-    fontSize: Math.max(size * scale * 0.95, 6),
+    fontSize: Math.max(size * scale * 0.95 * standInFit, 6),
     fontFamily: `'${state?.fontFamily ?? run.fontFamily}'`,
     fontWeight: (state?.bold ?? run.bold) ? 'bold' : undefined,
     ...boxVars(color),

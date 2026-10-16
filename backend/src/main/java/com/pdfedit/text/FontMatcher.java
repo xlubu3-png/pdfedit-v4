@@ -139,6 +139,16 @@ public class FontMatcher {
         return faces;
     }
 
+    /**
+     * The factor that brings letters drawn in the installed font of {@code match} to the size of the page's own
+     * letters of {@code source} (see {@link TypefaceChooser#sizeRatio}); 1 when there is nothing to compare.
+     */
+    public float glyphSizeRatio(PDFont source, RunPainter.PageGlyphs page, Match match) {
+        return faceFor(match)
+                .map(face -> typefaceChooser.sizeRatio(source, page.samples(source), face))
+                .orElse(1f);
+    }
+
     /** A match for an explicit style, used when comparing candidate fonts. */
     Match match(boolean serif, boolean bold) {
         return new Match(serif ? "Batang" : "맑은 고딕", bold);

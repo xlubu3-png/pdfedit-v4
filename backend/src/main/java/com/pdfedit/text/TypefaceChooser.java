@@ -113,6 +113,88 @@ final class TypefaceChooser {
         }
     }
 
+    /** Ink sizes (width, height in pixels at {@link #SIZE}) of characters in installed fonts, by font file and character. */
+    private static final Map<String, int[]> INK_CACHE = new ConcurrentHashMap<>();
+
+    /** Closer than this to 1 the sizes are called equal: no resizing for a hair. */
+    private static final double SAME_SIZE = 0.04;
+
+    /**
+     * How large the letters of {@code face} come out next to the page's own letters at the same nominal size,
+     * as the factor that brings them to the page's size (below 1: the installed font is the bigger one). A PDF
+     * font - a Type 3 font above all - often fills less of its em than an installed font does, so letters typed
+     * in the stand-in would stand out as too big. Judged on the ink of the characters both draw; 1 when that
+     * cannot be told.
+     */
+    float sizeRatio(PDFont source, List<Map.Entry<String, Integer>> samples, SystemFonts.Face face) {
+        try {
+            List<Double> ratios = new ArrayList<>();
+            for (Map.Entry<String, Integer> sample : samples) {
+                int[] mine = inkSize(renderSourceGlyph(source, sample.getValue()));
+                int[] theirs = standInInk(face, sample.getKey());
+                if (mine != null && theirs != null) {
+                    ratios.add(Math.sqrt((double) mine[0] * mine[1] / ((double) theirs[0] * theirs[1])));
+                }
+            }
+            if (ratios.isEmpty()) {
+                return 1f;
+            }
+            ratios.sort(Double::compare);
+            double median = ratios.get(ratios.size() / 2);
+            return Math.abs(median - 1) < SAME_SIZE ? 1f : (float) Math.min(1.1, Math.max(0.7, median));
+        } catch (IOException | RuntimeException e) {
+            return 1f;
+        }
+    }
+
+    private static int[] standInInk(SystemFonts.Face face, String text) throws IOException {
+        String key = face.file() + "|" + face.collectionFontName() + "|" + text;
+        int[] cached = INK_CACHE.get(key);
+        if (cached != null) {
+            return cached.length == 0 ? null : cached;
+        }
+        int[] size = null;
+        try (PDDocument doc = new PDDocument()) {
+            PDFont font = face.embed(doc);
+            PDPage page = new PDPage(new PDRectangle(PAGE, PAGE));
+            doc.addPage(page);
+            try (PDPageContentStream cs = new PDPageContentStream(doc, page)) {
+                cs.beginText();
+                try {
+                    cs.setFont(font, SIZE);
+                    cs.newLineAtOffset(14, 22);
+                    cs.showText(text);
+                } catch (IllegalArgumentException missingGlyph) {
+                    // this font has no such character: nothing to compare
+                } finally {
+                    cs.endText();
+                }
+            }
+            size = inkSize(new PDFRenderer(doc).renderImage(0, 1f));
+        }
+        INK_CACHE.put(key, size == null ? new int[0] : size);
+        return size;
+    }
+
+    /** Width and height in pixels of the dark area of {@code image}; null when nothing is drawn. */
+    private static int[] inkSize(BufferedImage image) {
+        int minX = image.getWidth();
+        int minY = image.getHeight();
+        int maxX = -1;
+        int maxY = -1;
+        for (int y = 0; y < image.getHeight(); y++) {
+            for (int x = 0; x < image.getWidth(); x++) {
+                if (isDark(image.getRGB(x, y))) {
+                    minX = Math.min(minX, x);
+                    minY = Math.min(minY, y);
+                    maxX = Math.max(maxX, x);
+                    maxY = Math.max(maxY, y);
+                }
+            }
+        }
+        return maxX < 0 ? null : new int[] {maxX - minX + 1, maxY - minY + 1};
+    }
+
     /** How much better than the stock choice another font has to be before it replaces it: no churn for a hair. */
     private static final double MARGIN = 0.03;
 

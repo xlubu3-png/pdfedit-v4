@@ -95,7 +95,12 @@ public final class RunPainter {
         }
     }
 
-    private record Placed(Glyph style, PDFont font, boolean sourceGlyph, int code, String text, float x) {
+    /** {@code scale} sizes a stand-in font's letters to the page's own (1 for the page's glyphs). */
+    private record Placed(Glyph style, PDFont font, boolean sourceGlyph, int code, String text, float x, float scale) {
+    }
+
+    /** A font that draws a typed character, and how much to scale its letters to look as big as the page's. */
+    private record Fallback(PDFont font, float scale) {
     }
 
     /** Where every character of an edited run goes; drawn once the white-out has been laid down. */
@@ -134,7 +139,7 @@ public final class RunPainter {
                     // the next beginText() fails with "Nested beginText() calls are not allowed".
                     cs.beginText();
                     try {
-                        cs.setFont(item.font(), style.size());
+                        cs.setFont(item.font(), style.size() * item.scale());
                         cs.setHorizontalScaling(style.hScale() * 100f);
                         cs.newLineAtOffset(item.x() + dx, baselineY);
                         if (item.sourceGlyph()) {
@@ -160,6 +165,7 @@ public final class RunPainter {
     private final Map<String, PDFont> substitutes = new HashMap<>();
     private final Map<COSDictionary, PDFont> reembedded = new IdentityHashMap<>();
     private final Map<COSDictionary, FontMatcher.Match> matches = new IdentityHashMap<>();
+    private final Map<COSDictionary, Float> glyphScales = new IdentityHashMap<>();
 
     public RunPainter(FontMatcher fontMatcher) {
         this.fontMatcher = fontMatcher;
@@ -213,17 +219,17 @@ public final class RunPainter {
             }
             Integer code = page.codeFor(base.font(), ch);
             if (code != null) {
-                placed.add(new Placed(base, base.font(), true, code, ch, cursor));
+                placed.add(new Placed(base, base.font(), true, code, ch, cursor, 1f));
                 cursor += advance(base.font(), code, base) + spacing;
                 continue;
             }
-            PDFont font = fallbackFont(outDoc, base, ch, page, scope);
-            if (font == null) {
+            Fallback fallback = fallbackFont(outDoc, base, ch, page, scope);
+            if (fallback == null) {
                 cursor += base.size() * 0.5f;
                 continue;
             }
-            placed.add(new Placed(base, font, false, -1, ch, cursor));
-            cursor += stringAdvance(font, ch, base) + spacing;
+            placed.add(new Placed(base, fallback.font(), false, -1, ch, cursor, fallback.scale()));
+            cursor += stringAdvance(fallback.font(), ch, base) * fallback.scale() + spacing;
         }
 
         // The rest of the line moves along with the edit, keeping its own spacing.
@@ -261,7 +267,7 @@ public final class RunPainter {
     }
 
     private static Placed retained(Glyph glyph, float x) {
-        return new Placed(glyph, glyph.font(), true, glyph.code(), glyph.unicode(), x);
+        return new Placed(glyph, glyph.font(), true, glyph.code(), glyph.unicode(), x, 1f);
     }
 
     /**
@@ -383,14 +389,14 @@ public final class RunPainter {
     }
 
     /** A font that can draw {@code ch} in the spirit of the source font, or null if none can. */
-    private PDFont fallbackFont(PDDocument outDoc, Glyph base, String ch, PageGlyphs page, String scope) {
+    private Fallback fallbackFont(PDDocument outDoc, Glyph base, String ch, PageGlyphs page, String scope) {
         COSDictionary key = base.font().getCOSObject();
         if (!reembedded.containsKey(key)) {
             reembedded.put(key, FontMatcher.tryLoadOriginalEmbedded(outDoc, base.font()));
         }
         PDFont original = reembedded.get(key);
         if (original != null && canDraw(original, ch)) {
-            return original;
+            return new Fallback(original, 1f);
         }
         // The installed font that looks most like the source font: by name for ordinary fonts, by
         // the look of their glyphs for fonts like Type 3 that carry no usable name.
@@ -403,6 +409,11 @@ public final class RunPainter {
         PDFont substitute = substitutes.computeIfAbsent(
                 scope + "|" + base.font().getName() + "|" + chosen.cssFamily + "|" + chosen.bold,
                 k -> fontMatcher.loadFor(outDoc, chosen));
-        return canDraw(substitute, ch) ? substitute : null;
+        if (!canDraw(substitute, ch)) {
+            return null;
+        }
+        // The stand-in's letters may fill more of the em than the page's own: bring them to the page's size.
+        float scale = glyphScales.computeIfAbsent(key, k -> fontMatcher.glyphSizeRatio(base.font(), page, chosen));
+        return new Fallback(substitute, scale);
     }
 }

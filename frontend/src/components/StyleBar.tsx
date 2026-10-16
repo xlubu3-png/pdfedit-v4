@@ -34,6 +34,8 @@ export interface StyleView {
   original: 'removed' | 'covered' | null
   /** How closely the font chosen for a line whose own font has no name resembles it (0 to 1); null when not judged. */
   similarity: number | null
+  /** How many stretches of the line are bold or coloured on their own (partial formatting). */
+  partial: number
 }
 
 interface StyleBarProps {
@@ -150,6 +152,14 @@ export function StyleBar({
                 글꼴 섞임: '{view.mixedChars.length > 6 ? `${view.mixedChars.slice(0, 6)}…` : view.mixedChars}'
               </span>
             )}
+            {view.partial > 0 && (
+              <span
+                className="te-look ok"
+                title="글자를 드래그해 고른 뒤 굵게·색을 누르면 고른 글자에만 적용됩니다. 고르지 않고 누르면 줄 전체에 적용되고 부분 서식은 사라집니다"
+              >
+                부분 서식 {view.partial}곳
+              </span>
+            )}
             {view.look === 'substitute' && (
               <span className="te-look warn" title="이 줄 전체를 이 PC에 설치된 글꼴로 새로 그립니다 (원본과 조금 다를 수 있음)">
                 대체 글꼴로 다시 그림
@@ -207,7 +217,7 @@ export function StyleBar({
         disabled={disabled}
         aria-pressed={view?.bold ?? false}
         onClick={() => view && onBold(!view.bold)}
-        title="굵게 (Ctrl+B)"
+        title="굵게 (Ctrl+B) — 글자를 드래그해 고르면 고른 글자만, 고르지 않으면 줄 전체"
         {...keepFocus}
       >
         <b>B</b> 굵게
@@ -220,6 +230,7 @@ export function StyleBar({
           value={view?.color ?? '#000000'}
           disabled={disabled}
           onChange={(e) => onColor(e.target.value)}
+          title="글자 색 — 글자를 드래그해 고르면 고른 글자만, 고르지 않으면 줄 전체"
           aria-label="글자 색"
         />
       </label>

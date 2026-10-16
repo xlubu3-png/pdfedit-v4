@@ -31,6 +31,7 @@ const run: TextRun = {
   editFontSize: null,
   editBold: null,
   editColor: null,
+  editSpans: [],
   dx: 0,
   dy: 0,
 }
@@ -62,6 +63,7 @@ function renderRun(editing: boolean, onCommitText = vi.fn(), onStopEdit = vi.fn(
     onCommitText,
     onMoveTo: noop,
     onGuides: noop,
+    onSelection: noop,
   }
   const view = render(<RunBox {...props} editing={editing} />)
   const box = () => view.container.querySelector<HTMLElement>('[data-index]')!

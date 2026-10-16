@@ -68,9 +68,22 @@ export interface TextRun {
   editFontSize: number | null
   editBold: boolean | null
   editColor: string | null
+  /** Parts of the edited text with a look of their own (bold, colour); empty when none. */
+  editSpans: Span[]
   /** How far the line was moved, in points (y up). */
   dx: number
   dy: number
+}
+
+/**
+ * Characters `start` (included) to `end` (excluded) of an edited line, bold or not and in a colour of their
+ * own; a null `bold` or `color` leaves that to the line.
+ */
+export interface Span {
+  start: number
+  end: number
+  bold: boolean | null
+  color: string | null
 }
 
 /** A text box the user put on the page; coordinates are PDF user space, `y` is the first baseline. */
@@ -92,6 +105,8 @@ export interface RunState {
   fontSize: number | null
   bold: boolean | null
   color: string | null
+  /** Parts of the text that are bold or coloured on their own, on top of the line's look. */
+  spans: Span[]
   dx: number
   dy: number
 }

@@ -60,6 +60,7 @@ public class TextEditService {
     private static final float MAX_FONT_SIZE = 500f;
     private static final float MAX_OFFSET = 10_000f;
     private static final int MAX_ADDED_BOXES = 200;
+    private static final int MAX_SPANS = 200;
     private static final int MAX_ADDED_LENGTH = 5_000;
     private static final float LINE_SPACING = 1.2f;
     private static final String COLOUR_PATTERN = "#[0-9a-fA-F]{6}";
@@ -127,7 +128,8 @@ public class TextEditService {
                             run.sourceFont() != null && missingByFont.computeIfAbsent(
                                     run.sourceFont().getCOSObject(), k -> fontMatcher.isMissing(run.sourceFont())),
                             existing != null && cutOut.contains(i),
-                            Double.isNaN(match.similarity) ? null : (float) match.similarity));
+                            Double.isNaN(match.similarity) ? null : (float) match.similarity,
+                            existing == null ? List.of() : existing.spans()));
                 }
             }
             return new PageTextDto(crop.getWidth(), crop.getHeight(), crop.getLowerLeftX(),
@@ -196,7 +198,16 @@ public class TextEditService {
             throw new InvalidEditException("이동 거리가 너무 큽니다.");
         }
         String family = item.fontFamily() == null || item.fontFamily().isBlank() ? null : item.fontFamily();
-        return new RunEdit(text, family, size, item.bold(), color, dx, dy);
+        List<RunEdit.Span> spans = RunEdit.cleanSpans(item.spans(), text.length());
+        if (spans.size() > MAX_SPANS) {
+            throw new InvalidEditException("한 줄에는 서식을 " + MAX_SPANS + "군데까지 줄 수 있습니다.");
+        }
+        for (RunEdit.Span span : spans) {
+            if (span.color() != null && !span.color().matches(COLOUR_PATTERN)) {
+                throw new InvalidEditException("글자 색은 #rrggbb 형식이어야 합니다.");
+            }
+        }
+        return new RunEdit(text, family, size, item.bold(), color, dx, dy, spans);
     }
 
     /**
@@ -347,8 +358,14 @@ public class TextEditService {
         }
 
         FontMatcher.Styled styled = null;
+        List<Piece> pieces = null;
         float fit = 1f;
-        if (hasText && layout == null) {
+        if (hasText && layout == null && !edit.spans().isEmpty()) {
+            // Parts of the line have a look of their own: drawn piece by piece, each in its own weight and colour.
+            pieces = piecesOf(outDoc, original, edit, text, size, colour, pageGlyphs, fonts, fontScope);
+            fit = widthFit(pieces.get(0).styled().font(), original, edit, size);
+            boxWidth = Math.max(original.width(), widthOf(pieces, size) * fit);
+        } else if (hasText && layout == null) {
             styled = fontFor(outDoc, original, edit, text, size, pageGlyphs, fonts, fontScope);
             fit = widthFit(styled.font(), original, edit, size);
             Float measured = tryMeasureWidth(styled.font(), text, size);
@@ -376,9 +393,51 @@ public class TextEditService {
 
         if (layout != null) {
             layout.draw(cs, original.y() + edit.dy(), edit.dx());
+        } else if (pieces != null) {
+            float cursor = original.x() + edit.dx();
+            for (Piece piece : pieces) {
+                drawLine(cs, piece.styled(), piece.text(), cursor, original.y() + edit.dy(), size, piece.colour(), fit);
+                cursor += widthOf(piece, size) * fit;
+            }
         } else if (hasText) {
             drawLine(cs, styled, text, original.x() + edit.dx(), original.y() + edit.dy(), size, colour, fit);
         }
+    }
+
+    /** One stretch of an edited line with its own font (weight) and colour. */
+    private record Piece(String text, FontMatcher.Styled styled, Color colour) {
+    }
+
+    /** The line cut where its look changes, each stretch with the font and colour it is drawn in. */
+    private List<Piece> piecesOf(PDDocument outDoc, TextRun original, RunEdit edit, String text, float size,
+            Color lineColour, RunPainter.PageGlyphs pageGlyphs, FontCache fonts, String fontScope) {
+        // Every piece is set in the same stand-in family, in the weight it asks for or else the line's.
+        boolean lineBold = edit.bold() != null ? edit.bold() : (original.sourceFont() == null
+                ? FontMatcher.guess(original.sourceFontName(), null)
+                : fontMatcher.matchFor(original.sourceFont(), pageGlyphs)).bold;
+        List<Piece> pieces = new ArrayList<>();
+        for (RunEdit.Segment segment : edit.segments()) {
+            String part = text.substring(segment.start(), segment.end());
+            boolean bold = segment.bold() != null ? segment.bold() : lineBold;
+            RunEdit forPiece = new RunEdit(part, edit.fontFamily(), edit.fontSize(), bold, edit.color(), 0f, 0f);
+            Color colour = segment.color() != null ? RunEdit.colour(segment.color(), lineColour) : lineColour;
+            pieces.add(new Piece(part, fontFor(outDoc, original, forPiece, part, size, pageGlyphs, fonts, fontScope),
+                    colour));
+        }
+        return pieces;
+    }
+
+    private static float widthOf(Piece piece, float size) {
+        Float measured = tryMeasureWidth(piece.styled().font(), piece.text(), size);
+        return measured != null ? measured : piece.text().length() * size * 0.6f;
+    }
+
+    private static float widthOf(List<Piece> pieces, float size) {
+        float total = 0f;
+        for (Piece piece : pieces) {
+            total += widthOf(piece, size);
+        }
+        return total;
     }
 
     /** Narrowest and widest a substitute font is squeezed or stretched to match the original's width. */

@@ -17,6 +17,7 @@ import { foreignChars, SIMILAR_ENOUGH } from '../fontMix'
 import { History } from '../history'
 import { keyCode } from '../keys'
 import type { SnapTargets } from '../snap'
+import { boldToggleFor, clearField, formatRange, remapSpans } from '../spans'
 import type { AddedText, FontChoice, PageItem, PageText, RunState, TextRun } from '../types'
 import { fitZoom, previewDpi, PX_PER_PT_AT_100, zoomStep } from '../zoom'
 import { HelpDialog } from './HelpDialog'
@@ -86,7 +87,7 @@ const nonEmpty = (b: AddedText) => b.text.trim() !== ''
 const normalize = (name: string) => name.toLowerCase().replace(/[\s\-_]/g, '')
 
 function blankState(run: TextRun): RunState {
-  return { text: run.text, fontFamily: null, fontSize: null, bold: null, color: null, dx: 0, dy: 0 }
+  return { text: run.text, fontFamily: null, fontSize: null, bold: null, color: null, spans: [], dx: 0, dy: 0 }
 }
 
 function stateFromServer(run: TextRun): RunState {
@@ -96,6 +97,7 @@ function stateFromServer(run: TextRun): RunState {
     fontSize: run.editFontSize,
     bold: run.editBold,
     color: run.editColor,
+    spans: run.editSpans ?? [],
     dx: run.dx,
     dy: run.dy,
   }
@@ -108,6 +110,7 @@ function untouched(state: RunState, run: TextRun): boolean {
     state.fontSize === null &&
     state.bold === null &&
     state.color === null &&
+    state.spans.length === 0 &&
     state.dx === 0 &&
     state.dy === 0
   )
@@ -287,6 +290,7 @@ export function TextEditor({
               fontSize: s?.fontSize ?? null,
               bold: s?.bold ?? null,
               color: s?.color ?? null,
+              spans: s?.spans ?? [],
               dx: s?.dx ?? 0,
               dy: s?.dy ?? 0,
             }
@@ -413,10 +417,38 @@ export function TextEditor({
 
   const commitRunText = useCallback(
     (run: TextRun, text: string) => {
-      if (text !== (statesRef.current.get(run.index)?.text ?? run.text)) updateRun(run, { text })
+      const s = statesRef.current.get(run.index)
+      const before = s?.text ?? run.text
+      // The bold and coloured stretches stay on the letters they were put on.
+      if (text !== before) updateRun(run, { text, spans: remapSpans(s?.spans ?? [], before, text) })
     },
     [updateRun],
   )
+
+  /** The letters picked inside the line being typed in: bold and colour then go to just those. */
+  const textRange = useRef<{ index: number; start: number; end: number } | null>(null)
+  const onTextRange = useCallback((run: TextRun, range: { start: number; end: number } | null) => {
+    textRange.current = range ? { index: run.index, ...range } : null
+  }, [])
+  useEffect(() => {
+    textRange.current = null
+  }, [selected])
+
+  /** Lays bold or a colour over just the picked letters of a line (partial formatting). */
+  function formatPicked(run: TextRun, range: { start: number; end: number }, patch: { bold?: boolean; color?: string }) {
+    const s = statesRef.current.get(run.index)
+    const before = s?.text ?? run.text
+    // What is in the box is what the user sees, typed text not yet committed included.
+    const box = layerRef.current?.querySelector<HTMLElement>(`[data-index="${run.index}"]`)
+    const text = box?.textContent ?? before
+    const start = Math.min(range.start, text.length)
+    const end = Math.min(range.end, text.length)
+    if (end <= start) return
+    const line = { bold: s?.bold ?? run.bold, color: s?.color ?? run.color }
+    const base = remapSpans(s?.spans ?? [], before, text)
+    const bold = patch.bold === undefined ? undefined : boldToggleFor(base, start, end, line)
+    updateRun(run, { text, spans: formatRange(base, start, end, text.length, { bold, color: patch.color }, line) })
+  }
 
   const moveRun = useCallback((run: TextRun, dx: number, dy: number) => updateRun(run, { dx, dy }), [updateRun])
 
@@ -480,7 +512,17 @@ export function TextEditor({
     const current = dataRef.current
     if (!selected || !current) return
     if (selected.kind === 'run') {
-      updateRun(current.runs[selected.index], patch)
+      const run = current.runs[selected.index]
+      const range = textRange.current
+      if (range && range.index === run.index && (patch.bold !== undefined || patch.color !== undefined)) {
+        formatPicked(run, range, patch) // letters are picked: only they change
+        return
+      }
+      // A change to the whole line also takes over what the bold / coloured stretches said about it.
+      let spans = statesRef.current.get(run.index)?.spans ?? []
+      if (patch.bold !== undefined) spans = clearField(spans, 'bold')
+      if (patch.color !== undefined) spans = clearField(spans, 'color')
+      updateRun(run, { ...patch, spans })
     } else {
       updateAdded(selected.id, patch)
     }
@@ -741,7 +783,8 @@ export function TextEditor({
   if (data && selected?.kind === 'run') {
     const run = data.runs[selected.index]
     const s = runStates.get(run.index)
-    const restyled = s !== undefined && (s.fontFamily !== null || s.fontSize !== null || s.bold !== null || s.color !== null)
+    const restyled =
+      s !== undefined && (s.fontFamily !== null || s.fontSize !== null || s.bold !== null || s.color !== null || s.spans.length > 0)
     view = {
       kind: 'run',
       label: `줄 ${run.index + 1}`,
@@ -766,6 +809,7 @@ export function TextEditor({
       missingFont: run.sourceFontMissing ? run.sourceFont : null,
       original: s === undefined || removalPending ? null : run.originalRemoved ? 'removed' : 'covered',
       similarity: run.matchSimilarity,
+      partial: s?.spans.length ?? 0,
     }
   } else if (selected?.kind === 'added') {
     const box = added.find((b) => b.id === selected.id)
@@ -785,6 +829,7 @@ export function TextEditor({
         missingFont: null,
         original: null,
         similarity: null,
+        partial: 0,
       }
     }
   }
@@ -884,6 +929,7 @@ export function TextEditor({
         return
       }
       if (e.key === 'Escape') {
+        textRange.current = null
         if (adding) setAdding(false)
         else if (box || inField) el?.blur()
         else if (editing) setEditing(null)
@@ -1148,6 +1194,7 @@ export function TextEditor({
                     onCommitText={commitRunText}
                     onMoveTo={moveRun}
                     onGuides={setGuides}
+                    onSelection={onTextRange}
                   />
                 ))}
                 {added.map((box) => (

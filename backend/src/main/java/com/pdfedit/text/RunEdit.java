@@ -1,6 +1,9 @@
 package com.pdfedit.text;
 
 import java.awt.Color;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 
 /**
  * What the user did to one text run of a page: the new text, optionally a different font, size,
@@ -12,9 +15,30 @@ import java.awt.Color;
  * @param color      "#rrggbb", or null for the colour the run was printed in
  * @param dx         how far the run moved right, in points (PDF user space)
  * @param dy         how far the run moved up, in points; negative is down
+ * @param spans      parts of the new text with a look of their own (bold, colour), on top of the line's look;
+ *                   never null, sorted, not overlapping
  */
 public record RunEdit(String text, String fontFamily, Float fontSize, Boolean bold, String color,
-                      float dx, float dy) {
+                      float dx, float dy, List<Span> spans) {
+
+    /**
+     * Characters {@code start} (included) to {@code end} (excluded) of the new text, drawn bold or not and in
+     * a colour of their own; a null {@code bold} or {@code color} leaves that to the line.
+     */
+    public record Span(int start, int end, Boolean bold, String color) {
+    }
+
+    /** A stretch of the new text with one look: the line's, or a span's. */
+    public record Segment(int start, int end, Boolean bold, String color) {
+    }
+
+    public RunEdit {
+        spans = spans == null ? List.of() : List.copyOf(spans);
+    }
+
+    public RunEdit(String text, String fontFamily, Float fontSize, Boolean bold, String color, float dx, float dy) {
+        this(text, fontFamily, fontSize, bold, color, dx, dy, List.of());
+    }
 
     public static RunEdit ofText(String text) {
         return new RunEdit(text, null, null, null, null, 0f, 0f);
@@ -22,11 +46,104 @@ public record RunEdit(String text, String fontFamily, Float fontSize, Boolean bo
 
     /** True when the font, size, weight or colour differ from the original: the run can't be redrawn glyph by glyph then. */
     public boolean restyled() {
-        return fontFamily != null || fontSize != null || bold != null || color != null;
+        return fontFamily != null || fontSize != null || bold != null || color != null || !spans.isEmpty();
     }
 
     public boolean moved() {
         return dx != 0f || dy != 0f;
+    }
+
+    /**
+     * The same edit with other text. The spans keep to the letters they were on: what is typed inside a span
+     * joins it, what is typed beside it does not, and a span whose letters were all replaced covers the
+     * replacement.
+     */
+    public RunEdit withText(String newText) {
+        return new RunEdit(newText, fontFamily, fontSize, bold, color, dx, dy, remap(spans, text, newText));
+    }
+
+    /** Where the spans of {@code oldText} lie once it has become {@code newText}. */
+    public static List<Span> remap(List<Span> spans, String oldText, String newText) {
+        if (spans.isEmpty() || oldText.equals(newText)) {
+            return spans;
+        }
+        int prefix = 0;
+        int limit = Math.min(oldText.length(), newText.length());
+        while (prefix < limit && oldText.charAt(prefix) == newText.charAt(prefix)) {
+            prefix++;
+        }
+        int suffix = 0;
+        while (suffix < limit - prefix
+                && oldText.charAt(oldText.length() - 1 - suffix) == newText.charAt(newText.length() - 1 - suffix)) {
+            suffix++;
+        }
+        int oldEnd = oldText.length() - suffix; // the changed stretch is [prefix, oldEnd) before, [prefix, newEnd) after
+        int newEnd = newText.length() - suffix;
+        int delta = newEnd - oldEnd;
+        List<Span> out = new ArrayList<>();
+        for (Span span : spans) {
+            int start;
+            int end;
+            if (span.end() <= prefix) {
+                start = span.start();
+                end = span.end();
+            } else if (span.start() >= oldEnd) {
+                start = span.start() + delta;
+                end = span.end() + delta;
+            } else {
+                start = Math.min(span.start(), prefix);
+                end = span.end() > oldEnd ? span.end() + delta : newEnd;
+            }
+            if (end > start) {
+                out.add(new Span(start, end, span.bold(), span.color()));
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Spans fit for drawing {@code textLength} characters: clipped to the text, empty ones and ones that change
+     * nothing dropped, in order, and where two overlap the later one wins.
+     */
+    public static List<Span> cleanSpans(List<Span> spans, int textLength) {
+        if (spans == null || spans.isEmpty()) {
+            return List.of();
+        }
+        List<Span> sorted = spans.stream()
+                .filter(s -> s != null && (s.bold() != null || s.color() != null))
+                .map(s -> new Span(Math.max(0, s.start()), Math.min(textLength, s.end()), s.bold(), s.color()))
+                .filter(s -> s.end() > s.start())
+                .sorted(Comparator.comparingInt(Span::start).thenComparingInt(Span::end))
+                .toList();
+        List<Span> out = new ArrayList<>();
+        for (Span span : sorted) {
+            if (!out.isEmpty() && out.get(out.size() - 1).end() > span.start()) {
+                Span previous = out.remove(out.size() - 1);
+                if (span.start() > previous.start()) {
+                    out.add(new Span(previous.start(), span.start(), previous.bold(), previous.color()));
+                }
+            }
+            out.add(span);
+        }
+        return out;
+    }
+
+    /** The text cut where the look changes: every character in exactly one segment, in order. */
+    public List<Segment> segments() {
+        int length = text == null ? 0 : text.length();
+        List<Segment> out = new ArrayList<>();
+        int at = 0;
+        for (Span span : cleanSpans(spans, length)) {
+            if (span.start() > at) {
+                out.add(new Segment(at, span.start(), null, null));
+            }
+            out.add(new Segment(span.start(), span.end(), span.bold(), span.color()));
+            at = span.end();
+        }
+        if (at < length) {
+            out.add(new Segment(at, length, null, null));
+        }
+        return out;
     }
 
     /** "#rrggbb" to a colour; {@code fallback} when the text is missing or not in that form. */

@@ -6,6 +6,7 @@ import type {
   PageItem,
   PageText,
   ReplaceResult,
+  Span,
   UpdateInfo,
   UploadResponse,
 } from './types'
@@ -150,6 +151,7 @@ export interface TextEditPayload {
   fontSize: number | null
   bold: boolean | null
   color: string | null
+  spans: Span[]
   dx: number
   dy: number
 }

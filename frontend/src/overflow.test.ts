@@ -28,6 +28,7 @@ function run(index: number, x: number, y: number, width: number, text: string): 
     editFontSize: null,
     editBold: null,
     editColor: null,
+    editSpans: [],
     dx: 0,
     dy: 0,
   }

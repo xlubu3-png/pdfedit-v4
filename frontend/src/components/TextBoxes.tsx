@@ -3,7 +3,8 @@ import type { ClipboardEvent, CSSProperties, KeyboardEvent, MouseEvent, PointerE
 import { overflows } from '../overflow'
 import { snapPosition } from '../snap'
 import type { SnapTargets } from '../snap'
-import type { AddedText, PageText, RunState, TextRun } from '../types'
+import { cleanSpans } from '../spans'
+import type { AddedText, PageText, RunState, Span, TextRun } from '../types'
 
 /** Fractions of a line height: where a text box's top edge sits above the baseline of its first line. */
 const ADDED_ASCENT = 1.0
@@ -157,6 +158,61 @@ interface RunBoxProps {
   onCommitText: (run: TextRun, text: string) => void
   onMoveTo: (run: TextRun, dx: number, dy: number) => void
   onGuides: (guides: Guides | null) => void
+  /** The letters picked inside the box while typing (character offsets), or null once the cursor is just placed. */
+  onSelection: (run: TextRun, range: { start: number; end: number } | null) => void
+}
+
+/** Where the picked text starts and ends inside `el`, as character offsets; null when nothing there is picked. */
+function selectionOffsets(el: HTMLElement): { start: number; end: number } | null {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0) return null
+  const range = selection.getRangeAt(0)
+  if (!el.contains(range.startContainer) || !el.contains(range.endContainer)) return null
+  const before = range.cloneRange()
+  before.selectNodeContents(el)
+  before.setEnd(range.startContainer, range.startOffset)
+  const start = before.toString().length
+  return { start, end: start + range.toString().length }
+}
+
+/** Picks characters `start` to `end` of `el` again (after its content was redrawn). */
+function restoreOffsets(el: HTMLElement, start: number, end: number) {
+  const selection = window.getSelection()
+  if (!selection) return
+  const range = document.createRange()
+  let seen = 0
+  let placedStart = false
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const length = node.textContent?.length ?? 0
+    if (!placedStart && start <= seen + length) {
+      range.setStart(node, start - seen)
+      placedStart = true
+    }
+    if (placedStart && end <= seen + length) {
+      range.setEnd(node, end - seen)
+      selection.removeAllRanges()
+      selection.addRange(range)
+      return
+    }
+    seen += length
+  }
+}
+
+/** Fills a box with its text, the stretches that have a look of their own in their own weight and colour. */
+function paintBox(el: HTMLElement, text: string, spans: Span[]) {
+  el.textContent = ''
+  let at = 0
+  for (const span of cleanSpans(spans, text.length)) {
+    if (span.start > at) el.append(text.slice(at, span.start))
+    const part = document.createElement('span')
+    part.textContent = text.slice(span.start, span.end)
+    if (span.bold !== null) part.style.fontWeight = span.bold ? 'bold' : 'normal'
+    if (span.color !== null) part.style.color = span.color
+    el.append(part)
+    at = span.end
+  }
+  if (at < text.length) el.append(text.slice(at))
 }
 
 /**
@@ -179,23 +235,45 @@ export function RunBox({
   onCommitText,
   onMoveTo,
   onGuides,
+  onSelection,
 }: RunBoxProps) {
   const ref = useRef<HTMLDivElement>(null)
   const selectedAtPress = useRef(false)
   /** What is being typed right now, before it is committed; null when nothing is being typed. */
   const [typed, setTyped] = useState<string | null>(null)
   const shownText = state?.text ?? run.text
+  const spans = state?.spans
+  const spansKey = JSON.stringify(spans ?? [])
   const dx0 = state?.dx ?? 0
   const dy0 = state?.dy ?? 0
   const base = { x: run.x + dx0, y: run.y + dy0 }
 
   useEffect(() => {
-    if (ref.current) ref.current.textContent = shownText
-  }, [run, shownText])
+    const el = ref.current
+    if (!el) return
+    // Redrawing the content while the user has letters picked would drop the pick: take it up again after.
+    const picked = document.activeElement === el ? selectionOffsets(el) : null
+    paintBox(el, shownText, JSON.parse(spansKey) as Span[])
+    if (picked) restoreOffsets(el, picked.start, picked.end)
+  }, [run, shownText, spansKey])
 
   useEffect(() => {
     if (editing) focusAtEnd(ref.current)
   }, [editing])
+
+  // While typing, tell the editor which letters are picked, so bold and colour can go to just those.
+  useEffect(() => {
+    if (!editing) return
+    const report = () => {
+      const el = ref.current
+      if (!el) return
+      const range = selectionOffsets(el)
+      if (range === null) return // the pick is somewhere else (the colour dialog took the focus): keep what we had
+      onSelection(run, range.end > range.start ? range : null)
+    }
+    document.addEventListener('selectionchange', report)
+    return () => document.removeEventListener('selectionchange', report)
+  }, [editing, run, onSelection])
 
   const drag = useDrag(
     scale,

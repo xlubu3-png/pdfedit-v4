@@ -91,10 +91,12 @@ public class TextSearchService {
                         }
                         pageReplacements += count;
                         // Everything else the user did to the line (font, size, colour, move) stays.
-                        items.add(new TextEditItem(i, pattern.matcher(text).replaceAll(replacement),
+                        String replaced = pattern.matcher(text).replaceAll(replacement);
+                        items.add(new TextEditItem(i, replaced,
                                 before == null ? null : before.fontFamily(), before == null ? null : before.fontSize(),
                                 before == null ? null : before.bold(), before == null ? null : before.color(),
-                                before == null ? null : before.dx(), before == null ? null : before.dy()));
+                                before == null ? null : before.dx(), before == null ? null : before.dy(),
+                                before == null ? null : before.withText(replaced).spans()));
                     }
                 }
                 if (items.isEmpty()) {

@@ -1,0 +1,15 @@
+{
+  "name": "wintech-pdf-e2e",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Tests of the real screen: the built app is started and driven in a browser",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "@types/node": "^24.0.0",
+    "typescript": "~5.9.0"
+  }
+}

@@ -205,3 +205,37 @@ test('a formatted line keeps its formatting when it is duplicated, copied and pa
     expect.objectContaining({ start: 3, end: 8, bold: true }),
   ])
 })
+
+test('letters picked inside a text box turn bold, underlined and coloured on their own', async ({ page }) => {
+  const documentId = await openEditor(page, ['Hello World'])
+
+  await page.getByRole('button', { name: /텍스트 추가/ }).click()
+  await page.locator('.te-layer').click({ position: { x: 300, y: 400 } })
+  const box = page.locator('.te-box[data-added]')
+  await expect(box).toHaveClass(/typing/)
+  await page.keyboard.type('Hello World')
+  await page.keyboard.press('Home')
+  for (let i = 0; i < 5; i++) await page.keyboard.press('Shift+ArrowRight') // "Hello"
+  await expect.poll(() => page.evaluate(() => window.getSelection()?.toString())).toBe('Hello')
+  await page.getByRole('button', { name: /굵게/ }).click()
+  await page.getByRole('button', { name: /밑줄/ }).click()
+  await waitSaved(page)
+
+  await expect(page.locator('.te-style-info')).toContainText('부분 서식 1곳')
+  let added = (await serverPage(page, documentId)).added
+  expect(added[0].text).toBe('Hello World')
+  expect(added[0].bold).toBe(false) // the box itself is not bold
+  expect(added[0].spans).toEqual([expect.objectContaining({ start: 0, end: 5, bold: true, underline: true })])
+
+  // another stretch gets a colour of its own, the first one stays as it was
+  await page.keyboard.press('End')
+  for (let i = 0; i < 5; i++) await page.keyboard.press('Shift+ArrowLeft') // "World"
+  await expect.poll(() => page.evaluate(() => window.getSelection()?.toString())).toBe('World')
+  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))))
+  await page.locator('.te-stylebar input[type=color]').fill('#ff0000')
+  await expect.poll(async () => (await serverPage(page, documentId)).added[0].spans.length).toBe(2)
+  added = (await serverPage(page, documentId)).added
+  expect(added[0].spans[0]).toMatchObject({ start: 0, end: 5, bold: true, underline: true })
+  expect(added[0].spans[1]).toMatchObject({ start: 6, end: 11, color: '#ff0000' })
+  expect(added[0].color).toBe('#000000') // the box colour is untouched
+})

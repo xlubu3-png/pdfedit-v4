@@ -63,9 +63,9 @@ const COALESCE_MS = 800
 
 type Selection = { kind: 'run'; index: number } | { kind: 'added'; id: string } | { kind: 'image'; id: string } | null
 
-/** Letters `start` to `end` picked inside the text of line `index`. */
+/** Letters `start` to `end` picked inside the text of a line (`key` "r3") or of an added box (`key` "a<id>"). */
 interface PickedRange {
-  index: number
+  key: string
   start: number
   end: number
 }
@@ -483,12 +483,16 @@ export function TextEditor({
   const textRange = useRef<PickedRange | null>(null)
   const putRange = useCallback((range: PickedRange | null) => {
     const was = textRange.current
-    if (was?.index === range?.index && was?.start === range?.start && was?.end === range?.end) return
+    if (was?.key === range?.key && was?.start === range?.start && was?.end === range?.end) return
     textRange.current = range
     setPicked(range)
   }, [])
   const onTextRange = useCallback(
-    (run: TextRun, range: { start: number; end: number } | null) => putRange(range ? { index: run.index, ...range } : null),
+    (run: TextRun, range: { start: number; end: number } | null) => putRange(range ? { key: `r${run.index}`, ...range } : null),
+    [putRange],
+  )
+  const onAddedRange = useCallback(
+    (box: AddedText, range: { start: number; end: number } | null) => putRange(range ? { key: `a${box.id}`, ...range } : null),
     [putRange],
   )
   useEffect(() => {
@@ -517,6 +521,25 @@ export function TextEditor({
     if (patch.bold !== undefined) next.bold = toggleFor(base, start, end, 'bold', line)
     if (patch.underline !== undefined) next.underline = toggleFor(base, start, end, 'underline', line)
     updateRun(run, { text, spans: formatRange(base, start, end, text.length, next, line) })
+  }
+
+  /** The look of an added box as a whole, which its spans are laid over. */
+  const boxLookOf = (box: AddedText) => ({ bold: box.bold, color: box.color ?? '#000000', size: box.fontSize })
+
+  /** Lays a look over just the picked letters of an added box. */
+  function formatPickedAdded(box: AddedText, range: { start: number; end: number }, patch: LookPatch) {
+    // What is in the box is what the user sees, typed text not yet committed included.
+    const el = layerRef.current?.querySelector<HTMLElement>(`[data-added="${box.id}"]`)
+    const text = el?.textContent ?? box.text
+    const start = Math.min(range.start, text.length)
+    const end = Math.min(range.end, text.length)
+    if (end <= start) return
+    const line = boxLookOf(box)
+    const base = remapSpans(box.spans, box.text, text)
+    const next: LookPatch = { ...patch }
+    if (patch.bold !== undefined) next.bold = toggleFor(base, start, end, 'bold', line)
+    if (patch.underline !== undefined) next.underline = toggleFor(base, start, end, 'underline', line)
+    updateAdded(box.id, { text, spans: formatRange(base, start, end, text.length, next, line) })
   }
 
   const moveRun = useCallback((run: TextRun, dx: number, dy: number) => updateRun(run, { dx, dy }), [updateRun])
@@ -657,7 +680,7 @@ export function TextEditor({
       const range = textRange.current
       const look: LookPatch = { bold: patch.bold, color: patch.color, size: patch.fontSize, underline: patch.underline }
       const looks = Object.values(look).some((v) => v !== undefined)
-      if (range && range.index === run.index && looks) {
+      if (range && range.key === `r${run.index}` && looks) {
         formatPicked(run, range, look) // letters are picked: only they change
         return
       }
@@ -673,8 +696,26 @@ export function TextEditor({
       if (patch.color !== undefined) spans = clearField(spans, 'color')
       if (patch.fontSize !== undefined) spans = clearField(spans, 'size')
       updateRun(run, { ...patch, spans })
-    } else if (selected.kind === 'added' && patch.underline === undefined) {
-      updateAdded(selected.id, patch) // an added box has no underline
+    } else if (selected.kind === 'added') {
+      const box = addedRef.current.find((b) => b.id === selected.id)
+      if (!box) return
+      const range = textRange.current
+      const look: LookPatch = { bold: patch.bold, color: patch.color, size: patch.fontSize, underline: patch.underline }
+      if (range && range.key === `a${box.id}` && Object.values(look).some((v) => v !== undefined)) {
+        formatPickedAdded(box, range, look) // letters are picked: only they change
+        return
+      }
+      if (patch.underline !== undefined) {
+        // With nothing picked the underline goes under the whole text.
+        if (box.text.length > 0) formatPickedAdded(box, { start: 0, end: box.text.length }, { underline: true })
+        return
+      }
+      // A change to the whole box also takes over what the stretches with a look of their own said about it.
+      let spans = box.spans
+      if (patch.bold !== undefined) spans = clearField(spans, 'bold')
+      if (patch.color !== undefined) spans = clearField(spans, 'color')
+      if (patch.fontSize !== undefined) spans = clearField(spans, 'size')
+      updateAdded(box.id, { ...patch, spans })
     }
   }
 
@@ -954,7 +995,7 @@ export function TextEditor({
     // With letters picked the bar shows how the first of them looks, since that is what a change goes to.
     const lineLook = lineLookOf(run, s)
     const text = s?.text ?? run.text
-    const range = picked?.index === run.index && picked.start < text.length ? picked : null
+    const range = picked?.key === `r${run.index}` && picked.start < text.length ? picked : null
     const shown = range ? lookAt(s?.spans ?? [], range.start, lineLook) : lineLook
     const underlined =
       text.length > 0 && !toggleFor(s?.spans ?? [], range?.start ?? 0, Math.min(range?.end ?? text.length, text.length), 'underline', lineLook)
@@ -988,23 +1029,30 @@ export function TextEditor({
   } else if (selected?.kind === 'added') {
     const box = added.find((b) => b.id === selected.id)
     if (box) {
+      // With letters picked the bar shows how the first of them looks, since that is what a change goes to.
+      const boxLook = boxLookOf(box)
+      const range = picked?.key === `a${box.id}` && picked.start < box.text.length ? picked : null
+      const shown = range ? lookAt(box.spans, range.start, boxLook) : boxLook
+      const underlined =
+        box.text.length > 0 &&
+        !toggleFor(box.spans, range?.start ?? 0, Math.min(range?.end ?? box.text.length, box.text.length), 'underline', boxLook)
       view = {
         kind: 'added',
         label: '새 텍스트',
         sourceFont: null,
         autoFamily: DEFAULT_ADDED_FAMILY,
         family: box.fontFamily,
-        size: box.fontSize,
-        bold: box.bold,
-        color: box.color ?? '#000000',
-        underline: false,
+        size: shown.size,
+        bold: shown.bold,
+        color: shown.color,
+        underline: underlined,
         canReset: false,
         look: null,
         mixedChars: '',
         missingFont: null,
         original: null,
         similarity: null,
-        partial: 0,
+        partial: box.spans.length,
       }
     }
   }
@@ -1131,7 +1179,7 @@ export function TextEditor({
         patchSelected({ bold: !view.bold })
         return
       }
-      if (ctrl && code === 'KeyU' && view?.kind === 'run' && !inField) {
+      if (ctrl && code === 'KeyU' && view && !inField) {
         e.preventDefault() // the browser would show the page source
         patchSelected({ underline: true })
         return
@@ -1478,6 +1526,7 @@ export function TextEditor({
                     onStartEdit={() => setEditing({ kind: 'added', id: box.id })}
                     onStopEdit={() => setEditing(null)}
                     onCommitText={commitAddedText}
+                    onSelection={onAddedRange}
                     onMoveTo={(b, x, y) => updateAdded(b.id, { x, y })}
                     onRemove={(b) => removeAdded(b.id)}
                     onGuides={setGuides}

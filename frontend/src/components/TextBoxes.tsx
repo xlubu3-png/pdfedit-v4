@@ -402,6 +402,8 @@ interface AddedBoxProps {
   onMoveTo: (box: AddedText, x: number, y: number) => void
   onRemove: (box: AddedText) => void
   onGuides: (guides: Guides | null) => void
+  /** The letters picked inside the box while typing (character offsets), or null once the cursor is just placed. */
+  onSelection: (box: AddedText, range: { start: number; end: number } | null) => void
 }
 
 /** A text box the user added: see-through over the re-rendered page, visible while typing or until the new preview arrives. */
@@ -419,18 +421,41 @@ export function AddedBox({
   onMoveTo,
   onRemove,
   onGuides,
+  onSelection,
 }: AddedBoxProps) {
   const ref = useRef<HTMLDivElement>(null)
   const selectedAtPress = useRef(false)
   const base = { x: box.x, y: box.y }
+  const spansKey = JSON.stringify(box.spans ?? [])
 
   useEffect(() => {
-    if (ref.current) ref.current.textContent = box.text
-  }, [box.id, box.text])
+    const el = ref.current
+    if (!el) return
+    // Redrawing the content while the user has letters picked would drop the pick: take it up again after.
+    const picked = document.activeElement === el ? selectionOffsets(el) : null
+    paintBox(el, box.text, JSON.parse(spansKey) as Span[], box.fontSize)
+    if (picked) restoreOffsets(el, picked.start, picked.end)
+  }, [box.id, box.text, box.fontSize, spansKey])
 
   useEffect(() => {
     if (editing) focusAtEnd(ref.current)
   }, [editing])
+
+  // While typing, tell the editor which letters are picked, so bold, colour, size and underline can go to just those.
+  useEffect(() => {
+    if (!editing) return
+    const report = () => {
+      const el = ref.current
+      // Only what happens while typing counts: as the focus leaves for the colour or size box the browser
+      // collapses the pick, which must not be taken for the user dropping it.
+      if (!el || document.activeElement !== el) return
+      const range = selectionOffsets(el)
+      if (range === null) return
+      onSelection(box, range.end > range.start ? range : null)
+    }
+    document.addEventListener('selectionchange', report)
+    return () => document.removeEventListener('selectionchange', report)
+  }, [editing, box, onSelection])
 
   const drag = useDrag(
     scale,

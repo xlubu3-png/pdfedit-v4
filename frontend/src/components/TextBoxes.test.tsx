@@ -123,6 +123,7 @@ describe('AddedBox', () => {
       onMoveTo: noop,
       onRemove: noop,
       onGuides: noop,
+      onSelection: noop,
     }
     const view = render(<AddedBox {...props} editing={true} />)
     const box = view.container.querySelector<HTMLElement>('[data-added]')!
@@ -132,6 +133,41 @@ describe('AddedBox', () => {
     fireEvent.blur(box)
 
     expect(onCommitText).toHaveBeenCalledWith(added, '새 글자 더', null)
+  })
+
+  it('shows the parts with a look of their own in that look, the text itself unchanged', () => {
+    const formatted: AddedText = {
+      ...added,
+      text: 'Hello World',
+      spans: [{ start: 6, end: 11, bold: true, color: '#ff0000', size: 24, underline: true }],
+    }
+    const view = render(
+      <AddedBox
+        box={formatted}
+        scale={1.5}
+        data={data}
+        selected={false}
+        editing={false}
+        targets={targets}
+        onSelect={noop}
+        onStartEdit={noop}
+        onStopEdit={noop}
+        onCommitText={noop}
+        onMoveTo={noop}
+        onRemove={noop}
+        onGuides={noop}
+        onSelection={noop}
+      />,
+    )
+    const box = view.container.querySelector<HTMLElement>('[data-added]')!
+    const part = box.querySelector<HTMLElement>('span')!
+
+    expect(box.textContent).toBe('Hello World')
+    expect(part.textContent).toBe('World')
+    expect(part.style.fontWeight).toBe('bold')
+    expect(part.style.color).toBe('rgb(255, 0, 0)')
+    expect(part.style.fontSize).toBe('2em') // 24pt on a 12pt box
+    expect(part.style.textDecoration).toContain('underline')
   })
 })
 

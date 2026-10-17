@@ -303,7 +303,7 @@ export function StyleBar({
       <button
         type="button"
         className={`te-bold${view?.underline ? ' on' : ''}`}
-        disabled={disabled || view?.kind === 'added'}
+        disabled={disabled}
         aria-pressed={view?.underline ?? false}
         onClick={onUnderline}
         title="밑줄 (Ctrl+U) — 글자를 드래그해 고르면 고른 글자만, 고르지 않으면 줄 전체"

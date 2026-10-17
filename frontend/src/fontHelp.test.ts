@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { fontBaseName, fontSearchUrl, knownSource, missingFontNames, reloadMessage } from './fontHelp'
+import {
+  familyList,
+  fontBaseName,
+  fontSearchUrl,
+  knownSource,
+  missingFontNames,
+  otherFormatFamily,
+  reloadMessage,
+} from './fontHelp'
 import type { TextRun } from './types'
 
 describe('fontBaseName', () => {
@@ -49,5 +57,32 @@ describe('reloadMessage', () => {
     expect(reloadMessage(261, 261)).toContain('찾지 못했습니다')
     expect(reloadMessage(261, 250)).toContain('줄었습니다')
     expect(reloadMessage(undefined, 5)).toBe('글꼴 5개를 읽었습니다.')
+  })
+})
+
+describe('fonts installed only as .otf', () => {
+  it('finds the family a font of the page stands for, however the PDF spells it', () => {
+    expect(otherFormatFamily('ABCDEF+Inter-Bold', ['Inter'])).toBe('Inter')
+    expect(otherFormatFamily('NotoSansCJKkr-Regular', ['Noto Sans CJK KR'])).toBe('Noto Sans CJK KR')
+    expect(otherFormatFamily('Pretendard-Medium', ['Source Han Sans', 'Pretendard'])).toBe('Pretendard')
+  })
+
+  it('does not mistake one font for another, or match on a few letters', () => {
+    expect(otherFormatFamily('Batang', ['Inter'])).toBeNull()
+    expect(otherFormatFamily('HY', ['HYGothic'])).toBeNull() // "hy" is too short to mean anything
+    expect(otherFormatFamily('Inter', [])).toBeNull()
+  })
+
+  it('lists the first few families and counts the rest', () => {
+    expect(familyList(['A', 'B'])).toBe('A, B')
+    expect(familyList(['A', 'B', 'C', 'D', 'E'])).toBe('A, B, C 외 2개')
+    expect(familyList(['A', 'B', 'C', 'D'], 2)).toBe('A, B 외 2개')
+  })
+
+  it('names them when a reload finds nothing new, which is when they are the likely reason', () => {
+    expect(reloadMessage(261, 261, ['Inter'])).toContain('.otf')
+    expect(reloadMessage(261, 261, ['Inter'])).toContain('Inter')
+    expect(reloadMessage(261, 261)).not.toContain('.otf')
+    expect(reloadMessage(261, 263, ['Inter'])).not.toContain('.otf') // a new font was found: nothing to explain
   })
 })

@@ -60,11 +60,42 @@ export function missingFontNames(runs: TextRun[]): string[] {
   return names
 }
 
-/** What to tell the user once the fonts were read again. */
-export function reloadMessage(before: number | undefined, after: number): string {
+const squash = (name: string) => name.toLowerCase().replace(/[\s\-_]/g, '')
+
+/**
+ * The family, among those installed only as .otf files (which this app cannot read), that a font of the page
+ * stands for - "ABCDEF+Inter-Bold" is the family "Inter" - or null. Compared without spaces, dashes or case, and
+ * either name may contain the other ("Noto Sans CJK KR" and "NotoSansCJKkr-Regular").
+ */
+export function otherFormatFamily(pdfName: string, unreadableFamilies: string[]): string | null {
+  const wanted = squash(fontBaseName(pdfName))
+  if (wanted.length < 3) return null
+  return (
+    unreadableFamilies.find((family) => {
+      const have = squash(family)
+      return have.length >= 3 && (have === wanted || wanted.includes(have) || have.includes(wanted))
+    }) ?? null
+  )
+}
+
+/** "Inter, Noto Sans CJK KR" - the first few families, then how many more. */
+export function familyList(families: string[], shown = 3): string {
+  const head = families.slice(0, shown).join(', ')
+  return families.length > shown ? `${head} 외 ${families.length - shown}개` : head
+}
+
+/**
+ * What to tell the user once the fonts were read again. `unreadable` are families installed only as .otf files:
+ * when no new font was found they are the likely reason, so they are named.
+ */
+export function reloadMessage(before: number | undefined, after: number, unreadable: string[] = []): string {
   const n = (count: number) => count.toLocaleString('ko-KR')
-  if (before === undefined) return `글꼴 ${n(after)}개를 읽었습니다.`
+  const otf =
+    unreadable.length > 0
+      ? ` 이 PC에는 .otf 형식으로만 설치된 글꼴(${familyList(unreadable)})이 있는데, 이 앱은 .ttf만 읽을 수 있습니다. 같은 글꼴의 .ttf 버전을 설치해 주세요.`
+      : ''
+  if (before === undefined) return `글꼴 ${n(after)}개를 읽었습니다.${otf}`
   if (after > before) return `글꼴 ${n(before)}개 → ${n(after)}개: 새로 ${after - before}개를 찾았습니다.`
   if (after < before) return `글꼴 ${n(before)}개 → ${n(after)}개로 줄었습니다.`
-  return `글꼴 ${n(after)}개: 새로 설치된 글꼴을 찾지 못했습니다. 설치가 끝났는지 확인한 뒤 다시 눌러 보세요.`
+  return `글꼴 ${n(after)}개: 새로 설치된 글꼴을 찾지 못했습니다. 설치가 끝났는지 확인한 뒤 다시 눌러 보세요.${otf}`
 }

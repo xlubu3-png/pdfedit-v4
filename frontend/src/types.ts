@@ -2,6 +2,8 @@ export interface AppInfo {
   version: string
   /** Fonts read from this computer's font folders. */
   installedFonts: number
+  /** Families installed only as .otf files, which the app cannot read: present on the PC but not usable. */
+  unreadableFonts: string[]
 }
 
 /** Whether a newer version of the app is published; `enabled` is false outside the installed app. */

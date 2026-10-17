@@ -58,6 +58,11 @@ public class FontMatcher {
         return systemFonts.count();
     }
 
+    /** Families installed as .otf files with CFF outlines: present on this PC but unusable, since PDFBox cannot embed them. */
+    public List<String> unreadableFontFamilies() {
+        return systemFonts.unreadableFamilies();
+    }
+
     /**
      * Whether the page uses a named font that is not installed on this computer, so characters that
      * the page's own (subset) font lacks are drawn in a stand-in. Fonts without a real name (Type 3)

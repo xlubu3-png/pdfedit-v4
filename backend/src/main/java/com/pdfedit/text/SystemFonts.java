@@ -21,6 +21,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.apache.fontbox.ttf.NameRecord;
+import org.apache.fontbox.ttf.OTFParser;
 import org.apache.fontbox.ttf.TTFParser;
 import org.apache.fontbox.ttf.TrueTypeCollection;
 import org.apache.fontbox.ttf.TrueTypeFont;
@@ -54,6 +55,8 @@ public final class SystemFonts {
 
     private final List<Path> roots;
     private volatile List<Face> faces;
+    /** .otf fonts with CFF outlines found by the last scan: known by name only. */
+    private volatile List<Face> unreadable = List.of();
 
     public SystemFonts(List<Path> roots) {
         this.roots = List.copyOf(roots);
@@ -238,20 +241,38 @@ public final class SystemFonts {
 
     private List<Face> scan() {
         List<Face> found = new ArrayList<>();
+        List<Face> skipped = new ArrayList<>();
         for (Path root : roots) {
             if (!Files.isDirectory(root)) {
                 continue;
             }
             try (Stream<Path> files = Files.walk(root, MAX_DEPTH)) {
-                files.filter(Files::isRegularFile).sorted().forEach(file -> readFaces(file, found));
+                files.filter(Files::isRegularFile).sorted().forEach(file -> readFaces(file, found, skipped));
             } catch (IOException | UncheckedIOException unreadableFolder) {
                 // keep whatever the other folders provide
             }
         }
+        unreadable = List.copyOf(skipped);
         return List.copyOf(found);
     }
 
-    private static void readFaces(Path file, List<Face> out) {
+    /**
+     * The families of installed fonts the app cannot use because they are .otf files with CFF outlines, which
+     * PDFBox cannot embed. Sorted, each once; a font that is also installed as a .ttf is not listed.
+     */
+    public List<String> unreadableFamilies() {
+        List<Face> usable = faces();
+        Set<String> usableNames = new HashSet<>();
+        usable.forEach(face -> usableNames.add(normalize(face.family())));
+        return unreadable.stream()
+                .map(Face::family)
+                .filter(family -> !usableNames.contains(normalize(family)))
+                .distinct()
+                .sorted(String.CASE_INSENSITIVE_ORDER)
+                .toList();
+    }
+
+    private static void readFaces(Path file, List<Face> out, List<Face> unreadable) {
         String fileName = file.getFileName().toString().toLowerCase(Locale.ROOT);
         try {
             if (fileName.endsWith(".ttf")) {
@@ -264,9 +285,26 @@ public final class SystemFonts {
                 try (TrueTypeCollection collection = new TrueTypeCollection(file.toFile())) {
                     collection.processAllFonts(font -> out.add(describe(file, font.getName(), font)));
                 }
+            } else if (fileName.endsWith(".otf")) {
+                readOpenType(file, out, unreadable);
             }
         } catch (Exception unreadableFont) {
-            // not a usable TrueType font: skip it
+            // not a usable font file: skip it
+        }
+    }
+
+    /**
+     * An .otf file. One whose glyphs are TrueType outlines is as good as a .ttf; one with CFF outlines (most of
+     * them) can be read for its name but cannot be put into a PDF by PDFBox, so it is only remembered by name,
+     * to tell the user why the font they installed is not used.
+     */
+    private static void readOpenType(Path file, List<Face> out, List<Face> unreadable) throws IOException {
+        try (TrueTypeFont font = new TTFParser().parse(new RandomAccessReadBufferedFile(file))) {
+            out.add(describe(file, null, font));
+        } catch (IOException cffOutlines) {
+            try (TrueTypeFont font = new OTFParser().parse(new RandomAccessReadBufferedFile(file))) {
+                unreadable.add(describe(file, null, font));
+            }
         }
     }
 

@@ -1191,3 +1191,14 @@ kbd {
 .te-item.selected .te-resize {
   display: block;
 }
+
+/* A font the PC has only as .otf, which the app cannot read: in the header, and in the font help window. */
+.app-warn {
+  color: #b45309;
+  cursor: help;
+}
+
+.font-list small.font-otf,
+.font-otf-note {
+  color: #b45309;
+}

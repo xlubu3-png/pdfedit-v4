@@ -14,7 +14,7 @@ import {
   uploadImage,
 } from '../api'
 import type { TextEditPayload } from '../api'
-import { fontBaseName, missingFontNames, reloadMessage } from '../fontHelp'
+import { fontBaseName, missingFontNames, otherFormatFamily, reloadMessage } from '../fontHelp'
 import { editorTipSeen, markEditorTipSeen } from '../editorTip'
 import { foreignChars, SIMILAR_ENOUGH } from '../fontMix'
 import { History } from '../history'
@@ -22,7 +22,7 @@ import { keyCode } from '../keys'
 import type { SnapTargets } from '../snap'
 import { clearField, formatRange, lookAt, remapSpans, toggleFor } from '../spans'
 import type { LookPatch } from '../spans'
-import type { AddedImage, AddedText, FontChoice, PageItem, PageText, RunState, TextRun } from '../types'
+import type { AddedImage, AddedText, AppInfo, FontChoice, PageItem, PageText, RunState, TextRun } from '../types'
 import { fitZoom, previewDpi, PX_PER_PT_AT_100, zoomStep } from '../zoom'
 import { HelpDialog } from './HelpDialog'
 import { MissingFontDialog } from './MissingFontDialog'
@@ -48,8 +48,10 @@ interface TextEditorProps {
   onOpenFind: () => void
   /** How many fonts the app read last time, to tell what a reload found. */
   installedFonts: number | undefined
-  /** Called after the installed fonts were read again, with the new count. */
-  onFontsReloaded: (installedFonts: number) => void
+  /** Families installed only as .otf files: the PC has them but the app cannot read them. */
+  unreadableFonts: string[]
+  /** Called after the installed fonts were read again, with what the server now reports. */
+  onFontsReloaded: (info: AppInfo) => void
   busy: boolean
 }
 
@@ -146,6 +148,7 @@ export function TextEditor({
   onFlattenChange,
   onOpenFind,
   installedFonts,
+  unreadableFonts,
   onFontsReloaded,
   busy,
 }: TextEditorProps) {
@@ -976,6 +979,11 @@ export function TextEditor({
   const fit = data ? fitZoom(containerWidth, data.pageWidth) : 1
   const zoom = zoomMode === 'fit' ? fit : zoomMode
   const missingFonts = useMemo(() => missingFontNames(data?.runs ?? []), [data])
+  // Of the fonts the page lacks, those the PC does have - but as .otf files, which the app cannot read.
+  const otfOnly = useMemo(
+    () => missingFonts.filter((font) => otherFormatFamily(font, unreadableFonts) !== null),
+    [missingFonts, unreadableFonts],
+  )
 
   /**
    * Reads the installed fonts again, after the user installed one: sends what is still unsaved first,
@@ -988,8 +996,8 @@ export function TextEditor({
       await flush()
       const info = await reloadFonts()
       setFonts(await fetchFonts())
-      setFontsMessage(reloadMessage(installedFonts, info.installedFonts))
-      onFontsReloaded(info.installedFonts)
+      setFontsMessage(reloadMessage(installedFonts, info.installedFonts, info.unreadableFonts ?? []))
+      onFontsReloaded(info)
       setReloadToken((t) => t + 1)
       setRevision((r) => r + 1)
     } catch (e) {
@@ -1484,6 +1492,12 @@ export function TextEditor({
         <p className="te-font-notice" role="status">
           ⚠ 이 페이지에서 쓰는 글꼴 {missingFonts.length}개가 이 PC에 없습니다: <b>{missingFonts.map(fontBaseName).join(', ')}</b>.
           이미 쓰인 글자는 그대로이고, 새로 입력하는 글자만 비슷한 다른 글꼴로 그려집니다.{' '}
+          {otfOnly.length > 0 && (
+            <>
+              <b>{otfOnly.map(fontBaseName).join(', ')}</b>은(는) 이 PC에 .otf 형식으로만 설치되어 있어 이 앱이 읽지 못합니다. 같은
+              글꼴의 <b>.ttf</b> 버전을 설치해 주세요.{' '}
+            </>
+          )}
           <button type="button" onClick={() => setFontHelpOpen(true)}>
             받는 방법
           </button>
@@ -1608,6 +1622,7 @@ export function TextEditor({
       {fontHelpOpen && (
         <MissingFontDialog
           fonts={missingFonts}
+          unreadableFonts={unreadableFonts}
           message={fontsMessage}
           busy={fontsBusy}
           onReload={() => void reloadInstalledFonts()}

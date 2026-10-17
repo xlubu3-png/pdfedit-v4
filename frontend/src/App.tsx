@@ -11,7 +11,7 @@ import {
   reloadFonts,
   uploadDocument,
 } from './api'
-import { reloadMessage } from './fontHelp'
+import { familyList, reloadMessage } from './fontHelp'
 import { exportFileName } from './exportName'
 import { keyCode } from './keys'
 import { dragHasFiles, pickPdfs } from './pdfFiles'
@@ -309,8 +309,10 @@ function App() {
   const [fontsBusy, setFontsBusy] = useState(false)
 
   /** The installed fonts were read again: the count changes, and every picture is drawn again in case a font arrived. */
-  function handleFontsReloaded(installedFonts: number) {
-    setInfo((prev) => (prev ? { ...prev, installedFonts } : prev))
+  function handleFontsReloaded(fonts: AppInfo) {
+    setInfo((prev) =>
+      prev ? { ...prev, installedFonts: fonts.installedFonts, unreadableFonts: fonts.unreadableFonts ?? [] } : prev,
+    )
     setPages((prev) => prev.map((p) => ({ ...p, textRevision: p.textRevision + 1 })))
   }
 
@@ -320,8 +322,8 @@ function App() {
     try {
       const before = info?.installedFonts
       const next = await reloadFonts()
-      handleFontsReloaded(next.installedFonts)
-      setFontsNote(reloadMessage(before, next.installedFonts))
+      handleFontsReloaded(next)
+      setFontsNote(reloadMessage(before, next.installedFonts, next.unreadableFonts ?? []))
     } catch (e) {
       setError(e instanceof Error ? e.message : '글꼴을 다시 읽지 못했습니다')
     } finally {
@@ -448,6 +450,14 @@ function App() {
           {info
             ? `v${info.version} · 로컬 글꼴 ${info.installedFonts.toLocaleString('ko-KR')}개 읽음`
             : '글꼴 확인 중…'}{' '}
+          {info && (info.unreadableFonts?.length ?? 0) > 0 && (
+            <span
+              className="app-warn"
+              title={`이 PC에 .otf 형식으로만 설치된 글꼴이라 이 앱이 읽지 못합니다: ${info.unreadableFonts.join(', ')}. 같은 글꼴의 .ttf 버전을 설치하면 쓸 수 있습니다.`}
+            >
+              · ⚠ .otf 글꼴 {info.unreadableFonts.length}개는 읽지 못함 ({familyList(info.unreadableFonts, 2)})
+            </span>
+          )}{' '}
           {info && (
             <button
               type="button"
@@ -589,6 +599,7 @@ function App() {
           onFlattenChange={setFlatten}
           onOpenFind={() => setFindOpen(true)}
           installedFonts={info?.installedFonts}
+          unreadableFonts={info?.unreadableFonts ?? []}
           onFontsReloaded={handleFontsReloaded}
           busy={busy}
         />

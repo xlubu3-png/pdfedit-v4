@@ -28,7 +28,8 @@ public class AppInfoController {
 
     @GetMapping("/info")
     public AppInfo info() {
-        return new AppInfo(version, fontMatcher.installedFontCount());
+        int installed = fontMatcher.installedFontCount();
+        return new AppInfo(version, installed, fontMatcher.unreadableFontFamilies());
     }
 
     /**
@@ -37,7 +38,8 @@ public class AppInfoController {
      */
     @PostMapping("/fonts/reload")
     public AppInfo reloadFonts() {
-        return new AppInfo(version, fontMatcher.reloadFonts());
+        int installed = fontMatcher.reloadFonts();
+        return new AppInfo(version, installed, fontMatcher.unreadableFontFamilies());
     }
 
     /** The font families installed on this computer, Korean ones first, for the font pickers. */

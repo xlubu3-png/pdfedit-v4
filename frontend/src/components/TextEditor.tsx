@@ -4,6 +4,7 @@ import {
   ApiError,
   fetchFonts,
   fetchPageText,
+  imageUrl,
   previewUrl,
   reloadFonts,
   resetTextEdits,
@@ -83,10 +84,10 @@ const PASTE_WAIT_MS = 120
 /** How wide a picture is first put on the page: its own size at 96 dpi, but at most this part of the page. */
 const FIRST_IMAGE_SHARE = 0.4
 
-/** A copied line or box, ready to be pasted (also onto another page: this outlives the editor). */
-interface Copied extends Omit<AddedText, 'id'> {
-  from: { documentId: string; pageIndex: number }
-}
+/** A copied line, text box or picture, ready to be pasted (also onto another page: this outlives the editor). */
+type Copied =
+  | { kind: 'text'; look: Omit<AddedText, 'id'>; from: { documentId: string; pageIndex: number } }
+  | { kind: 'image'; look: Omit<AddedImage, 'id'>; from: { documentId: string; pageIndex: number } }
 let clipboard: Copied | null = null
 
 function savedLabel() {
@@ -793,9 +794,18 @@ export function TextEditor({
   }
 
   function copySelection() {
+    if (selected?.kind === 'image') {
+      const picture = imagesRef.current.find((b) => b.id === selected.id)
+      if (!picture) return
+      const { id: _id, ...look } = picture
+      clipboard = { kind: 'image', look, from: { documentId, pageIndex } }
+      pasteCount.current = 0
+      setStatus('그림을 복사했습니다 (Ctrl+V로 붙여넣기, 다른 페이지에도 됩니다)')
+      return
+    }
     const look = describeSelection()
     if (!look) return
-    clipboard = { ...look, from: { documentId, pageIndex } }
+    clipboard = { kind: 'text', look, from: { documentId, pageIndex } }
     pasteCount.current = 0
     setStatus('줄을 복사했습니다 (Ctrl+V로 붙여넣기)')
   }
@@ -805,11 +815,54 @@ export function TextEditor({
       setStatus('복사한 줄이 없습니다')
       return
     }
-    const { from, ...look } = clipboard
+    // While the page is still being read its list of boxes is about to be replaced: a paste now would be lost.
+    if (!dataRef.current || dataRef.current.rotated) {
+      setStatus('페이지를 불러오는 중입니다. 잠시 후 다시 붙여넣어 주세요')
+      return
+    }
     // On the page it came from a paste lands beside the original; on another page it takes the same spot.
-    const samePage = from.documentId === documentId && from.pageIndex === pageIndex
+    const samePage = clipboard.from.documentId === documentId && clipboard.from.pageIndex === pageIndex
     pasteCount.current += 1
-    addBoxFrom(look, samePage ? PASTE_OFFSET * pasteCount.current : 0)
+    const offset = samePage ? PASTE_OFFSET * pasteCount.current : 0
+    if (clipboard.kind === 'image') {
+      void pasteImage(clipboard, offset)
+    } else {
+      addBoxFrom(clipboard.look, offset)
+    }
+  }
+
+  /**
+   * Puts a copied picture on this page. A picture belongs to the document it was uploaded to, so one that came
+   * from another document is fetched from there and uploaded again to this one.
+   */
+  async function pasteImage(copied: Extract<Copied, { kind: 'image' }>, offset: number) {
+    setStatus('그림을 붙여넣는 중…')
+    try {
+      let imageId = copied.look.imageId
+      if (copied.from.documentId !== documentId) {
+        const response = await fetch(imageUrl(copied.from.documentId, imageId))
+        if (!response.ok) throw new Error('복사한 그림을 찾을 수 없습니다. 원래 문서가 지워졌을 수 있습니다.')
+        const blob = await response.blob()
+        imageId = (await uploadImage(documentId, new File([blob], 'picture', { type: blob.type }))).imageId
+      }
+      const box: AddedImage = {
+        ...copied.look,
+        id: newId(),
+        imageId,
+        x: round(copied.look.x + offset),
+        y: round(copied.look.y - offset),
+      }
+      checkpoint(`paste-image:${box.id}`)
+      putImages([...imagesRef.current, box])
+      setSelected({ kind: 'image', id: box.id })
+      setEditing(null)
+      imagesDirty.current = true
+      scheduleSave()
+      setStatus('')
+    } catch (e) {
+      setStatus('')
+      setError(e instanceof Error ? e.message : '그림을 붙여넣지 못했습니다')
+    }
   }
 
   function duplicateSelection() {

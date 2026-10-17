@@ -1,13 +1,17 @@
 import { deflateSync, crc32 } from 'node:zlib'
 
-/** A one-page PDF (A4) with a line of Helvetica text per entry, built by hand: nothing to install. */
-export function simplePdf(lines: string[]): Buffer {
+/** An A4 PDF of `pages` pages, each with a line of Helvetica text per entry, built by hand: nothing to install. */
+export function simplePdf(lines: string[], pages = 1): Buffer {
   const content = lines.map((line, i) => `BT /F1 24 Tf 72 ${700 - i * 50} Td (${line}) Tj ET`).join('\n')
+  const fontId = 3 + pages * 2
+  const kids = Array.from({ length: pages }, (_, i) => `${3 + i * 2} 0 R`).join(' ')
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
-    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+    `<< /Type /Pages /Kids [${kids}] /Count ${pages} >>`,
+    ...Array.from({ length: pages }, (_, i) => [
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents ${4 + i * 2} 0 R /Resources << /Font << /F1 ${fontId} 0 R >> >> >>`,
+      `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+    ]).flat(),
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
   ]
   let out = '%PDF-1.4\n'

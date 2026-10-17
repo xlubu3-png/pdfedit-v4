@@ -239,3 +239,76 @@ test('letters picked inside a text box turn bold, underlined and coloured on the
   expect(added[0].spans[1]).toMatchObject({ start: 6, end: 11, color: '#ff0000' })
   expect(added[0].color).toBe('#000000') // the box colour is untouched
 })
+
+test('a picture copied on one page is pasted onto a page of another document', async ({ page }) => {
+  await page.goto('/')
+  await page.locator('input[type=file]').setInputFiles([
+    { name: 'first.pdf', mimeType: 'application/pdf', buffer: simplePdf(['First page']) },
+    { name: 'second.pdf', mimeType: 'application/pdf', buffer: simplePdf(['Second page']) },
+  ])
+  await page.locator('button[title="텍스트 편집"]').first().click()
+  await expect(page.locator('.te-box[data-index="0"]')).toHaveText('First page')
+  const idOf = async () => /documents\/([^/]+)\//.exec((await page.locator('.te-canvas img').getAttribute('src')) ?? '')![1]
+  const firstId = await idOf()
+
+  await page.getByTestId('image-input').setInputFiles({
+    name: 'stamp.png',
+    mimeType: 'image/png',
+    buffer: solidPng(60, 30, [200, 0, 0]),
+  })
+  await expect(page.locator('.te-image')).toBeVisible()
+  await waitSaved(page)
+  await page.keyboard.press('Control+c')
+  await expect(page.locator('.te-status')).toContainText('그림을 복사했습니다')
+
+  await page.locator('.te-header button[title^="다음 페이지"]').click()
+  await expect(page.locator('.te-box[data-index="0"]')).toHaveText('Second page')
+  const secondId = await idOf()
+  expect(secondId).not.toBe(firstId)
+  await page.keyboard.press('Control+v')
+
+  await expect(page.locator('.te-image')).toBeVisible()
+  await expect.poll(async () => (await serverPage(page, secondId)).images.length).toBe(1)
+  const first = (await serverPage(page, firstId)).images
+  const second = (await serverPage(page, secondId)).images
+  expect(first).toHaveLength(1)
+  expect(second[0].width).toBeCloseTo(first[0].width, 1)
+  // the picture was uploaded again to the second document, which serves it itself
+  expect(second[0].imageId).not.toBe(first[0].imageId)
+  const served = await page.request.get(`/api/v1/pdf/documents/${secondId}/images/${second[0].imageId}`)
+  expect(served.ok()).toBeTruthy()
+})
+
+test('a picture copied on one page is pasted onto another page of the same document, as the same picture', async ({ page }) => {
+  await page.goto('/')
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'two.pdf',
+    mimeType: 'application/pdf',
+    buffer: simplePdf(['A page'], 2),
+  })
+  await page.locator('button[title="텍스트 편집"]').first().click()
+  await expect(page.locator('.te-box[data-index="0"]')).toHaveText('A page')
+  const documentId = /documents\/([^/]+)\//.exec((await page.locator('.te-canvas img').getAttribute('src')) ?? '')![1]
+
+  await page.getByTestId('image-input').setInputFiles({
+    name: 'stamp.png',
+    mimeType: 'image/png',
+    buffer: solidPng(60, 30, [200, 0, 0]),
+  })
+  await expect(page.locator('.te-image')).toBeVisible()
+  await waitSaved(page)
+  await page.keyboard.press('Control+c')
+
+  await page.locator('.te-header button[title^="다음 페이지"]').click()
+  await expect(page.locator('.te-header')).toContainText('2 / 2')
+  await expect(page.locator('.te-box[data-index="0"]')).toHaveText('A page') // the page has been read
+  await page.keyboard.press('Control+v')
+  await expect(page.locator('.te-image')).toBeVisible()
+
+  const secondPage = async () =>
+    (await (await page.request.get(`/api/v1/pdf/documents/${documentId}/pages/1/text-runs`)).json()).images
+  await expect.poll(async () => (await secondPage()).length).toBe(1)
+  const onFirst = (await serverPage(page, documentId)).images
+  // the same document keeps one copy of the picture and both pages point at it
+  expect((await secondPage())[0].imageId).toBe(onFirst[0].imageId)
+})

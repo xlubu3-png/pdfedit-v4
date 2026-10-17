@@ -105,7 +105,7 @@ describe('RunBox', () => {
   })
 })
 
-const added: AddedText = { id: 'a1', text: '새 글자', x: 100, y: 400, fontFamily: null, fontSize: 12, bold: false, color: '#000000' }
+const added: AddedText = { id: 'a1', text: '새 글자', x: 100, y: 400, fontFamily: null, fontSize: 12, bold: false, color: '#000000', spans: [] }
 
 describe('AddedBox', () => {
   it('keeps the typed text when editing is switched off before the focus leaves', () => {

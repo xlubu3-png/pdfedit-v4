@@ -77,6 +77,9 @@ interface Snapshot {
   images: AddedImage[]
 }
 
+/** How long a Ctrl+V waits for the browser's paste event before it pastes the copied line instead. */
+const PASTE_WAIT_MS = 120
+
 /** How wide a picture is first put on the page: its own size at 96 dpi, but at most this part of the page. */
 const FIRST_IMAGE_SHARE = 0.4
 
@@ -210,6 +213,7 @@ export function TextEditor({
   const queue = useRef<Promise<void>>(Promise.resolve())
   const lastSaveFailed = useRef(false)
   const pasteCount = useRef(0)
+  const pasteTimer = useRef<number | undefined>(undefined)
   /** Undo/redo: whole-page snapshots taken before each action (states are immutable, so snapshots are cheap). */
   const historyRef = useRef(new History<Snapshot>(HISTORY_LIMIT, COALESCE_MS))
   const [history, setHistory] = useState({ undo: 0, redo: 0 })
@@ -557,10 +561,11 @@ export function TextEditor({
       if (text.trim() === '') {
         // An empty box is dropped - unless focus only went to the style bar to pick its font first.
         if (!next?.closest('.te-stylebar')) removeAdded(box.id)
-        else updateAdded(box.id, { text })
+        else updateAdded(box.id, { text, spans: remapSpans(box.spans, box.text, text) })
         return
       }
-      if (text !== box.text) updateAdded(box.id, { text })
+      // The formatted parts stay on the letters they were put on.
+      if (text !== box.text) updateAdded(box.id, { text, spans: remapSpans(box.spans, box.text, text) })
     },
     [removeAdded, updateAdded],
   )
@@ -718,11 +723,21 @@ export function TextEditor({
         fontSize: s?.fontSize ?? run.fontSize,
         bold: s?.bold ?? run.bold,
         color: s?.color ?? run.color,
+        spans: s?.spans ?? [], // the bold, coloured, resized or underlined parts come along
       }
     }
     const box = addedRef.current.find((b) => b.id === selected.id)
     return box
-      ? { text: box.text, x: box.x, y: box.y, fontFamily: box.fontFamily, fontSize: box.fontSize, bold: box.bold, color: box.color }
+      ? {
+          text: box.text,
+          x: box.x,
+          y: box.y,
+          fontFamily: box.fontFamily,
+          fontSize: box.fontSize,
+          bold: box.bold,
+          color: box.color,
+          spans: box.spans,
+        }
       : null
   }
 
@@ -780,6 +795,7 @@ export function TextEditor({
         fontSize: look.fontSize,
         bold: look.bold,
         color: look.color,
+        spans: [],
       }
       e.preventDefault()
       putAdded([...addedRef.current, box])
@@ -1075,8 +1091,10 @@ export function TextEditor({
         return
       }
       if (ctrl && code === 'KeyV' && !inField && !box) {
-        e.preventDefault()
-        pasteClipboard()
+        // Not cancelled: the browser may still send a paste event, the only way to see a picture on the clipboard.
+        // When none comes (nothing focused) the line copied with Ctrl+C is pasted.
+        window.clearTimeout(pasteTimer.current)
+        pasteTimer.current = window.setTimeout(pasteClipboard, PASTE_WAIT_MS)
         return
       }
       if (ctrl && code === 'KeyD' && selected) {
@@ -1180,6 +1198,33 @@ export function TextEditor({
     const listener = (e: globalThis.KeyboardEvent) => shortcut.current(e)
     window.addEventListener('keydown', listener)
     return () => window.removeEventListener('keydown', listener)
+  }, [])
+
+  /**
+   * Ctrl+V: a picture on the clipboard (a screenshot, a copied signature) goes onto the page; otherwise the line
+   * copied with Ctrl+C is pasted. Text typed into a box or a field is left to the browser.
+   */
+  const pasteHandler = useRef<(e: ClipboardEvent) => void>(() => {})
+  useEffect(() => {
+    pasteHandler.current = (e) => {
+      window.clearTimeout(pasteTimer.current) // the paste arrived: the key press needs no fallback
+      const el = e.target instanceof HTMLElement ? e.target : null
+      // A paste lands on the page's text selection, which stays inside a line after it was left: only a box that
+      // has the focus counts as one being typed in.
+      const typedBox = el?.closest('[data-index], [data-added]') ?? null
+      const typing = typedBox !== null && typedBox === document.activeElement
+      if (typing || el?.closest('input, select, textarea, .find-dialog, .fp-popup')) return
+      if (helpOpen || fontHelpOpen || !editable) return
+      const picture = Array.from(e.clipboardData?.files ?? []).find((f) => f.type.startsWith('image/'))
+      e.preventDefault()
+      if (picture) void addImageFromFile(picture)
+      else pasteClipboard()
+    }
+  })
+  useEffect(() => {
+    const listener = (e: ClipboardEvent) => pasteHandler.current(e)
+    window.addEventListener('paste', listener)
+    return () => window.removeEventListener('paste', listener)
   }, [])
 
   return (

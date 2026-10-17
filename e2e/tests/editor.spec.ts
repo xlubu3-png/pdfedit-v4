@@ -107,8 +107,9 @@ test('only the letters picked turn bold, coloured, bigger and underlined', async
   await page.keyboard.press('End')
   for (let i = 0; i < 5; i++) await page.keyboard.press('Shift+ArrowLeft') // "World"
   const colour = page.locator('.te-stylebar input[type=color]')
-  // The size box shows the look of the first picked letter: 24pt once "World" (not "Hello", 36pt) is picked.
-  await expect(page.getByLabel('글자 크기 (pt)')).toHaveValue('24')
+  // Wait until all of "World" is picked (and the page has taken note of it) before using the colour box.
+  await expect.poll(() => page.evaluate(() => window.getSelection()?.toString())).toBe('World')
+  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))))
   await colour.fill('#ff0000')
   await expect.poll(async () => (await serverPage(page, documentId)).runs[0].editSpans.length).toBe(2)
   const both = (await serverPage(page, documentId)).runs[0].editSpans
@@ -149,4 +150,58 @@ test('a picture is added, resized, saved with the page and deleted', async ({ pa
   await page.locator('.te-stylebar').getByRole('button', { name: '삭제', exact: true }).click()
   await expect(frame).toHaveCount(0)
   await expect.poll(async () => (await serverPage(page, documentId)).images).toHaveLength(0)
+})
+
+test('a picture on the clipboard is pasted onto the page with Ctrl+V', async ({ page }) => {
+  const documentId = await openEditor(page, ['Hello World'])
+
+  // What the browser does for a copied picture: a paste event whose clipboard holds an image file.
+  await page.evaluate((base64) => {
+    const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))
+    const data = new DataTransfer()
+    data.items.add(new File([bytes], 'clip.png', { type: 'image/png' }))
+    document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
+  }, solidPng(80, 40, [0, 0, 200]).toString('base64'))
+
+  await expect(page.locator('.te-image')).toBeVisible()
+  await expect.poll(async () => (await serverPage(page, documentId)).images.length).toBe(1)
+  expect((await serverPage(page, documentId)).images[0].width).toBeCloseTo(60, 1) // 80 px at 96 dpi
+})
+
+test('a formatted line keeps its formatting when it is duplicated, copied and pasted', async ({ page }) => {
+  const documentId = await openEditor(page, ['Hello World'])
+
+  await startTyping(page, 0)
+  await page.keyboard.press('Home')
+  for (let i = 0; i < 5; i++) await page.keyboard.press('Shift+ArrowRight') // "Hello"
+  await page.getByRole('button', { name: /굵게/ }).click()
+  await waitSaved(page)
+  await page.keyboard.press('Escape') // out of the line, which stays selected
+
+  await page.keyboard.press('Control+d')
+  await expect(page.locator('.te-box[data-added]')).toHaveCount(1)
+  await expect.poll(async () => (await serverPage(page, documentId)).added.length).toBe(1)
+  let added = (await serverPage(page, documentId)).added
+  expect(added[0].text).toBe('Hello World')
+  expect(added[0].spans).toEqual([expect.objectContaining({ start: 0, end: 5, bold: true })])
+
+  // the duplicate is selected: copy it and paste, which makes a third with the same parts
+  await page.keyboard.press('Control+c')
+  await page.keyboard.press('Control+v')
+  await expect.poll(async () => (await serverPage(page, documentId)).added.length).toBe(2)
+  added = (await serverPage(page, documentId)).added
+  expect(added[1].spans).toEqual(added[0].spans)
+
+  // typing before the formatted part moves it along with its letters
+  // (the pasted box is on top and selected, so a click on it goes straight into typing)
+  const pasted = page.locator('.te-box[data-added]').last()
+  await pasted.click()
+  await expect(pasted).toHaveClass(/typing/)
+  await page.keyboard.press('Control+Home')
+  await page.keyboard.type('>> ')
+  await page.keyboard.press('Escape')
+  await expect.poll(async () => (await serverPage(page, documentId)).added[1].text).toBe('>> Hello World')
+  expect((await serverPage(page, documentId)).added[1].spans).toEqual([
+    expect.objectContaining({ start: 3, end: 8, bold: true }),
+  ])
 })

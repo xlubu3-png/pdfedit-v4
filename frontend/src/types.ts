@@ -99,6 +99,8 @@ export interface AddedText {
   fontSize: number
   bold: boolean
   color: string | null
+  /** Parts of the text with a look of their own, as character positions in `text` (line breaks counted). */
+  spans: Span[]
 }
 
 /** A picture (stamp, signature, logo) the user put on the page; coordinates are PDF user space, `y` is the bottom edge. */

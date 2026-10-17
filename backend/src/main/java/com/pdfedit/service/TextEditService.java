@@ -246,8 +246,26 @@ public class TextEditService {
             if (text.length() > MAX_ADDED_LENGTH) {
                 throw new InvalidEditException("텍스트 상자 하나에는 " + MAX_ADDED_LENGTH + "자까지 쓸 수 있습니다.");
             }
+            List<RunEdit.Span> spans = RunEdit.cleanSpans(box.spans(), text.length());
+            if (spans.size() > MAX_SPANS) {
+                throw new InvalidEditException("한 상자에는 서식을 " + MAX_SPANS + "군데까지 줄 수 있습니다.");
+            }
+            for (RunEdit.Span span : spans) {
+                if (span.color() != null && !span.color().matches(COLOUR_PATTERN)) {
+                    throw new InvalidEditException("글자 색은 #rrggbb 형식이어야 합니다.");
+                }
+                if (span.size() != null && !(span.size() >= MIN_FONT_SIZE && span.size() <= MAX_FONT_SIZE)) {
+                    throw new InvalidEditException("글자 크기는 " + (int) MIN_FONT_SIZE + "~" + (int) MAX_FONT_SIZE + "pt 사이여야 합니다.");
+                }
+            }
             if (!text.isBlank()) {
                 fontMatcher.checkCovers(box.fontFamily(), box.bold(), text);
+                // A part in the other weight needs that weight's font to have its letters too.
+                for (RunEdit.Span span : spans) {
+                    if (span.bold() != null && span.bold() != box.bold()) {
+                        fontMatcher.checkCovers(box.fontFamily(), span.bold(), text.substring(span.start(), span.end()));
+                    }
+                }
             }
         }
         return boxes;
@@ -569,17 +587,57 @@ public class TextEditService {
         if (box.text() == null || box.text().isBlank()) {
             return;
         }
-        String key = "family:" + (box.fontFamily() == null ? "" : box.fontFamily()) + "|" + box.bold();
-        FontMatcher.Styled styled = fonts.styled.computeIfAbsent(key,
-                k -> fontMatcher.loadStyled(outDoc, box.fontFamily(), box.bold()));
-        Color colour = RunEdit.colour(box.color(), Color.BLACK);
+        Color boxColour = RunEdit.colour(box.color(), Color.BLACK);
+        List<RunEdit.Segment> segments = new RunEdit(box.text(), null, null, null, null, 0f, 0f, box.spans()).segments();
         String[] lines = box.text().split("\\R", -1);
+        float baseline = box.y();
+        int lineStart = 0;
         for (int i = 0; i < lines.length; i++) {
-            if (!lines[i].isBlank()) {
-                drawLine(cs, styled, lines[i], box.x(), box.y() - i * box.fontSize() * LINE_SPACING,
-                        box.fontSize(), colour);
+            String line = lines[i];
+            int lineEnd = lineStart + line.length();
+            // The line's pieces: where the look changes, in the weight, colour and size each asks for.
+            float tallest = box.fontSize();
+            List<Piece> pieces = new ArrayList<>();
+            for (RunEdit.Segment segment : segments) {
+                int from = Math.max(segment.start(), lineStart);
+                int to = Math.min(segment.end(), lineEnd);
+                if (to <= from) {
+                    continue;
+                }
+                boolean bold = segment.bold() != null ? segment.bold() : box.bold();
+                float size = segment.size() != null ? segment.size() : box.fontSize();
+                String key = "family:" + (box.fontFamily() == null ? "" : box.fontFamily()) + "|" + bold;
+                FontMatcher.Styled styled = fonts.styled.computeIfAbsent(key,
+                        k -> fontMatcher.loadStyled(outDoc, box.fontFamily(), bold));
+                Color colour = segment.color() != null ? RunEdit.colour(segment.color(), boxColour) : boxColour;
+                pieces.add(new Piece(box.text().substring(from, to), styled, colour, size,
+                        Boolean.TRUE.equals(segment.underline())));
+                tallest = Math.max(tallest, size);
             }
+            if (i > 0) {
+                baseline -= tallest * LINE_SPACING;
+            }
+            if (!line.isBlank()) {
+                float cursor = box.x();
+                for (Piece piece : pieces) {
+                    drawLine(cs, piece.styled(), piece.text(), cursor, baseline, piece.size(), piece.colour());
+                    float width = widthOf(piece);
+                    if (piece.underline()) {
+                        underline(cs, cursor, cursor + width, baseline, piece.size(), piece.colour());
+                    }
+                    cursor += width;
+                }
+            }
+            lineStart = lineEnd + lineBreakLength(box.text(), lineEnd);
         }
+    }
+
+    /** How many characters the line break at {@code at} takes: 2 for \r\n, 1 for any other, 0 at the end of the text. */
+    private static int lineBreakLength(String text, int at) {
+        if (at >= text.length()) {
+            return 0;
+        }
+        return text.charAt(at) == '\r' && at + 1 < text.length() && text.charAt(at + 1) == '\n' ? 2 : 1;
     }
 
     /** The page drawn without its text, or null when that is not possible (the cover then falls back to a flat box). */

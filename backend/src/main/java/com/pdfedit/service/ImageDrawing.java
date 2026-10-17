@@ -6,7 +6,11 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.List;
 
+import javax.imageio.IIOImage;
 import javax.imageio.ImageIO;
+import javax.imageio.ImageWriteParam;
+import javax.imageio.ImageWriter;
+import javax.imageio.stream.ImageOutputStream;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory;
@@ -58,11 +62,103 @@ public final class ImageDrawing {
             return new Upload(data, image.getWidth(), image.getHeight(), "image/png");
         }
         if (isJpeg(data)) {
-            return new Upload(data, image.getWidth(), image.getHeight(), "image/jpeg");
+            int orientation = exifOrientation(data);
+            if (orientation == 1) {
+                return new Upload(data, image.getWidth(), image.getHeight(), "image/jpeg");
+            }
+            // A phone saves its photo as the sensor saw it and notes how to turn it: readers of this
+            // app (and the PDF) know nothing of the note, so the picture is turned for good here.
+            BufferedImage upright = upright(image, orientation);
+            return new Upload(jpeg(upright), upright.getWidth(), upright.getHeight(), "image/jpeg");
         }
         ByteArrayOutputStream png = new ByteArrayOutputStream();
         ImageIO.write(image, "png", png);
         return new Upload(png.toByteArray(), image.getWidth(), image.getHeight(), "image/png");
+    }
+
+    /**
+     * The EXIF orientation (1 to 8) a JPEG carries, 1 (as it is) when it has none or cannot be read:
+     * 6 means "turn 90 degrees clockwise to see it right side up", the usual portrait photo.
+     */
+    static int exifOrientation(byte[] d) {
+        try {
+            int i = 2;
+            while (i + 4 <= d.length && (d[i] & 0xFF) == 0xFF) {
+                int marker = d[i + 1] & 0xFF;
+                if (marker == 0xD9 || marker == 0xDA) {
+                    return 1; // the picture data starts: no more headers
+                }
+                int length = ((d[i + 2] & 0xFF) << 8) | (d[i + 3] & 0xFF);
+                boolean exif = marker == 0xE1 && length >= 16 && d[i + 4] == 'E' && d[i + 5] == 'x'
+                        && d[i + 6] == 'i' && d[i + 7] == 'f' && d[i + 8] == 0 && d[i + 9] == 0;
+                if (exif) {
+                    int tiff = i + 10;
+                    boolean little = d[tiff] == 'I';
+                    int ifd = tiff + (int) number(d, tiff + 4, 4, little);
+                    int entries = (int) number(d, ifd, 2, little);
+                    for (int e = 0; e < entries; e++) {
+                        int at = ifd + 2 + e * 12;
+                        if (number(d, at, 2, little) == 0x0112) {
+                            int value = (int) number(d, at + 8, 2, little);
+                            return value >= 1 && value <= 8 ? value : 1;
+                        }
+                    }
+                    return 1;
+                }
+                i += 2 + length;
+            }
+        } catch (RuntimeException unreadable) {
+            // a damaged header is no reason to refuse the picture
+        }
+        return 1;
+    }
+
+    private static long number(byte[] d, int at, int bytes, boolean little) {
+        long value = 0;
+        for (int k = 0; k < bytes; k++) {
+            int b = d[at + (little ? bytes - 1 - k : k)] & 0xFF;
+            value = (value << 8) | b;
+        }
+        return value;
+    }
+
+    /** The picture turned and flipped as its EXIF orientation says, so that it is right side up. */
+    static BufferedImage upright(BufferedImage source, int orientation) {
+        int w = source.getWidth();
+        int h = source.getHeight();
+        boolean swap = orientation >= 5;
+        BufferedImage out = new BufferedImage(swap ? h : w, swap ? w : h, BufferedImage.TYPE_INT_RGB);
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int rgb = source.getRGB(x, y);
+                switch (orientation) {
+                    case 2 -> out.setRGB(w - 1 - x, y, rgb);
+                    case 3 -> out.setRGB(w - 1 - x, h - 1 - y, rgb);
+                    case 4 -> out.setRGB(x, h - 1 - y, rgb);
+                    case 5 -> out.setRGB(y, x, rgb);
+                    case 6 -> out.setRGB(h - 1 - y, x, rgb);
+                    case 7 -> out.setRGB(h - 1 - y, w - 1 - x, rgb);
+                    case 8 -> out.setRGB(y, w - 1 - x, rgb);
+                    default -> out.setRGB(x, y, rgb);
+                }
+            }
+        }
+        return out;
+    }
+
+    private static byte[] jpeg(BufferedImage image) throws IOException {
+        ImageWriter writer = ImageIO.getImageWritersByFormatName("jpeg").next();
+        ImageWriteParam param = writer.getDefaultWriteParam();
+        param.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+        param.setCompressionQuality(0.92f);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (ImageOutputStream stream = ImageIO.createImageOutputStream(out)) {
+            writer.setOutput(stream);
+            writer.write(null, new IIOImage(image, null, null), param);
+        } finally {
+            writer.dispose();
+        }
+        return out.toByteArray();
     }
 
     public static String contentType(byte[] data) {

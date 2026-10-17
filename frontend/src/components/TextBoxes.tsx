@@ -270,7 +270,9 @@ export function RunBox({
     if (!editing) return
     const report = () => {
       const el = ref.current
-      if (!el) return
+      // Only what happens while typing counts: as the focus leaves for the colour or size box the browser
+      // collapses the pick, which must not be taken for the user dropping it.
+      if (!el || document.activeElement !== el) return
       const range = selectionOffsets(el)
       if (range === null) return // the pick is somewhere else (the colour dialog took the focus): keep what we had
       onSelection(run, range.end > range.start ? range : null)

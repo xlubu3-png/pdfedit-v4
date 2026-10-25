@@ -665,6 +665,22 @@ button.primary:disabled {
   word-break: keep-all;
 }
 
+/* A Hangul document in rhwp-studio: its own menus fill everything under the app's top line. */
+.hwp-top {
+  padding-bottom: 6px;
+}
+
+.hwp-host {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.hwp-host iframe {
+  flex: 1;
+  display: block;
+}
+
 /* The page list's ribbon: the same groups, always all shown. */
 .page-ribbon {
   margin-bottom: 12px;

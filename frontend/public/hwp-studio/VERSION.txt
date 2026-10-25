@@ -1,0 +1,1 @@
+rhwp-studio 0.8.7 (https://github.com/edwardkim/rhwp/tree/v0.8.7), engine @rhwp/core@0.8.7

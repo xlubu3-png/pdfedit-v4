@@ -21,6 +21,7 @@ import { clearSession, loadSession, saveSession } from './session'
 import { readSkippedVersion, shouldAnnounce, skipVersion } from './updateNotice'
 import { CompareView } from './components/CompareView'
 import { FindReplaceDialog } from './components/FindReplaceDialog'
+import { HwpEditor } from './components/HwpEditor'
 import { PasswordDialog } from './components/PasswordDialog'
 import { RedactDialog } from './components/RedactDialog'
 import { RedactEditor } from './components/RedactEditor'
@@ -81,6 +82,8 @@ function App() {
   const [notice, setNotice] = useState<string | null>(null)
   const [redactOpen, setRedactOpen] = useState(false)
   const [compareOpen, setCompareOpen] = useState(false)
+  /** A Hangul document open in the HWP editor, or null. */
+  const [hwpFile, setHwpFile] = useState<File | null>(null)
   /** The page the redaction areas are being drawn on, or null. */
   const [drawKey, setDrawKey] = useState<string | null>(null)
   /** Export every page as a picture, so nothing of the original (covered-up) text stays in the file. */
@@ -153,9 +156,15 @@ function App() {
   }, [pages, restored])
 
   async function handleFiles(files: File[]) {
-    const { pdfs, skipped } = pickPdfs(files)
+    const { pdfs, hwps, skipped } = pickPdfs(files)
     const problems: string[] = []
-    if (skipped.length > 0) problems.push(`PDF가 아니라서 건너뛴 파일: ${skipped.join(', ')}`)
+    if (skipped.length > 0) problems.push(`PDF·한글 문서가 아니라서 건너뛴 파일: ${skipped.join(', ')}`)
+    if (hwps.length > 0) {
+      setHwpFile(hwps[0])
+      if (hwps.length > 1) {
+        problems.push(`한글 문서는 한 번에 하나씩 엽니다. 열지 않은 파일: ${hwps.slice(1).map((f) => f.name).join(', ')}`)
+      }
+    }
     if (pdfs.length === 0) {
       setError(problems.join('\n') || null)
       return
@@ -216,7 +225,7 @@ function App() {
   const filesDropped = useRef<(files: File[]) => void>(() => {})
   useEffect(() => {
     filesDropped.current = (files) => {
-      if (editingKey === null && !busy) void handleFiles(files)
+      if (editingKey === null && hwpFile === null && !busy) void handleFiles(files)
     }
   })
   useEffect(() => {
@@ -475,7 +484,7 @@ function App() {
         setFindOpen(true)
         return
       }
-      if (findOpen || redactOpen || compareOpen || drawKey !== null || editingKey !== null || inField) return
+      if (findOpen || redactOpen || compareOpen || hwpFile !== null || drawKey !== null || editingKey !== null || inField) return
       if (ctrl && code === 'KeyS') {
         e.preventDefault()
         void handleExport()
@@ -613,8 +622,8 @@ function App() {
               <RibbonGroup label="파일">
                 <RibbonButton
                   icon={<FolderOpen />}
-                  label="PDF 열기"
-                  title="PDF를 더 열어 목록 끝에 붙입니다 (화면에 끌어다 놓아도 됩니다)"
+                  label="파일 열기"
+                  title="PDF는 목록 끝에 붙이고, 한글 문서(HWP·HWPX)는 한글 편집 화면에서 엽니다 (화면에 끌어다 놓아도 됩니다)"
                   // The upload box above holds the file picker; this opens the same one.
                   onClick={() => document.querySelector<HTMLInputElement>('.upload-zone input[type=file]')?.click()}
                   disabled={busy}
@@ -750,6 +759,8 @@ function App() {
       )}
 
       {compareOpen && <CompareView pages={pages} onClose={() => setCompareOpen(false)} />}
+
+      {hwpFile && <HwpEditor key={`${hwpFile.name}-${hwpFile.lastModified}`} file={hwpFile} onClose={() => setHwpFile(null)} />}
 
       {redactOpen && drawKey === null && (
         <RedactDialog

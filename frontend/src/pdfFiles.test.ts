@@ -15,6 +15,14 @@ describe('pickPdfs', () => {
     expect(pdfs.map((f) => f.name)).toEqual(['a.pdf', 'b.PDF'])
     expect(skipped).toEqual(['c.docx', 'd.png'])
   })
+
+  it('sets Hangul documents apart for the HWP editor', () => {
+    const { pdfs, hwps, skipped } = pickPdfs([file('a.hwp', ''), file('b.HWPX', ''), file('c.pdf', ''), file('d.hwt', '')])
+
+    expect(hwps.map((f) => f.name)).toEqual(['a.hwp', 'b.HWPX'])
+    expect(pdfs.map((f) => f.name)).toEqual(['c.pdf'])
+    expect(skipped).toEqual(['d.hwt'])
+  })
 })
 
 describe('dragHasFiles', () => {

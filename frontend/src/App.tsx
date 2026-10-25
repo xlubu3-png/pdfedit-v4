@@ -13,6 +13,7 @@ import {
   uploadDocument,
 } from './api'
 import { familyList, reloadMessage } from './fontHelp'
+import { printPdf } from './print'
 import { redactionMessage } from './redaction'
 import { exportFileName } from './exportName'
 import { keyCode } from './keys'
@@ -39,6 +40,7 @@ import {
   FilePlus,
   FolderOpen,
   GitCompareArrows,
+  Printer,
   RotateCcw,
   RotateCw,
   Search,
@@ -342,6 +344,25 @@ function App() {
   }
 
   /** Downloads all pages as one PDF, named after the source file ("계약서_수정본.pdf"). */
+  /**
+   * Prints the pages as they would be exported (edits, redaction and "이미지로 변환" included): the
+   * selected ones when some are selected, else all.
+   */
+  async function handlePrint(target?: PageItem[]) {
+    const chosen = target ?? (selectedKeys.size > 0 ? pages.filter((p) => selectedKeys.has(p.key)) : pages)
+    if (chosen.length === 0 || busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      const { blob } = await exportPdf(chosen, exportFileName(chosen), flatten)
+      await printPdf(blob)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '인쇄할 문서를 만들지 못했습니다')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function handleExport() {
     if (pages.length === 0) return
     setBusy(true)
@@ -494,6 +515,10 @@ function App() {
       if (ctrl && code === 'KeyS') {
         e.preventDefault()
         void handleExport()
+      } else if (ctrl && code === 'KeyP') {
+        // The document, not this screen, is what gets printed.
+        e.preventDefault()
+        void handlePrint()
       } else if (ctrl && code === 'KeyA') {
         e.preventDefault()
         setSelectedKeys(new Set(pages.map((p) => p.key)))
@@ -710,6 +735,17 @@ function App() {
                   pressed={flatten}
                 />
                 <RibbonButton
+                  icon={<Printer />}
+                  label="인쇄"
+                  title={
+                    selectedKeys.size > 0
+                      ? `선택한 ${selectedKeys.size}쪽을 인쇄합니다 (Ctrl+P)`
+                      : '목록의 모든 페이지를 내보낼 때와 같은 모습으로 인쇄합니다 (Ctrl+P)'
+                  }
+                  onClick={() => void handlePrint()}
+                  disabled={busy}
+                />
+                <RibbonButton
                   icon={<FileDown />}
                   label="PDF로 내보내기"
                   title="목록의 모든 페이지를 순서대로 하나의 PDF로 내려받습니다 (Ctrl+S)"
@@ -745,6 +781,7 @@ function App() {
           onClose={handleCloseEditor}
           onEdited={handleTextEdited}
           onExport={handleExport}
+          onPrint={() => handlePrint(pages)}
           flatten={flatten}
           onFlattenChange={setFlatten}
           onOpenFind={() => setFindOpen(true)}

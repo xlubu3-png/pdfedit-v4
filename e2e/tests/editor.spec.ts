@@ -77,7 +77,7 @@ test('undo brings the original line back', async ({ page }) => {
   await waitSaved(page)
   expect((await serverPage(page, documentId)).runs[0].currentText).toBe('Changed')
 
-  await page.locator('.te-header button[title^="실행 취소"]').click()
+  await page.locator('.te-overlay button[title^="실행 취소"]').click()
   await expect.poll(async () => (await serverPage(page, documentId)).runs[0].currentText).toBe('Hello World')
 })
 
@@ -261,7 +261,7 @@ test('a picture copied on one page is pasted onto a page of another document', a
   await page.keyboard.press('Control+c')
   await expect(page.locator('.te-status')).toContainText('그림을 복사했습니다')
 
-  await page.locator('.te-header button[title^="다음 페이지"]').click()
+  await page.locator('.te-statusbar button[title^="다음 페이지"]').click()
   await expect(page.locator('.te-box[data-index="0"]')).toHaveText('Second page')
   const secondId = await idOf()
   expect(secondId).not.toBe(firstId)
@@ -299,8 +299,8 @@ test('a picture copied on one page is pasted onto another page of the same docum
   await waitSaved(page)
   await page.keyboard.press('Control+c')
 
-  await page.locator('.te-header button[title^="다음 페이지"]').click()
-  await expect(page.locator('.te-header')).toContainText('2 / 2')
+  await page.locator('.te-statusbar button[title^="다음 페이지"]').click()
+  await expect(page.locator('.te-statusbar')).toContainText('2 / 2')
   await expect(page.locator('.te-box[data-index="0"]')).toHaveText('A page') // the page has been read
   await page.keyboard.press('Control+v')
   await expect(page.locator('.te-image')).toBeVisible()

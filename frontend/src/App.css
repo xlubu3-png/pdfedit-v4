@@ -523,7 +523,7 @@ button.primary:disabled {
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 6px 16px 0;
+  padding: 6px 16px;
 }
 
 .te-header .rb-top > button,
@@ -663,6 +663,208 @@ button.primary:disabled {
 .rb-label {
   text-align: center;
   word-break: keep-all;
+}
+
+/*
+ * The PDF editor's menus, laid out like the Hangul document editor (rhwp-studio) so both screens read alike:
+ * a row of menu names, a compact tool row of icons over short names, the formatting line, and a status bar.
+ */
+.rb-menubar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 12px;
+  background: #f3f4f6;
+  border-top: 1px solid var(--border);
+}
+
+.rb-menubar .rb-tabs {
+  align-self: stretch;
+  margin: 0;
+  gap: 0;
+}
+
+.te-header .rb-menubar .rb-tab {
+  padding: 6px 14px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-h);
+  font-size: 13px;
+  font-weight: 400;
+  box-shadow: none;
+}
+
+.te-header .rb-menubar .rb-tab:hover {
+  background: #e7e9ec;
+  color: var(--text-h);
+}
+
+.te-header .rb-menubar .rb-tab.active {
+  border-bottom-color: var(--accent);
+  background: transparent;
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: none;
+}
+
+.te-header .rb-collapse {
+  padding: 2px 6px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+}
+
+.rb-header .rb-panel {
+  padding: 4px 8px;
+  background: #fbfbfc;
+  border-top: 1px solid #e3e5e8;
+}
+
+.rb-header .rb-group {
+  padding: 0 6px;
+}
+
+.rb-header .rb-caption {
+  display: none;
+}
+
+.rb-header .rb-panel .rb-button {
+  min-width: 44px;
+  max-width: 64px;
+  padding: 3px 4px;
+  font-size: 11px;
+  line-height: 1.15;
+}
+
+.rb-header .rb-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* The formatting line: quick buttons, font, size, then the letter styles as in a word processor. */
+.te-stylebar {
+  gap: 6px 8px;
+  padding: 4px 12px;
+  background: #f3f4f6;
+}
+
+.te-quick {
+  display: inline-flex;
+  gap: 2px;
+  padding-right: 8px;
+  margin-right: 2px;
+  border-right: 1px solid #d5d8dc;
+}
+
+.te-stylebar .te-quick button {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 5px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.te-stylebar .te-quick button:hover:not(:disabled),
+.te-stylebar .te-format:hover:not(:disabled) {
+  border-color: var(--border);
+  background: #fff;
+}
+
+.te-style-sep {
+  align-self: stretch;
+  width: 1px;
+  margin: 2px 2px;
+  background: #d5d8dc;
+}
+
+.te-size {
+  gap: 2px;
+}
+
+.te-stylebar .te-format {
+  min-width: 28px;
+  padding: 2px 6px;
+  border-color: transparent;
+  background: transparent;
+  font-size: 14px;
+}
+
+.te-color {
+  position: relative;
+  gap: 2px;
+}
+
+.te-color span {
+  padding: 0 3px;
+  font-size: 14px;
+  border-bottom: 3px solid #000;
+  line-height: 1.1;
+}
+
+.te-stylebar .te-color input[type='color'] {
+  width: 22px;
+  height: 22px;
+}
+
+/* The status bar at the bottom of the editor: page, what is selected, zoom. */
+.te-statusbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 12px;
+  background: #f3f4f6;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.te-statusbar .te-sub,
+.te-statusbar .te-zoom-value {
+  white-space: nowrap;
+}
+
+.te-statusbar button {
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-h);
+  font: inherit;
+  cursor: pointer;
+}
+
+.te-statusbar button:hover:not(:disabled) {
+  border-color: var(--border);
+  background: #fff;
+}
+
+.te-statusbar button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.te-statusbar-sep {
+  align-self: stretch;
+  width: 1px;
+  background: #d5d8dc;
+}
+
+.te-statusbar .te-style-info {
+  order: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.te-statusbar .te-zoom {
+  margin-left: auto;
 }
 
 /* A Hangul document in rhwp-studio: its own menus fill everything under the app's top line. */

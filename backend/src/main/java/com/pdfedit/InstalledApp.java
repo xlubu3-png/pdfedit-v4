@@ -116,7 +116,7 @@ final class InstalledApp {
             menu.addSeparator();
             menu.add(exitItem);
 
-            TrayIcon icon = new TrayIcon(image, "WINTECH_PDF v" + version + " (" + url + ")", menu);
+            TrayIcon icon = new TrayIcon(image, "WINTECH 문서편집기 v" + version + " (" + url + ")", menu);
             icon.setImageAutoSize(true);
             icon.addActionListener(e -> open.run());
             exitItem.addActionListener(e -> {

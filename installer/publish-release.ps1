@@ -40,7 +40,7 @@ try {
     [IO.File]::WriteAllText($sumsFile, "$hash  $(Split-Path $installer -Leaf)`n", (New-Object Text.UTF8Encoding($false)))
 
     if (-not $Notes) { $Notes = (git log -1 --format=%B).Trim() }
-    $args = @('release', 'create', $tag, $installer, $sumsFile, '--title', "WINTECH_PDF v$version", '--notes', $Notes, '--target', (git rev-parse HEAD))
+    $args = @('release', 'create', $tag, $installer, $sumsFile, '--title', "WINTECH Document Editor v$version", '--notes', $Notes, '--target', (git rev-parse HEAD))
     if ($Draft) { $args += '--draft' }
     & gh @args
     if ($LASTEXITCODE -ne 0) { throw 'gh release create failed' }

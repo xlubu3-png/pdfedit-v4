@@ -56,7 +56,8 @@ $common = @(
     '--name', 'WINTECH_PDF',
     '--app-version', $windowsVersion,
     '--vendor', 'WINTECH',
-    '--description', 'WINTECH PDF Editor',
+    # The name stays WINTECH_PDF: Windows finds the installed copy to update by it. Only the description is new.
+    '--description', 'WINTECH Document Editor (PDF, HWP, HWPX)',
     '--input', (Join-Path $work 'input'),
     '--main-jar', 'WINTECH_PDF.jar',
     '--main-class', 'org.springframework.boot.loader.launch.JarLauncher',

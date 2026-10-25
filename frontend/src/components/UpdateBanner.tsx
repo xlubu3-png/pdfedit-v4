@@ -15,7 +15,7 @@ export function UpdateBanner({ info, state, onInstall, onSkip }: UpdateBannerPro
     return (
       <div className="info-banner update-banner" role="status">
         <span>
-          설치 프로그램을 실행했습니다. 이 앱은 곧 종료됩니다. 설치가 끝나면 바탕화면(또는 시작 메뉴)의 WINTECH_PDF로 다시 시작하세요.
+          설치 프로그램을 실행했습니다. 이 앱은 곧 종료됩니다. 설치가 끝나면 바탕화면(또는 시작 메뉴)의 WINTECH_PDF 바로가기로 다시 시작하세요.
           작업 중이던 문서는 저장되어 있어 그대로 이어집니다.
         </span>
       </div>

@@ -47,6 +47,12 @@ import {
 } from 'lucide-react'
 import type { AppInfo, PageItem, ReplaceResult, UpdateInfo, UploadResponse } from './types'
 
+/**
+ * The name the screen shows. The installed program, its folders and its installer keep the name WINTECH_PDF:
+ * updates and existing installations find each other by it.
+ */
+const APP_NAME = 'WINTECH 문서편집기'
+
 /** An open password question: the upload waits on `resolve` (null: open the file no more). */
 interface PasswordAsk {
   fileName: string
@@ -112,7 +118,7 @@ function App() {
     fetchAppInfo()
       .then((loaded) => {
         setInfo(loaded)
-        document.title = `WINTECH_PDF v${loaded.version}`
+        document.title = `${APP_NAME} v${loaded.version}`
       })
       .catch(() => setInfo(null))
   }, [])
@@ -511,8 +517,8 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>PDF 편집기</h1>
-        <p className="subtitle">텍스트 수정 · 페이지 순서 변경 · 회전 · 삭제 · 삽입 · 추출 · 여러 PDF 합치기</p>
+        <h1>{APP_NAME}</h1>
+        <p className="subtitle">PDF · 한글(HWP/HWPX) 편집 · 페이지 정리와 합치기 · 문서 비교 · 개인정보 가리기</p>
         <p className="app-meta">
           {info
             ? `v${info.version} · 로컬 글꼴 ${info.installedFonts.toLocaleString('ko-KR')}개 읽음`

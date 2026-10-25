@@ -2,6 +2,8 @@ package com.pdfedit.controller;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.List;
+import java.util.stream.Collectors;
 
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -23,6 +25,8 @@ import org.springframework.web.multipart.MultipartFile;
 
 import com.pdfedit.dto.ExportRequest;
 import com.pdfedit.dto.UploadResponse;
+import com.pdfedit.redact.Redaction;
+import com.pdfedit.redact.Redactor;
 import com.pdfedit.service.InvalidEditException;
 import com.pdfedit.service.PageEdits;
 import com.pdfedit.service.PageRotationBaker;
@@ -37,6 +41,7 @@ import com.pdfedit.service.TextEditService;
 @RequestMapping("/api/v1/pdf")
 public class PdfController {
 
+    static final String REDACTION_HEADER = "X-Redaction-Report";
     private static final int MIN_THUMBNAIL_WIDTH = 16;
     private static final int MAX_THUMBNAIL_WIDTH = 2000;
 
@@ -123,10 +128,21 @@ public class PdfController {
         int shown = Math.max(MIN_THUMBNAIL_WIDTH, Math.min(MAX_THUMBNAIL_WIDTH, width));
         byte[] content = store.getContent(documentId);
         PageEdits edits = store.pageEditsSnapshot(documentId, pageIndex);
-        if (edits.isEmpty()) {
+        List<Redaction> redactions = store.redactions(documentId, pageIndex);
+        if (edits.isEmpty() && redactions.isEmpty()) {
             return thumbnailService.renderPage(content, pageIndex, shown);
         }
-        return thumbnailService.renderPage(textEditService.buildSinglePage(content, pageIndex, edits), 0, shown);
+        byte[] page = textEditService.buildSinglePage(content, pageIndex, edits);
+        if (!redactions.isEmpty()) {
+            // The areas only painted: the real redaction is done on export.
+            try (PDDocument single = Loader.loadPDF(page)) {
+                Redactor.paint(single, single.getPage(0), redactions);
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                single.save(out);
+                page = out.toByteArray();
+            }
+        }
+        return thumbnailService.renderPage(page, 0, shown);
     }
 
     @PostMapping("/export")
@@ -134,14 +150,20 @@ public class PdfController {
         if (request.pages() == null || request.pages().isEmpty()) {
             throw new InvalidEditException("내보낼 페이지가 없습니다.");
         }
-        byte[] result = exportService.export(request.pages(), Boolean.TRUE.equals(request.flatten()));
+        PdfExportService.Exported result = exportService.exportWithReport(request.pages(),
+                Boolean.TRUE.equals(request.flatten()));
         // Quotes, backslashes and control characters would break out of the header's quoted file name.
         String requested = request.fileName() == null ? "" : request.fileName().replaceAll("[\\p{Cntrl}\"\\\\]", "_").trim();
         String fileName = requested.isEmpty() ? "edited.pdf" : requested;
 
+        PdfExportService.RedactionReport redaction = result.redaction();
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
+                // e.g. "areas=3;removed=41;pictures=2,5": what the screen reports after the download.
+                .header(REDACTION_HEADER, "areas=" + redaction.areas() + ";removed=" + redaction.glyphsRemoved()
+                        + ";pictures=" + redaction.picturePages().stream().map(String::valueOf)
+                                .collect(Collectors.joining(",")))
                 .contentType(MediaType.APPLICATION_PDF)
-                .body(result);
+                .body(result.pdf());
     }
 }

@@ -809,6 +809,129 @@ button.primary:disabled {
   font-size: 12px;
 }
 
+/* Personal information search: the kinds to look for and what was found. */
+.redact-dialog {
+  width: min(640px, 94vw);
+  max-height: 88vh;
+}
+
+.redact-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.redact-kinds legend {
+  padding: 0 4px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.find-message.error {
+  color: #c62828;
+}
+
+.redact-results-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+}
+
+.redact-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 34vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.redact-results li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.redact-results li:last-child {
+  border-bottom: none;
+}
+
+.redact-kind {
+  min-width: 8.5em;
+  color: var(--text);
+}
+
+.redact-text {
+  font-family: ui-monospace, Consolas, monospace;
+  color: var(--text-h);
+  word-break: break-all;
+}
+
+/* Drawing redaction areas on a page. */
+.rd-help {
+  margin: 0;
+  padding: 6px 16px;
+  font-size: 13px;
+  background: #fff8e1;
+  border-bottom: 1px solid #f0e0a0;
+}
+
+.rd-layer {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.rd-box {
+  position: absolute;
+  background: rgba(0, 0, 0, 0.72);
+  outline: 1px solid #000;
+  cursor: pointer;
+}
+
+.rd-box.selected {
+  outline: 2px solid #e53935;
+  outline-offset: 1px;
+}
+
+.rd-box.drawing {
+  background: rgba(0, 0, 0, 0.35);
+  outline: 1px dashed #000;
+  pointer-events: none;
+}
+
+.rd-remove {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid #c62828;
+  background: #fff;
+  color: #c62828;
+  font-size: 11px;
+  line-height: 18px;
+  display: none;
+}
+
+.rd-box:hover .rd-remove,
+.rd-box.selected .rd-remove {
+  display: block;
+}
+
 /* Help window: how to use the editor, and the shortcuts as a table. */
 .help-dialog {
   width: min(760px, 94vw);

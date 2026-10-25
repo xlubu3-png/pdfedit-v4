@@ -13,6 +13,7 @@ import {
   uploadDocument,
 } from './api'
 import { familyList, reloadMessage } from './fontHelp'
+import { redactionMessage } from './redaction'
 import { exportFileName } from './exportName'
 import { keyCode } from './keys'
 import { dragHasFiles, pickPdfs } from './pdfFiles'
@@ -20,6 +21,8 @@ import { clearSession, loadSession, saveSession } from './session'
 import { readSkippedVersion, shouldAnnounce, skipVersion } from './updateNotice'
 import { FindReplaceDialog } from './components/FindReplaceDialog'
 import { PasswordDialog } from './components/PasswordDialog'
+import { RedactDialog } from './components/RedactDialog'
+import { RedactEditor } from './components/RedactEditor'
 import { UpdateBanner } from './components/UpdateBanner'
 import { PageGrid } from './components/PageGrid'
 import { TextEditor } from './components/TextEditor'
@@ -58,7 +61,11 @@ function App() {
   const [info, setInfo] = useState<AppInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [passwordAsk, setPasswordAsk] = useState<PasswordAsk | null>(null)
-  const [unlockedNote, setUnlockedNote] = useState<string | null>(null)
+  /** A note about the last upload or export (a file opened with its password, what a redaction did). */
+  const [notice, setNotice] = useState<string | null>(null)
+  const [redactOpen, setRedactOpen] = useState(false)
+  /** The page the redaction areas are being drawn on, or null. */
+  const [drawKey, setDrawKey] = useState<string | null>(null)
   /** Export every page as a picture, so nothing of the original (covered-up) text stays in the file. */
   const [flatten, setFlatten] = useState(false)
   const [findOpen, setFindOpen] = useState(false)
@@ -163,7 +170,7 @@ function App() {
     }
     setError(problems.length > 0 ? problems.join('\n') : null)
     if (unlocked.length > 0) {
-      setUnlockedNote(`암호를 풀어서 열었습니다: ${unlocked.join(', ')}. 내보낸 PDF에는 암호가 걸려 있지 않습니다.`)
+      setNotice(`암호를 풀어서 열었습니다: ${unlocked.join(', ')}. 내보낸 PDF에는 암호가 걸려 있지 않습니다.`)
     }
     setBusy(false)
   }
@@ -281,8 +288,9 @@ function App() {
     setBusy(true)
     setError(null)
     try {
-      const blob = await exportPdf(targetPages, fileName, flatten)
+      const { blob, redaction } = await exportPdf(targetPages, fileName, flatten)
       downloadBlob(blob, fileName)
+      setNotice(redactionMessage(redaction))
     } catch (e) {
       setError(e instanceof Error ? e.message : '추출 중 오류가 발생했습니다')
     } finally {
@@ -308,8 +316,9 @@ function App() {
     setError(null)
     try {
       const fileName = exportFileName(pages)
-      const blob = await exportPdf(pages, fileName, flatten)
+      const { blob, redaction } = await exportPdf(pages, fileName, flatten)
       downloadBlob(blob, fileName)
+      setNotice(redactionMessage(redaction))
     } catch (e) {
       setError(e instanceof Error ? e.message : '내보내기 중 오류가 발생했습니다')
     } finally {
@@ -325,6 +334,14 @@ function App() {
   }, [])
 
   const handleCloseEditor = useCallback(() => setEditingKey(null), [])
+
+  /** Redaction areas changed on these pages: their thumbnails show the black boxes again. */
+  const handleRedactionsChanged = useCallback((changed: { documentId: string; pageIndex: number }[]) => {
+    const keys = new Set(changed.map((c) => `${c.documentId}:${c.pageIndex}`))
+    setPages((prev) =>
+      prev.map((p) => (keys.has(`${p.documentId}:${p.pageIndex}`) ? { ...p, textRevision: p.textRevision + 1 } : p)),
+    )
+  }, [])
 
   function handleNavigateEditor(delta: -1 | 1) {
     const next = pages[editingIndex + delta]
@@ -447,7 +464,7 @@ function App() {
         setFindOpen(true)
         return
       }
-      if (findOpen || editingKey !== null || inField) return
+      if (findOpen || redactOpen || drawKey !== null || editingKey !== null || inField) return
       if (ctrl && code === 'KeyS') {
         e.preventDefault()
         void handleExport()
@@ -556,10 +573,10 @@ function App() {
         </div>
       )}
 
-      {unlockedNote && (
-        <div className="info-banner">
-          <span>{unlockedNote}</span>
-          <button type="button" onClick={() => setUnlockedNote(null)} aria-label="닫기">
+      {notice && (
+        <div className="info-banner" role="status">
+          <span>{notice}</span>
+          <button type="button" onClick={() => setNotice(null)} aria-label="닫기">
             ✕
           </button>
         </div>
@@ -606,6 +623,14 @@ function App() {
                 {flattenOption}
                 <button type="button" onClick={() => setFindOpen(true)} disabled={busy} title="찾아 바꾸기 (Ctrl+F)">
                   찾아 바꾸기
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRedactOpen(true)}
+                  disabled={busy}
+                  title="주민등록번호·전화번호 같은 개인정보를 찾아 가리거나, 가릴 곳을 직접 그립니다. 내보낼 때 실제로 지워집니다."
+                >
+                  개인정보 가리기
                 </button>
                 <button type="button" onClick={() => handleInsertBlank()} disabled={busy}>
                   + 빈 페이지 추가
@@ -657,6 +682,24 @@ function App() {
           onClose={() => setFindOpen(false)}
           onOpenPage={setEditingKey}
           onReplaced={handleReplaced}
+        />
+      )}
+
+      {redactOpen && drawKey === null && (
+        <RedactDialog
+          pages={pages}
+          onClose={() => setRedactOpen(false)}
+          onDraw={setDrawKey}
+          onChanged={handleRedactionsChanged}
+        />
+      )}
+
+      {drawKey !== null && (
+        <RedactEditor
+          pages={pages}
+          startKey={drawKey}
+          onClose={() => setDrawKey(null)}
+          onChanged={(page) => handleRedactionsChanged([page])}
         />
       )}
 

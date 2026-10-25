@@ -6,11 +6,15 @@ import type {
   FontChoice,
   PageItem,
   PageText,
+  PersonalInfoKind,
+  PersonalInfoMatch,
+  Redaction,
   ReplaceResult,
   Span,
   UpdateInfo,
   UploadResponse,
 } from './types'
+import { parseRedactionReport, type RedactionReport } from './redaction'
 
 const BASE = '/api/v1/pdf'
 
@@ -262,7 +266,51 @@ function pageRefs(pages: PageItem[]) {
   return pages.map((p) => ({ documentId: p.documentId, pageIndex: p.pageIndex, rotation: 0 }))
 }
 
-export async function exportPdf(pages: PageItem[], fileName: string, flatten = false): Promise<Blob> {
+export async function fetchRedactions(documentId: string, pageIndex: number): Promise<Redaction[]> {
+  const response = await fetch(`${BASE}/documents/${documentId}/pages/${pageIndex}/redactions`)
+  if (!response.ok) {
+    throw await failure(response, '가림 영역을 불러오지 못했습니다')
+  }
+  return response.json()
+}
+
+export async function saveRedactions(documentId: string, pageIndex: number, areas: Redaction[]): Promise<void> {
+  const response = await fetch(`${BASE}/documents/${documentId}/pages/${pageIndex}/redactions`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(areas),
+  })
+  if (!response.ok) {
+    throw await failure(response, '가림 영역을 저장하지 못했습니다')
+  }
+}
+
+export async function findPersonalInfo(
+  pages: { documentId: string; pageIndex: number }[],
+  kinds: PersonalInfoKind[],
+  term: string,
+): Promise<PersonalInfoMatch[]> {
+  const response = await fetch(`${BASE}/personal-info`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      pages: pages.map((p) => ({ documentId: p.documentId, pageIndex: p.pageIndex, rotation: 0 })),
+      kinds,
+      term,
+    }),
+  })
+  if (!response.ok) {
+    throw await failure(response, '개인정보를 찾지 못했습니다')
+  }
+  return response.json()
+}
+
+/** The exported file, and what its redaction did (null from a server without the report). */
+export async function exportPdf(
+  pages: PageItem[],
+  fileName: string,
+  flatten = false,
+): Promise<{ blob: Blob; redaction: RedactionReport | null }> {
   const response = await fetch(`${BASE}/export`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -279,5 +327,5 @@ export async function exportPdf(pages: PageItem[], fileName: string, flatten = f
   if (!response.ok) {
     throw await failure(response, '내보내기 실패')
   }
-  return response.blob()
+  return { blob: await response.blob(), redaction: parseRedactionReport(response.headers.get('X-Redaction-Report')) }
 }

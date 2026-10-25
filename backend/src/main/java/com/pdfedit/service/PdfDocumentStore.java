@@ -24,6 +24,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import com.pdfedit.redact.Redaction;
 import com.pdfedit.text.AddedImage;
 import com.pdfedit.text.AddedText;
 import com.pdfedit.text.RunEdit;
@@ -59,7 +60,8 @@ public class PdfDocumentStore {
 
     /** What is written next to the PDF; page and run numbers are strings because JSON keys are. */
     record Stored(String fileName, int pageCount, Map<String, Map<String, RunEdit>> edits,
-                  Map<String, List<AddedText>> added, Map<String, List<AddedImage>> images) {
+                  Map<String, List<AddedText>> added, Map<String, List<AddedImage>> images,
+                  Map<String, List<Redaction>> redactions) {
     }
 
     /** Most pictures uploaded for one document, and the biggest one (bytes). */
@@ -153,6 +155,22 @@ public class PdfDocumentStore {
         persist(documentId);
     }
 
+    /** Replaces the redaction areas of a page. */
+    public void setRedactions(String documentId, int pageIndex, List<Redaction> areas) {
+        Entry entry = require(documentId);
+        if (areas.isEmpty()) {
+            entry.redactionsByPage.remove(pageIndex);
+        } else {
+            entry.redactionsByPage.put(pageIndex, List.copyOf(areas));
+        }
+        persist(documentId);
+    }
+
+    /** The redaction areas of a page; empty when it has none. */
+    public List<Redaction> redactions(String documentId, int pageIndex) {
+        return require(documentId).redactionsByPage.getOrDefault(pageIndex, List.of());
+    }
+
     /**
      * Keeps an uploaded picture for the document and returns the id boxes refer to it by.
      *
@@ -237,12 +255,14 @@ public class PdfDocumentStore {
         entry.addedByPage.forEach((page, boxes) -> added.put(String.valueOf(page), boxes));
         Map<String, List<AddedImage>> images = new LinkedHashMap<>();
         entry.imagesByPage.forEach((page, boxes) -> images.put(String.valueOf(page), boxes));
+        Map<String, List<Redaction>> redactions = new LinkedHashMap<>();
+        entry.redactionsByPage.forEach((page, areas) -> redactions.put(String.valueOf(page), areas));
         synchronized (entry) {
             Path target = metaPath(documentId);
             Path temp = target.resolveSibling(target.getFileName() + ".tmp");
             try {
-                Files.write(temp,
-                        mapper.writeValueAsBytes(new Stored(entry.fileName, entry.pageCount, edits, added, images)));
+                Files.write(temp, mapper.writeValueAsBytes(
+                        new Stored(entry.fileName, entry.pageCount, edits, added, images, redactions)));
                 Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
             } catch (IOException e) {
                 log.warn("Could not save the edits of {}: {}", documentId, e.toString());
@@ -339,6 +359,10 @@ public class PdfDocumentStore {
             if (stored.images() != null) {
                 stored.images().forEach((page, boxes) -> entry.imagesByPage.put(Integer.valueOf(page), List.copyOf(boxes)));
             }
+            if (stored.redactions() != null) {
+                stored.redactions().forEach((page, areas) ->
+                        entry.redactionsByPage.put(Integer.valueOf(page), List.copyOf(areas)));
+            }
             entry.imageIds.addAll(savedImageIds(documentId));
             documents.put(documentId, entry);
         } catch (IOException | RuntimeException e) {
@@ -406,6 +430,8 @@ public class PdfDocumentStore {
         final Map<Integer, List<AddedText>> addedByPage = new ConcurrentHashMap<>();
         /** pageIndex to the picture boxes added to that page. */
         final Map<Integer, List<AddedImage>> imagesByPage = new ConcurrentHashMap<>();
+        /** pageIndex to the areas redacted on export. */
+        final Map<Integer, List<Redaction>> redactionsByPage = new ConcurrentHashMap<>();
         /** Pictures uploaded for the document; their bytes are on disk, or here when there is no data folder. */
         final java.util.Set<String> imageIds = ConcurrentHashMap.newKeySet();
         final Map<String, byte[]> imagesInMemory = new ConcurrentHashMap<>();

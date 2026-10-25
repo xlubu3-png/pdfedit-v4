@@ -17,6 +17,41 @@ export interface UpdateInfo {
   error: string | null
 }
 
+/** An area whose content is taken out of the exported PDF and painted black: PDF user space, points. */
+export interface Redaction {
+  id: string
+  x: number
+  /** Bottom edge. */
+  y: number
+  width: number
+  height: number
+}
+
+export type PersonalInfoKind =
+  | 'RRN'
+  | 'CARD'
+  | 'DRIVER'
+  | 'MOBILE'
+  | 'PHONE'
+  | 'EMAIL'
+  | 'BUSINESS'
+  | 'ACCOUNT'
+  | 'PASSPORT'
+  | 'TERM'
+
+/** One piece of personal information found on a page, with the area that would redact it. */
+export interface PersonalInfoMatch {
+  documentId: string
+  pageIndex: number
+  kind: PersonalInfoKind
+  label: string
+  text: string
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export interface UploadResponse {
   documentId: string
   fileName: string

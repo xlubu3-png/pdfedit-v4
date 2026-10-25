@@ -2,6 +2,7 @@ import type {
   AddedImage,
   AddedText,
   AppInfo,
+  CompareResult,
   FindMatch,
   FontChoice,
   PageItem,
@@ -13,6 +14,7 @@ import type {
   Span,
   UpdateInfo,
   UploadResponse,
+  VisualResult,
 } from './types'
 import { parseRedactionReport, type RedactionReport } from './redaction'
 
@@ -264,6 +266,32 @@ export async function replaceText(
 
 function pageRefs(pages: PageItem[]) {
   return pages.map((p) => ({ documentId: p.documentId, pageIndex: p.pageIndex, rotation: 0 }))
+}
+
+/** A picture of the page as it was uploaded (without edits), `width` pixels wide. */
+export function originalUrl(documentId: string, pageIndex: number, width: number): string {
+  return `${BASE}/documents/${documentId}/pages/${pageIndex}/original?width=${Math.round(width)}`
+}
+
+export async function compareDocuments(a: string, b: string): Promise<CompareResult> {
+  const response = await fetch(`${BASE}/compare`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ a, b }),
+  })
+  if (!response.ok) {
+    throw await failure(response, '문서를 비교하지 못했습니다')
+  }
+  return response.json()
+}
+
+export async function compareLook(a: string, pageA: number, b: string, pageB: number): Promise<VisualResult> {
+  const query = new URLSearchParams({ a, pageA: String(pageA), b, pageB: String(pageB) })
+  const response = await fetch(`${BASE}/compare/visual?${query}`)
+  if (!response.ok) {
+    throw await failure(response, '모양을 비교하지 못했습니다')
+  }
+  return response.json()
 }
 
 export async function fetchRedactions(documentId: string, pageIndex: number): Promise<Redaction[]> {

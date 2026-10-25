@@ -52,6 +52,49 @@ export interface PersonalInfoMatch {
   height: number
 }
 
+/** A rectangle in PDF user space (origin bottom-left, y-up), in points. */
+export interface PdfArea {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** Text removed from (or added to) one page, one entry per line it touches. */
+export interface TextChange {
+  page: number
+  text: string
+  area: PdfArea
+}
+
+export interface PageSize {
+  width: number
+  height: number
+  originX: number
+  originY: number
+}
+
+export interface CompareResult {
+  a: string
+  b: string
+  fileNameA: string
+  fileNameB: string
+  pagesA: PageSize[]
+  pagesB: PageSize[]
+  /** In the first document. */
+  removed: TextChange[]
+  /** In the second document. */
+  added: TextChange[]
+  removedWords: number
+  addedWords: number
+}
+
+/** Where a pair of pages looks different; not comparable when they differ in size. */
+export interface VisualResult {
+  comparable: boolean
+  areas: PdfArea[]
+}
+
 export interface UploadResponse {
   documentId: string
   fileName: string

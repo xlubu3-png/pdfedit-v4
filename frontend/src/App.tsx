@@ -19,6 +19,7 @@ import { keyCode } from './keys'
 import { dragHasFiles, pickPdfs } from './pdfFiles'
 import { clearSession, loadSession, saveSession } from './session'
 import { readSkippedVersion, shouldAnnounce, skipVersion } from './updateNotice'
+import { CompareView } from './components/CompareView'
 import { FindReplaceDialog } from './components/FindReplaceDialog'
 import { PasswordDialog } from './components/PasswordDialog'
 import { RedactDialog } from './components/RedactDialog'
@@ -64,6 +65,7 @@ function App() {
   /** A note about the last upload or export (a file opened with its password, what a redaction did). */
   const [notice, setNotice] = useState<string | null>(null)
   const [redactOpen, setRedactOpen] = useState(false)
+  const [compareOpen, setCompareOpen] = useState(false)
   /** The page the redaction areas are being drawn on, or null. */
   const [drawKey, setDrawKey] = useState<string | null>(null)
   /** Export every page as a picture, so nothing of the original (covered-up) text stays in the file. */
@@ -464,7 +466,7 @@ function App() {
         setFindOpen(true)
         return
       }
-      if (findOpen || redactOpen || drawKey !== null || editingKey !== null || inField) return
+      if (findOpen || redactOpen || compareOpen || drawKey !== null || editingKey !== null || inField) return
       if (ctrl && code === 'KeyS') {
         e.preventDefault()
         void handleExport()
@@ -632,6 +634,14 @@ function App() {
                 >
                   개인정보 가리기
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setCompareOpen(true)}
+                  disabled={busy}
+                  title="올린 두 PDF(이전 판과 새 판)의 바뀐 글자를 나란히 표시합니다"
+                >
+                  문서 비교
+                </button>
                 <button type="button" onClick={() => handleInsertBlank()} disabled={busy}>
                   + 빈 페이지 추가
                 </button>
@@ -684,6 +694,8 @@ function App() {
           onReplaced={handleReplaced}
         />
       )}
+
+      {compareOpen && <CompareView pages={pages} onClose={() => setCompareOpen(false)} />}
 
       {redactOpen && drawKey === null && (
         <RedactDialog

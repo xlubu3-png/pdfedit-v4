@@ -932,6 +932,140 @@ button.primary:disabled {
   display: block;
 }
 
+/* Comparing two documents side by side. */
+.cmp-summary {
+  font-size: 13px;
+  color: var(--text-h);
+}
+
+.cmp-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(520px, 92vw);
+  margin: 24px auto;
+  padding: 18px;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+
+.cmp-pick label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.cmp-pick select {
+  padding: 6px 8px;
+  font-size: 14px;
+}
+
+.cmp-swap {
+  align-self: center;
+}
+
+.cmp-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.cmp-list {
+  width: 260px;
+  flex: none;
+  overflow: auto;
+  padding: 10px;
+  border-right: 1px solid var(--border);
+  background: #fafbfc;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cmp-entry {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+  font-size: 12px;
+  padding: 6px 8px;
+}
+
+.cmp-entry.current {
+  outline: 2px solid var(--accent);
+}
+
+.cmp-removed {
+  color: #c62828;
+  text-decoration: line-through;
+  word-break: break-all;
+}
+
+.cmp-added {
+  color: #2e7d32;
+  word-break: break-all;
+}
+
+.cmp-more {
+  color: var(--text);
+}
+
+.cmp-pages {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  gap: 24px;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 16px;
+}
+
+.cmp-page h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cmp-missing,
+.cmp-look-note {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.cmp-look-note {
+  position: absolute;
+  left: 8px;
+  bottom: 4px;
+  margin: 0;
+  background: #fff;
+}
+
+.cmp-mark {
+  position: absolute;
+  pointer-events: auto;
+  border-radius: 2px;
+}
+
+.cmp-mark.removed {
+  background: rgba(229, 57, 53, 0.22);
+  outline: 2px solid rgba(229, 57, 53, 0.85);
+}
+
+.cmp-mark.added {
+  background: rgba(67, 160, 71, 0.22);
+  outline: 2px solid rgba(67, 160, 71, 0.85);
+}
+
+.cmp-mark.look {
+  outline: 2px dashed #fb8c00;
+  pointer-events: none;
+}
+
 /* Help window: how to use the editor, and the shortcuts as a table. */
 .help-dialog {
   width: min(760px, 94vw);

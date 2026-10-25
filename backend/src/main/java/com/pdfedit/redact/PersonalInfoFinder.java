@@ -10,10 +10,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
-import org.apache.pdfbox.pdmodel.PDPage;
-import org.apache.pdfbox.pdmodel.common.PDRectangle;
-import org.apache.pdfbox.text.PDFTextStripper;
-import org.apache.pdfbox.text.TextPosition;
+
+import com.pdfedit.text.TextLines;
 
 /**
  * Finds personal information on a page - resident registration numbers, phone numbers, e-mail addresses,
@@ -89,28 +87,31 @@ public final class PersonalInfoFinder {
      * looked for as plain text (ignoring case).
      */
     public static List<Match> find(PDDocument doc, int pageIndex, Set<Kind> kinds, String term) throws IOException {
-        List<Line> lines = lines(doc, pageIndex);
         List<Match> found = new ArrayList<>();
         String wanted = term == null ? "" : term.strip().toLowerCase(Locale.ROOT);
-        for (Line line : lines) {
+        for (TextLines.Line line : TextLines.of(doc, pageIndex)) {
             List<int[]> taken = new ArrayList<>();
             for (Rule rule : RULES) {
                 if (!kinds.contains(rule.kind())) {
                     continue;
                 }
-                Matcher m = rule.pattern().matcher(line.text);
+                Matcher m = rule.pattern().matcher(line.text());
                 while (m.find()) {
-                    if (rule.valid().test(m) && free(taken, m.start(), m.end())) {
+                    Match match = rule.valid().test(m) && free(taken, m.start(), m.end())
+                            ? match(line, rule.kind(), m.start(), m.end()) : null;
+                    if (match != null) {
                         taken.add(new int[] {m.start(), m.end()});
-                        found.add(line.match(rule.kind(), m.start(), m.end()));
+                        found.add(match);
                     }
                 }
             }
             if (!wanted.isEmpty()) {
-                String lower = line.text.toLowerCase(Locale.ROOT);
+                String lower = line.text().toLowerCase(Locale.ROOT);
                 for (int at = lower.indexOf(wanted); at >= 0; at = lower.indexOf(wanted, at + wanted.length())) {
-                    if (free(taken, at, at + wanted.length())) {
-                        found.add(line.match(Kind.TERM, at, at + wanted.length()));
+                    Match match = free(taken, at, at + wanted.length())
+                            ? match(line, Kind.TERM, at, at + wanted.length()) : null;
+                    if (match != null) {
+                        found.add(match);
                     }
                 }
             }
@@ -150,96 +151,10 @@ public final class PersonalInfoFinder {
         return sum % 10 == 0;
     }
 
-    /** A stretch of text as the extractor hands it over, with every character's position. */
-    private static final class Line {
-        final String text;
-        final List<TextPosition> positions;
-        final float originX;
-        final float originY;
-        final float pageHeight;
-
-        Line(String text, List<TextPosition> positions, float originX, float originY, float pageHeight) {
-            this.text = text;
-            this.positions = positions;
-            this.originX = originX;
-            this.originY = originY;
-            this.pageHeight = pageHeight;
-        }
-
-        /** The area of characters start (inclusive) to end (exclusive), a little larger than the letters. */
-        Match match(Kind kind, int start, int end) {
-            float minX = Float.MAX_VALUE;
-            float maxX = -Float.MAX_VALUE;
-            float minY = Float.MAX_VALUE;
-            float maxY = -Float.MAX_VALUE;
-            for (int i = start; i < end; i++) {
-                TextPosition tp = positions.get(i);
-                if (tp == null) { // the gap between two words
-                    continue;
-                }
-                float size = tp.getYScale() > 0.01f ? tp.getYScale() : Math.max(tp.getFontSizeInPt(), 6f);
-                float left = tp.getXDirAdj() + originX;
-                float baseline = pageHeight - tp.getYDirAdj() + originY;
-                minX = Math.min(minX, left);
-                maxX = Math.max(maxX, left + tp.getWidthDirAdj());
-                minY = Math.min(minY, baseline - size * 0.25f);
-                maxY = Math.max(maxY, baseline + size * 0.85f);
-            }
-            float pad = 0.5f;
-            return new Match(kind, text.substring(start, end), minX - pad, minY - pad, maxX - minX + 2 * pad,
-                    maxY - minY + 2 * pad);
-        }
-    }
-
-    private static List<Line> lines(PDDocument doc, int pageIndex) throws IOException {
-        PDPage page = doc.getPage(pageIndex);
-        PDRectangle crop = page.getCropBox();
-        List<Line> lines = new ArrayList<>();
-        // The positions themselves are the text, one entry per character (null for a gap between words), so
-        // an index into a line's string is an index into its positions.
-        StringBuilder text = new StringBuilder();
-        List<TextPosition> positions = new ArrayList<>();
-        Runnable endLine = () -> {
-            if (!positions.isEmpty()) {
-                lines.add(new Line(text.toString(), new ArrayList<>(positions), crop.getLowerLeftX(),
-                        crop.getLowerLeftY(), crop.getHeight()));
-            }
-            text.setLength(0);
-            positions.clear();
-        };
-        PDFTextStripper stripper = new PDFTextStripper() {
-            @Override
-            protected void writeString(String ignored, List<TextPosition> textPositions) {
-                for (TextPosition tp : textPositions) {
-                    String unicode = tp.getUnicode();
-                    if (unicode == null || unicode.isEmpty()) {
-                        continue;
-                    }
-                    for (int i = 0; i < unicode.length(); i++) {
-                        text.append(unicode.charAt(i));
-                        positions.add(tp);
-                    }
-                }
-            }
-
-            @Override
-            protected void writeWordSeparator() {
-                if (!positions.isEmpty()) {
-                    text.append(' ');
-                    positions.add(null);
-                }
-            }
-
-            @Override
-            protected void writeLineSeparator() {
-                endLine.run();
-            }
-        };
-        stripper.setSortByPosition(true);
-        stripper.setStartPage(pageIndex + 1);
-        stripper.setEndPage(pageIndex + 1);
-        stripper.getText(doc);
-        endLine.run();
-        return lines;
+    /** The finding for characters start (inclusive) to end (exclusive) of the line; null if it has no area. */
+    private static Match match(TextLines.Line line, Kind kind, int start, int end) {
+        TextLines.Area area = line.area(start, end);
+        return area == null ? null
+                : new Match(kind, line.text().substring(start, end), area.x(), area.y(), area.width(), area.height());
     }
 }

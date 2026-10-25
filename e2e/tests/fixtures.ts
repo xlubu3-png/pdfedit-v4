@@ -1,8 +1,51 @@
+import { createHash } from 'node:crypto'
 import { deflateSync, crc32 } from 'node:zlib'
 
-/** An A4 PDF of `pages` pages, each with a line of Helvetica text per entry, built by hand: nothing to install. */
-export function simplePdf(lines: string[], pages = 1): Buffer {
+/** The padding of the PDF standard security handler. */
+const PAD = Buffer.from('28bf4e5e4e758a4164004e56fffa01082e2e00b6d0683e802f0ca9fe6453697a', 'hex')
+const FILE_ID = Buffer.from('0123456789abcdef0123456789abcdef', 'hex')
+
+const md5 = (...parts: Buffer[]) => createHash('md5').update(Buffer.concat(parts)).digest()
+const padded = (password: string) => Buffer.concat([Buffer.from(password, 'latin1'), PAD]).subarray(0, 32)
+
+function rc4(key: Buffer, data: Buffer): Buffer {
+  const s = Array.from({ length: 256 }, (_, i) => i)
+  for (let i = 0, j = 0; i < 256; i++) {
+    j = (j + s[i] + key[i % key.length]) & 255
+    ;[s[i], s[j]] = [s[j], s[i]]
+  }
+  const out = Buffer.alloc(data.length)
+  for (let n = 0, i = 0, j = 0; n < data.length; n++) {
+    i = (i + 1) & 255
+    j = (j + s[i]) & 255
+    ;[s[i], s[j]] = [s[j], s[i]]
+    out[n] = data[n] ^ s[(s[i] + s[j]) & 255]
+  }
+  return out
+}
+
+/** Revision 2 (40-bit RC4) of the standard security handler: old, but every reader opens it, and it needs only MD5. */
+function security(userPassword: string) {
+  const permissions = Buffer.alloc(4)
+  permissions.writeInt32LE(-64)
+  const owner = rc4(md5(padded('owner')).subarray(0, 5), padded(userPassword))
+  const fileKey = md5(padded(userPassword), owner, permissions, FILE_ID).subarray(0, 5)
+  return {
+    dictionary: `<< /Filter /Standard /V 1 /R 2 /Length 40 /P -64 /O <${owner.toString('hex')}> /U <${rc4(fileKey, PAD).toString('hex')}> >>`,
+    encrypt: (objectNumber: number, data: string) => {
+      const objectKey = md5(fileKey, Buffer.from([objectNumber & 255, (objectNumber >> 8) & 255, objectNumber >> 16, 0, 0]))
+      return rc4(objectKey.subarray(0, 10), Buffer.from(data, 'latin1')).toString('latin1')
+    },
+  }
+}
+
+/**
+ * An A4 PDF of `pages` pages, each with a line of Helvetica text per entry, built by hand: nothing to install.
+ * With `password` it is encrypted and opens only with that password.
+ */
+export function simplePdf(lines: string[], pages = 1, password?: string): Buffer {
   const content = lines.map((line, i) => `BT /F1 24 Tf 72 ${700 - i * 50} Td (${line}) Tj ET`).join('\n')
+  const secured = password === undefined ? null : security(password)
   const fontId = 3 + pages * 2
   const kids = Array.from({ length: pages }, (_, i) => `${3 + i * 2} 0 R`).join(' ')
   const objects = [
@@ -10,10 +53,12 @@ export function simplePdf(lines: string[], pages = 1): Buffer {
     `<< /Type /Pages /Kids [${kids}] /Count ${pages} >>`,
     ...Array.from({ length: pages }, (_, i) => [
       `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents ${4 + i * 2} 0 R /Resources << /Font << /F1 ${fontId} 0 R >> >> >>`,
-      `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+      `<< /Length ${content.length} >>\nstream\n${secured ? secured.encrypt(4 + i * 2, content) : content}\nendstream`,
     ]).flat(),
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    ...(secured ? [secured.dictionary] : []),
   ]
+  const encryption = secured ? ` /Encrypt ${objects.length} 0 R /ID [<${FILE_ID.toString('hex')}> <${FILE_ID.toString('hex')}>]` : ''
   let out = '%PDF-1.4\n'
   const offsets: number[] = []
   objects.forEach((body, i) => {
@@ -23,7 +68,7 @@ export function simplePdf(lines: string[], pages = 1): Buffer {
   const xref = out.length
   out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`
   out += offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('')
-  out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+  out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R${encryption} >>\nstartxref\n${xref}\n%%EOF\n`
   return Buffer.from(out, 'latin1')
 }
 

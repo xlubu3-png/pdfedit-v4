@@ -789,6 +789,26 @@ button.primary:disabled {
   font-size: 11px;
 }
 
+/* Password question for an encrypted PDF that is being opened. */
+.password-dialog {
+  width: min(420px, 92vw);
+}
+
+.password-dialog p {
+  margin: 0;
+  font-size: 14px;
+}
+
+.password-dialog .password-wrong {
+  color: #c62828;
+  font-weight: 600;
+}
+
+.password-dialog .password-note {
+  color: var(--text);
+  font-size: 12px;
+}
+
 /* Help window: how to use the editor, and the shortcuts as a table. */
 .help-dialog {
   width: min(760px, 94vw);
@@ -1066,7 +1086,8 @@ kbd {
   font-size: 13px;
 }
 
-.find-dialog input[type='text'] {
+.find-dialog input[type='text'],
+.find-dialog input[type='password'] {
   padding: 7px 9px;
   border: 1px solid var(--border);
   border-radius: 6px;

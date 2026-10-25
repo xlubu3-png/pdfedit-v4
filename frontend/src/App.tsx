@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import './App.css'
 import {
+  ApiError,
   createBlankDocument,
   deleteDocument,
   exportPdf,
@@ -18,12 +19,20 @@ import { dragHasFiles, pickPdfs } from './pdfFiles'
 import { clearSession, loadSession, saveSession } from './session'
 import { readSkippedVersion, shouldAnnounce, skipVersion } from './updateNotice'
 import { FindReplaceDialog } from './components/FindReplaceDialog'
+import { PasswordDialog } from './components/PasswordDialog'
 import { UpdateBanner } from './components/UpdateBanner'
 import { PageGrid } from './components/PageGrid'
 import { TextEditor } from './components/TextEditor'
 import { UploadZone } from './components/UploadZone'
 import { RotateLeftIcon, RotateRightIcon } from './components/icons'
-import type { AppInfo, PageItem, ReplaceResult, UpdateInfo } from './types'
+import type { AppInfo, PageItem, ReplaceResult, UpdateInfo, UploadResponse } from './types'
+
+/** An open password question: the upload waits on `resolve` (null: open the file no more). */
+interface PasswordAsk {
+  fileName: string
+  wrong: boolean
+  resolve: (password: string | null) => void
+}
 
 function downloadBlob(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob)
@@ -48,6 +57,8 @@ function App() {
   const [editorNonce, setEditorNonce] = useState(0)
   const [info, setInfo] = useState<AppInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [passwordAsk, setPasswordAsk] = useState<PasswordAsk | null>(null)
+  const [unlockedNote, setUnlockedNote] = useState<string | null>(null)
   /** Export every page as a picture, so nothing of the original (covered-up) text stays in the file. */
   const [flatten, setFlatten] = useState(false)
   const [findOpen, setFindOpen] = useState(false)
@@ -127,10 +138,16 @@ function App() {
     }
     setBusy(true)
     setError(null)
+    const unlocked: string[] = []
     // One bad file must not keep the others from being opened.
     for (const file of pdfs) {
       try {
-        const uploaded = await uploadDocument(file)
+        const uploaded = await uploadWithPassword(file)
+        if (uploaded === null) {
+          problems.push(`암호를 입력하지 않아 열지 않은 파일: ${file.name}`)
+          continue
+        }
+        if (uploaded.unlocked) unlocked.push(uploaded.fileName)
         const newPages: PageItem[] = Array.from({ length: uploaded.pageCount }, (_, i) => ({
           key: `${uploaded.documentId}-${i}`,
           documentId: uploaded.documentId,
@@ -145,7 +162,27 @@ function App() {
       }
     }
     setError(problems.length > 0 ? problems.join('\n') : null)
+    if (unlocked.length > 0) {
+      setUnlockedNote(`암호를 풀어서 열었습니다: ${unlocked.join(', ')}. 내보낸 PDF에는 암호가 걸려 있지 않습니다.`)
+    }
     setBusy(false)
+  }
+
+  /** Uploads the file, asking for its password for as long as the server refuses one; null when the user gives up. */
+  async function uploadWithPassword(file: File): Promise<UploadResponse | null> {
+    let password: string | undefined
+    for (;;) {
+      try {
+        return await uploadDocument(file, password)
+      } catch (e) {
+        if (!(e instanceof ApiError && e.status === 401)) throw e
+        const wrong = password !== undefined
+        const given = await new Promise<string | null>((resolve) => setPasswordAsk({ fileName: file.name, wrong, resolve }))
+        setPasswordAsk(null)
+        if (given === null) return null
+        password = given
+      }
+    }
   }
 
   /**
@@ -400,7 +437,7 @@ function App() {
   const shortcut = useRef<(e: KeyboardEvent) => void>(() => {})
   useEffect(() => {
     shortcut.current = (e) => {
-      if (e.isComposing || e.keyCode === 229 || pages.length === 0) return
+      if (e.isComposing || e.keyCode === 229 || pages.length === 0 || passwordAsk !== null) return
       const el = e.target instanceof HTMLElement ? e.target : null
       const inField = el?.closest('input, select, textarea, [contenteditable="true"], [contenteditable="plaintext-only"]') != null
       const ctrl = e.ctrlKey || e.metaKey
@@ -519,6 +556,15 @@ function App() {
         </div>
       )}
 
+      {unlockedNote && (
+        <div className="info-banner">
+          <span>{unlockedNote}</span>
+          <button type="button" onClick={() => setUnlockedNote(null)} aria-label="닫기">
+            ✕
+          </button>
+        </div>
+      )}
+
       {error && (
         <div className="error-banner">
           <span>{error}</span>
@@ -611,6 +657,16 @@ function App() {
           onClose={() => setFindOpen(false)}
           onOpenPage={setEditingKey}
           onReplaced={handleReplaced}
+        />
+      )}
+
+      {passwordAsk && (
+        <PasswordDialog
+          key={`${passwordAsk.fileName}-${passwordAsk.wrong}`}
+          fileName={passwordAsk.fileName}
+          wrong={passwordAsk.wrong}
+          onSubmit={(password) => passwordAsk.resolve(password)}
+          onCancel={() => passwordAsk.resolve(null)}
         />
       )}
     </div>

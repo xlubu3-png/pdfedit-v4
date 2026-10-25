@@ -21,6 +21,8 @@ export interface UploadResponse {
   documentId: string
   fileName: string
   pageCount: number
+  /** It was encrypted; the stored copy, and so the export, has no password. */
+  unlocked?: boolean
 }
 
 export interface PageItem {

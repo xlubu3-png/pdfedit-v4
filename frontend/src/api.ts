@@ -30,9 +30,11 @@ async function failure(response: Response, fallback: string): Promise<ApiError> 
   return new ApiError(detail ? `${fallback}: ${detail}` : `${fallback} (${response.status})`, response.status)
 }
 
-export async function uploadDocument(file: File): Promise<UploadResponse> {
+/** An encrypted PDF without its password, or with a wrong one, fails with status 401. */
+export async function uploadDocument(file: File, password?: string): Promise<UploadResponse> {
   const formData = new FormData()
   formData.append('file', file)
+  if (password !== undefined) formData.append('password', password)
 
   const response = await fetch(`${BASE}/documents`, {
     method: 'POST',

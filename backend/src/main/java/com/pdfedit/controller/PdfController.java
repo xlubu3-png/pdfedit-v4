@@ -26,6 +26,8 @@ import com.pdfedit.dto.UploadResponse;
 import com.pdfedit.service.InvalidEditException;
 import com.pdfedit.service.PageEdits;
 import com.pdfedit.service.PageRotationBaker;
+import com.pdfedit.service.PasswordRequiredException;
+import com.pdfedit.service.PdfUnlocker;
 import com.pdfedit.service.PdfDocumentStore;
 import com.pdfedit.service.PdfExportService;
 import com.pdfedit.service.PdfThumbnailService;
@@ -57,17 +59,24 @@ public class PdfController {
     }
 
     @PostMapping(value = "/documents", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public UploadResponse upload(@RequestParam("file") MultipartFile file) throws IOException {
+    public UploadResponse upload(@RequestParam("file") MultipartFile file,
+            @RequestParam(value = "password", required = false) String password) throws IOException {
         byte[] content;
         int pageCount;
+        boolean unlocked;
         try {
+            // An encrypted file is kept as a plain copy, so nothing after this line needs the password.
+            PdfUnlocker.Unlocked plain = PdfUnlocker.unlock(file.getBytes(), password);
+            unlocked = plain.wasEncrypted();
             // Pages that carry a /Rotate are turned into unrotated ones once, here, so editing never has to care.
-            content = PageRotationBaker.bake(file.getBytes());
+            content = PageRotationBaker.bake(plain.content());
             try (PDDocument document = Loader.loadPDF(content)) {
                 pageCount = document.getNumberOfPages();
             }
         } catch (InvalidPasswordException e) {
-            throw new InvalidEditException("암호가 걸린 PDF는 열 수 없습니다. 암호를 해제한 파일을 올려 주세요.");
+            throw new PasswordRequiredException(password == null || password.isEmpty()
+                    ? "암호가 걸린 PDF입니다. 암호를 입력해 주세요."
+                    : "암호가 맞지 않습니다. 다시 입력해 주세요.");
         } catch (IOException e) {
             throw new InvalidEditException("PDF 파일이 아니거나 손상되어 열 수 없습니다.");
         }
@@ -75,7 +84,7 @@ public class PdfController {
             throw new InvalidEditException("페이지가 없는 PDF입니다.");
         }
         String documentId = store.store(file.getOriginalFilename(), content, pageCount);
-        return new UploadResponse(documentId, file.getOriginalFilename(), pageCount);
+        return new UploadResponse(documentId, file.getOriginalFilename(), pageCount, unlocked);
     }
 
     /** What the browser needs to pick a document up again after a reload: its name and page count. */

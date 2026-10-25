@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import com.pdfedit.service.InvalidEditException;
 import com.pdfedit.service.PageNotEditableException;
+import com.pdfedit.service.PasswordRequiredException;
 import com.pdfedit.service.UpdateFailedException;
 import com.pdfedit.text.FontUnavailableException;
 
@@ -33,6 +34,12 @@ public class ApiExceptionHandler {
     @ExceptionHandler(InvalidEditException.class)
     public ResponseEntity<String> handleInvalidEdit(InvalidEditException e) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(e.getMessage());
+    }
+
+    /** 401 tells the page to ask for the password and send the file again. */
+    @ExceptionHandler(PasswordRequiredException.class)
+    public ResponseEntity<String> handlePasswordRequired(PasswordRequiredException e) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(e.getMessage());
     }
 
     @ExceptionHandler(UpdateFailedException.class)

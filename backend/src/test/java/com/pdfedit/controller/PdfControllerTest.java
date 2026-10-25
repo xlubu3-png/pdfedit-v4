@@ -19,6 +19,7 @@ import com.pdfedit.dto.ExportRequest;
 import com.pdfedit.dto.PageSpec;
 import com.pdfedit.dto.UploadResponse;
 import com.pdfedit.service.InvalidEditException;
+import com.pdfedit.service.PasswordRequiredException;
 import com.pdfedit.service.PdfDocumentStore;
 import com.pdfedit.service.PdfExportService;
 import com.pdfedit.service.PdfThumbnailService;
@@ -38,27 +39,69 @@ class PdfControllerTest {
 
     @Test
     void uploadingSomethingThatIsNotAPdfIsRefusedWithAReadableMessage() {
-        assertThatThrownBy(() -> controller.upload(pdf("this is not a pdf".getBytes())))
+        assertThatThrownBy(() -> controller.upload(pdf("this is not a pdf".getBytes()), null))
                 .isInstanceOf(InvalidEditException.class)
                 .hasMessageContaining("PDF 파일이 아니거나");
-        assertThatThrownBy(() -> controller.upload(pdf(new byte[0]))).isInstanceOf(InvalidEditException.class);
+        assertThatThrownBy(() -> controller.upload(pdf(new byte[0]), null)).isInstanceOf(InvalidEditException.class);
+    }
+
+    private static byte[] protectedPdf(String userPassword, int pages) throws IOException {
+        try (PDDocument document = new PDDocument(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            for (int i = 0; i < pages; i++) {
+                document.addPage(new PDPage());
+            }
+            StandardProtectionPolicy policy = new StandardProtectionPolicy("owner", userPassword, new AccessPermission());
+            policy.setEncryptionKeyLength(256);
+            document.protect(policy);
+            document.save(out);
+            return out.toByteArray();
+        }
     }
 
     @Test
-    void uploadingAPasswordProtectedPdfSaysSo() throws IOException {
-        byte[] protectedPdf;
+    void aPasswordProtectedPdfAsksForItsPasswordAndSaysWhenItIsWrong() throws IOException {
+        byte[] locked = protectedPdf("user", 1);
+
+        assertThatThrownBy(() -> controller.upload(pdf(locked), null))
+                .isInstanceOf(PasswordRequiredException.class)
+                .hasMessageContaining("암호를 입력");
+        assertThatThrownBy(() -> controller.upload(pdf(locked), "nope"))
+                .isInstanceOf(PasswordRequiredException.class)
+                .hasMessageContaining("맞지 않");
+    }
+
+    @Test
+    void theRightPasswordOpensThePdfAndKeepsAPlainCopy() throws IOException {
+        UploadResponse response = controller.upload(pdf(protectedPdf("user", 2)), "user");
+
+        assertThat(response.unlocked()).isTrue();
+        assertThat(response.pageCount()).isEqualTo(2);
+        try (PDDocument stored = Loader.loadPDF(store.getContent(response.documentId()))) {
+            assertThat(stored.isEncrypted()).isFalse();
+            assertThat(stored.getNumberOfPages()).isEqualTo(2);
+        }
+    }
+
+    @Test
+    void aPdfLockedOnlyAgainstChangesOpensWithoutAskingAndIsKeptPlain() throws IOException {
+        UploadResponse response = controller.upload(pdf(protectedPdf("", 1)), null);
+
+        assertThat(response.unlocked()).isTrue();
+        try (PDDocument stored = Loader.loadPDF(store.getContent(response.documentId()))) {
+            assertThat(stored.isEncrypted()).isFalse();
+        }
+    }
+
+    @Test
+    void anOrdinaryPdfIsNotReportedAsUnlocked() throws IOException {
+        byte[] plain;
         try (PDDocument document = new PDDocument(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             document.addPage(new PDPage());
-            StandardProtectionPolicy policy = new StandardProtectionPolicy("owner", "user", new AccessPermission());
-            policy.setEncryptionKeyLength(128);
-            document.protect(policy);
             document.save(out);
-            protectedPdf = out.toByteArray();
+            plain = out.toByteArray();
         }
 
-        assertThatThrownBy(() -> controller.upload(pdf(protectedPdf)))
-                .isInstanceOf(InvalidEditException.class)
-                .hasMessageContaining("암호");
+        assertThat(controller.upload(pdf(plain), "ignored").unlocked()).isFalse();
     }
 
     @Test

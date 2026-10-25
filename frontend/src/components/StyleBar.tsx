@@ -57,15 +57,12 @@ interface StyleBarProps {
   /** Underlines the picked letters (or the whole line), or takes the underline off. */
   onUnderline: () => void
   onColor: (color: string) => void
-  onReset: () => void
-  /** Draws the whole line in one installed font, so no character looks different from its neighbours. */
-  onUnify: () => void
   /** Opens the help for fonts this PC lacks. */
   onFontHelp: () => void
   /** Reads the installed fonts again (after the user installed one). */
   onReloadFonts: () => void
   fontsBusy: boolean
-  onDelete: () => void
+  /** Duplicates the selected picture (the ribbon does it for text). */
   onDuplicate: () => void
   /** A picture is selected: the bar then holds its tools instead of the text styles. */
   image: ImageView | null
@@ -91,12 +88,9 @@ export function StyleBar({
   onBold,
   onUnderline,
   onColor,
-  onReset,
-  onUnify,
   onFontHelp,
   onReloadFonts,
   fontsBusy,
-  onDelete,
   onDuplicate,
   image,
   onImageWidth,
@@ -244,7 +238,7 @@ export function StyleBar({
             )}
           </>
         ) : (
-          '글자 상자를 클릭해 선택하세요 (더블클릭 또는 Enter로 글자 수정). 선택하면 여기에서 글꼴·크기·굵기·색을 바꿀 수 있습니다'
+          '글자를 클릭해 선택하면 서식을 바꿀 수 있습니다 (더블클릭·Enter: 글자 수정)'
         )}
       </span>
 
@@ -323,31 +317,6 @@ export function StyleBar({
           aria-label="글자 색"
         />
       </label>
-
-      <button type="button" disabled={disabled} onClick={onDuplicate} title="복제 (Ctrl+D)" {...keepFocus}>
-        복제
-      </button>
-      {view?.kind === 'run' && view.mixedChars && (
-        <button
-          type="button"
-          className="te-unify"
-          onClick={onUnify}
-          title="이 줄 전체를 한 가지 대체 글꼴로 다시 그려 글자 모양을 통일합니다"
-          {...keepFocus}
-        >
-          줄 전체 글꼴 통일
-        </button>
-      )}
-      {view?.kind === 'run' && (
-        <button type="button" disabled={!view.canReset} onClick={onReset} {...keepFocus}>
-          원위치
-        </button>
-      )}
-      {view?.kind === 'added' && (
-        <button type="button" className="danger" onClick={onDelete} title="삭제 (Delete)" {...keepFocus}>
-          삭제
-        </button>
-      )}
 
       {zoomGroup}
     </div>

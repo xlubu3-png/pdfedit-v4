@@ -28,7 +28,22 @@ import { UpdateBanner } from './components/UpdateBanner'
 import { PageGrid } from './components/PageGrid'
 import { TextEditor } from './components/TextEditor'
 import { UploadZone } from './components/UploadZone'
-import { RotateLeftIcon, RotateRightIcon } from './components/icons'
+import { RibbonButton, RibbonGroup, RibbonPanel } from './components/Ribbon'
+import {
+  Eraser,
+  EyeOff,
+  FileDown,
+  FileImage,
+  FileOutput,
+  FilePlus,
+  FolderOpen,
+  GitCompareArrows,
+  RotateCcw,
+  RotateCw,
+  Search,
+  SquareCheck,
+  Trash,
+} from 'lucide-react'
 import type { AppInfo, PageItem, ReplaceResult, UpdateInfo, UploadResponse } from './types'
 
 /** An open password question: the upload waits on `resolve` (null: open the file no more). */
@@ -443,12 +458,6 @@ function App() {
     clearSession()
   }
 
-  const startOverButton = (
-    <button type="button" className="danger" onClick={handleStartOver} disabled={busy} title="모든 페이지와 수정 내용을 지웁니다 (되돌릴 수 없음)">
-      모두 지우기
-    </button>
-  )
-
   /**
    * Keyboard shortcuts of the page list (the editor has its own). Called through a ref so it always
    * sees the current pages and selection.
@@ -489,13 +498,6 @@ function App() {
     window.addEventListener('keydown', listener)
     return () => window.removeEventListener('keydown', listener)
   }, [])
-
-  const flattenOption = (
-    <label className="flatten-option" title="각 페이지를 그림으로 바꿔 내보냅니다. 수정 전 글자가 파일에서 완전히 사라지지만 검색·복사는 할 수 없습니다.">
-      <input type="checkbox" checked={flatten} onChange={(e) => setFlatten(e.target.checked)} />
-      이미지로 변환 (수정 전 글자 완전 제거)
-    </label>
-  )
 
   return (
     <div className="app">
@@ -595,62 +597,114 @@ function App() {
 
       {pages.length > 0 && (
         <>
-          {selectedKeys.size > 0 ? (
-            <div className="toolbar selection-toolbar">
-              <span>{selectedKeys.size}개 선택됨</span>
-              <div className="toolbar-actions">
-                {startOverButton}
-                <button type="button" onClick={() => handleBulkRotate(-90)} disabled={busy} title="왼쪽으로 회전 (Shift+R)">
-                  <RotateLeftIcon /> 회전
-                </button>
-                <button type="button" onClick={() => handleBulkRotate(90)} disabled={busy} title="오른쪽으로 회전 (R)">
-                  <RotateRightIcon /> 회전
-                </button>
-                <button type="button" onClick={handleExtractSelected} disabled={busy}>
-                  선택 항목 추출
-                </button>
-                <button type="button" className="danger" onClick={handleBulkDelete} disabled={busy} title="삭제 (Delete)">
-                  선택 항목 삭제
-                </button>
-                <button type="button" onClick={clearSelection} disabled={busy} title="선택 해제 (Esc)">
-                  선택 해제
-                </button>
-              </div>
+          <div className="page-ribbon">
+            <div className="page-ribbon-head">
+              <b>{pages.length}페이지</b>
+              {selectedKeys.size > 0 && (
+                <>
+                  <span>· {selectedKeys.size}개 선택됨</span>
+                  <button type="button" className="link-button" onClick={clearSelection} disabled={busy} title="선택 해제 (Esc)">
+                    선택 해제
+                  </button>
+                </>
+              )}
             </div>
-          ) : (
-            <div className="toolbar">
-              <span>{pages.length}페이지</span>
-              <div className="toolbar-actions">
-                {startOverButton}
-                {flattenOption}
-                <button type="button" onClick={() => setFindOpen(true)} disabled={busy} title="찾아 바꾸기 (Ctrl+F)">
-                  찾아 바꾸기
-                </button>
-                <button
-                  type="button"
+            <RibbonPanel label="페이지 목록 메뉴">
+              <RibbonGroup label="파일">
+                <RibbonButton
+                  icon={<FolderOpen />}
+                  label="PDF 열기"
+                  title="PDF를 더 열어 목록 끝에 붙입니다 (화면에 끌어다 놓아도 됩니다)"
+                  // The upload box above holds the file picker; this opens the same one.
+                  onClick={() => document.querySelector<HTMLInputElement>('.upload-zone input[type=file]')?.click()}
+                  disabled={busy}
+                />
+                <RibbonButton icon={<FilePlus />} label="빈 페이지" title="목록 끝에 빈 페이지를 넣습니다" onClick={() => handleInsertBlank()} disabled={busy} />
+                <RibbonButton
+                  icon={<Eraser />}
+                  label="모두 지우기"
+                  title="모든 페이지와 수정 내용을 지웁니다 (되돌릴 수 없음)"
+                  onClick={handleStartOver}
+                  disabled={busy}
+                  danger
+                />
+              </RibbonGroup>
+              <RibbonGroup label="편집">
+                <RibbonButton icon={<Search />} label="찾아 바꾸기" title="모든 페이지에서 글자를 찾아 바꿉니다 (Ctrl+F)" onClick={() => setFindOpen(true)} disabled={busy} />
+                <RibbonButton
+                  icon={<SquareCheck />}
+                  label="모두 선택"
+                  title="모든 페이지를 선택합니다 (Ctrl+A)"
+                  onClick={() => setSelectedKeys(new Set(pages.map((p) => p.key)))}
+                  disabled={busy}
+                />
+              </RibbonGroup>
+              <RibbonGroup label="선택한 페이지">
+                <RibbonButton
+                  icon={<RotateCcw />}
+                  label="왼쪽 회전"
+                  title="선택한 페이지를 왼쪽으로 돌립니다 (Shift+R)"
+                  onClick={() => handleBulkRotate(-90)}
+                  disabled={busy || selectedKeys.size === 0}
+                />
+                <RibbonButton
+                  icon={<RotateCw />}
+                  label="오른쪽 회전"
+                  title="선택한 페이지를 오른쪽으로 돌립니다 (R)"
+                  onClick={() => handleBulkRotate(90)}
+                  disabled={busy || selectedKeys.size === 0}
+                />
+                <RibbonButton
+                  icon={<FileOutput />}
+                  label="추출"
+                  title="선택한 페이지만 PDF로 내려받습니다"
+                  onClick={handleExtractSelected}
+                  disabled={busy || selectedKeys.size === 0}
+                />
+                <RibbonButton
+                  icon={<Trash />}
+                  label="삭제"
+                  title="선택한 페이지를 목록에서 뺍니다 (Delete)"
+                  onClick={handleBulkDelete}
+                  disabled={busy || selectedKeys.size === 0}
+                  danger
+                />
+              </RibbonGroup>
+              <RibbonGroup label="검토·보안">
+                <RibbonButton
+                  icon={<EyeOff />}
+                  label="개인정보 가리기"
+                  title="주민등록번호·전화번호 같은 개인정보를 찾아 가리거나, 가릴 곳을 직접 그립니다. 내보낼 때 실제로 지워집니다."
                   onClick={() => setRedactOpen(true)}
                   disabled={busy}
-                  title="주민등록번호·전화번호 같은 개인정보를 찾아 가리거나, 가릴 곳을 직접 그립니다. 내보낼 때 실제로 지워집니다."
-                >
-                  개인정보 가리기
-                </button>
-                <button
-                  type="button"
+                />
+                <RibbonButton
+                  icon={<GitCompareArrows />}
+                  label="문서 비교"
+                  title="올린 두 PDF(이전 판과 새 판)의 바뀐 글자를 나란히 표시합니다"
                   onClick={() => setCompareOpen(true)}
                   disabled={busy}
-                  title="올린 두 PDF(이전 판과 새 판)의 바뀐 글자를 나란히 표시합니다"
-                >
-                  문서 비교
-                </button>
-                <button type="button" onClick={() => handleInsertBlank()} disabled={busy}>
-                  + 빈 페이지 추가
-                </button>
-                <button type="button" className="primary" onClick={handleExport} disabled={busy} title="PDF로 내보내기 (Ctrl+S)">
-                  PDF로 내보내기
-                </button>
-              </div>
-            </div>
-          )}
+                />
+              </RibbonGroup>
+              <RibbonGroup label="내보내기">
+                <RibbonButton
+                  icon={<FileImage />}
+                  label="이미지로 변환"
+                  title="켜면 각 페이지를 그림으로 바꿔 내보냅니다. 수정 전 글자가 파일에서 완전히 사라지지만 검색·복사는 할 수 없습니다."
+                  onClick={() => setFlatten((f) => !f)}
+                  pressed={flatten}
+                />
+                <RibbonButton
+                  icon={<FileDown />}
+                  label="PDF로 내보내기"
+                  title="목록의 모든 페이지를 순서대로 하나의 PDF로 내려받습니다 (Ctrl+S)"
+                  onClick={() => void handleExport()}
+                  disabled={busy}
+                  primary
+                />
+              </RibbonGroup>
+            </RibbonPanel>
+          </div>
           <PageGrid
             pages={pages}
             selectedKeys={selectedKeys}

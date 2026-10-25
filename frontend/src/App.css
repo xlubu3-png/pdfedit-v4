@@ -500,9 +500,192 @@ button.primary:disabled {
   font-size: 13px;
 }
 
+/* After the controls, on the same line when there is room; the zoom stays at the right end. */
 .te-style-info {
-  flex: 1 1 100%;
+  order: 10;
+  flex: 1 1 280px;
+  min-width: 0;
   color: var(--text);
+}
+
+.te-stylebar .te-zoom {
+  order: 11;
+}
+
+/* Ribbon: tabs in the top line, the open tab's groups of big buttons under it (like office programs). */
+.te-header.rb-header {
+  display: block;
+  padding: 0;
+}
+
+.rb-top {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 16px 0;
+}
+
+.te-header .rb-top > button,
+.te-header .rb-quick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+}
+
+.te-header .rb-quick {
+  padding: 5px 7px;
+  border-color: transparent;
+}
+
+.te-header .rb-quick:hover:not(:disabled) {
+  border-color: var(--border);
+  background: var(--bg);
+}
+
+.rb-tabs {
+  display: flex;
+  align-self: flex-end;
+  gap: 2px;
+  margin: 0 8px;
+}
+
+.te-header .rb-tab,
+.page-ribbon .rb-tab {
+  padding: 6px 16px 7px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.te-header .rb-tab.active {
+  border-color: var(--border);
+  background: #f6f7f9;
+  color: var(--accent);
+  font-weight: 700;
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.rb-panel {
+  display: flex;
+  align-items: stretch;
+  flex-wrap: wrap;
+  gap: 0;
+  padding: 6px 12px 2px;
+  background: #f6f7f9;
+  border-top: 1px solid var(--border);
+}
+
+.rb-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 10px;
+  border-right: 1px solid #dfe2e6;
+}
+
+.rb-group:last-child {
+  border-right: none;
+}
+
+.rb-items {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+  flex: 1;
+}
+
+.rb-caption {
+  padding: 2px 0 3px;
+  font-size: 11px;
+  color: #8a9099;
+  white-space: nowrap;
+}
+
+/* The ribbon's own look wins over the header's plain buttons. */
+.rb-panel .rb-button {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-width: 58px;
+  max-width: 84px;
+  padding: 5px 6px 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-h);
+  font-family: var(--sans);
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.rb-panel .rb-button:hover:not(:disabled) {
+  border-color: #c9d6ec;
+  background: #e8f0fd;
+  color: var(--text-h);
+}
+
+.rb-panel .rb-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.rb-panel .rb-button.on {
+  border-color: var(--accent-border);
+  background: #dbe7fb;
+}
+
+.rb-panel .rb-button.primary {
+  color: var(--accent);
+}
+
+.rb-panel .rb-button.danger .rb-icon {
+  color: #c62828;
+}
+
+.rb-icon {
+  display: inline-flex;
+  color: #3d6fc4;
+}
+
+.rb-icon svg {
+  width: 24px;
+  height: 24px;
+  stroke-width: 1.6;
+}
+
+.rb-label {
+  text-align: center;
+  word-break: keep-all;
+}
+
+/* The page list's ribbon: the same groups, always all shown. */
+.page-ribbon {
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.page-ribbon .rb-panel {
+  border-top: none;
+}
+
+.page-ribbon-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px;
+  background: #fff;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--text-h);
 }
 
 .te-style-field {

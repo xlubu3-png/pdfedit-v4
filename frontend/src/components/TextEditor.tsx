@@ -28,6 +28,31 @@ import { HelpDialog } from './HelpDialog'
 import { MissingFontDialog } from './MissingFontDialog'
 import { StyleBar } from './StyleBar'
 import type { ImageView, StyleView } from './StyleBar'
+import {
+  ALargeSmall,
+  ArrowLeft,
+  CheckCheck,
+  ChevronLeft,
+  ChevronRight,
+  CircleQuestionMark,
+  CopyPlus,
+  FileDown,
+  FileImage,
+  FileSearch,
+  ImagePlus,
+  MoveHorizontal,
+  Redo2,
+  RefreshCw,
+  RotateCcw,
+  Search,
+  Trash,
+  Type,
+  Undo2,
+  ZoomIn,
+  ZoomOut,
+} from 'lucide-react'
+import { RibbonButton, RibbonGroup, RibbonPanel, RibbonTabs } from './Ribbon'
+import type { RibbonTab } from './Ribbon'
 import { AddedBox, ImageBox, RunBox } from './TextBoxes'
 import type { Guides } from './TextBoxes'
 
@@ -54,6 +79,14 @@ interface TextEditorProps {
   onFontsReloaded: (info: AppInfo) => void
   busy: boolean
 }
+
+/** The pages of the ribbon; "편집" is open first, it holds what is used most. */
+const EDITOR_TABS: RibbonTab[] = [
+  { id: 'file', label: '파일' },
+  { id: 'edit', label: '편집' },
+  { id: 'view', label: '보기' },
+  { id: 'tools', label: '도구' },
+]
 
 /** What the server draws an added box in when no font is chosen. */
 const DEFAULT_ADDED_FAMILY = '맑은 고딕'
@@ -177,6 +210,7 @@ export function TextEditor({
   /** The box that takes keyboard input; a selected box that is not being edited only moves and restyles. */
   const [editing, setEditing] = useState<Selection>(null)
   const [adding, setAdding] = useState(false)
+  const [ribbonTab, setRibbonTab] = useState('edit')
   const [guides, setGuides] = useState<Guides | null>(null)
   /** 'fit' follows the window width; a number is a fixed zoom (1 = 100%). */
   const [zoomMode, setZoomMode] = useState<'fit' | number>('fit')
@@ -1338,43 +1372,211 @@ export function TextEditor({
 
   return (
     <div className="te-overlay" role="dialog" aria-modal="true" aria-label="텍스트 편집">
-      <header className="te-header">
-        <button type="button" onClick={close}>
-          ← 페이지 목록
-        </button>
-        <span className="te-title" title={page.sourceFileName}>
-          {page.sourceFileName} · {pageIndex + 1}쪽
-        </span>
-        <span className="te-spacer" />
-        <span className="te-status" aria-live="polite">
-          {status}
-        </span>
-        <span className="te-group">
-          <button type="button" onClick={undo} disabled={!editable || history.undo === 0} title="실행 취소 (Ctrl+Z)">
-            ↶
+      <header className="te-header rb-header">
+        <div className="rb-top">
+          <button type="button" className="rb-back" onClick={close} title="페이지 목록으로 돌아갑니다 (Esc)">
+            <ArrowLeft size={16} aria-hidden="true" /> 페이지 목록
           </button>
-          <button type="button" onClick={redo} disabled={!editable || history.redo === 0} title="다시 실행 (Ctrl+Y)">
-            ↷
+          <span className="te-group">
+            <button
+              type="button"
+              className="rb-quick"
+              onClick={undo}
+              disabled={!editable || history.undo === 0}
+              title="실행 취소 (Ctrl+Z)"
+              aria-label="실행 취소"
+            >
+              <Undo2 size={16} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="rb-quick"
+              onClick={redo}
+              disabled={!editable || history.redo === 0}
+              title="다시 실행 (Ctrl+Y)"
+              aria-label="다시 실행"
+            >
+              <Redo2 size={16} aria-hidden="true" />
+            </button>
+          </span>
+          <RibbonTabs tabs={EDITOR_TABS} active={ribbonTab} onChange={setRibbonTab} />
+          <span className="te-title" title={page.sourceFileName}>
+            {page.sourceFileName} · {pageIndex + 1}쪽
+          </span>
+          <span className="te-spacer" />
+          <span className="te-status" aria-live="polite">
+            {status}
+          </span>
+          <span className="te-group">
+            <button type="button" className="rb-quick" onClick={() => navigate(-1)} disabled={position <= 0} title="이전 페이지 (Ctrl+←)">
+              <ChevronLeft size={16} aria-hidden="true" />
+            </button>
+            <span className="te-sub">
+              {position + 1} / {total}
+            </span>
+            <button
+              type="button"
+              className="rb-quick"
+              onClick={() => navigate(1)}
+              disabled={position >= total - 1}
+              title="다음 페이지 (Ctrl+→)"
+            >
+              <ChevronRight size={16} aria-hidden="true" />
+            </button>
+          </span>
+          <button type="button" className="primary" onClick={exportAll} disabled={busy} title="PDF로 내보내기 (Ctrl+S)">
+            <FileDown size={16} aria-hidden="true" /> PDF로 내보내기
           </button>
-        </span>
-        <button
-          type="button"
-          className={adding ? 'primary' : ''}
-          aria-pressed={adding}
-          onClick={() => setAdding((a) => !a)}
-          disabled={!editable}
-          title="누른 뒤 페이지의 원하는 위치를 클릭하세요 (T)"
-        >
-          ＋ 텍스트 추가
-        </button>
-        <button
-          type="button"
-          onClick={() => imageInput.current?.click()}
-          disabled={!editable}
-          title="도장·서명·로고 같은 그림 파일(PNG, JPG)을 페이지에 넣습니다"
-        >
-          ＋ 그림 추가
-        </button>
+        </div>
+
+        {ribbonTab === 'file' && (
+          <RibbonPanel label="파일">
+            <RibbonGroup label="문서">
+              <RibbonButton icon={<ArrowLeft />} label="페이지 목록" title="페이지 목록으로 돌아갑니다" onClick={close} />
+            </RibbonGroup>
+            <RibbonGroup label="내보내기">
+              <RibbonButton
+                icon={<FileDown />}
+                label="PDF 저장"
+                title="모든 페이지를 수정 내용과 함께 PDF로 내려받습니다 (Ctrl+S)"
+                onClick={() => void exportAll()}
+                disabled={busy}
+              />
+              <RibbonButton
+                icon={<FileImage />}
+                label="이미지로 변환"
+                title="켜면 각 페이지를 그림으로 바꿔 내보냅니다. 수정 전 글자가 파일에서 완전히 사라지지만 검색·복사는 할 수 없습니다."
+                onClick={() => onFlattenChange(!flatten)}
+                pressed={flatten}
+              />
+            </RibbonGroup>
+            <RibbonGroup label="이 페이지">
+              <RibbonButton
+                icon={<CheckCheck />}
+                label="지금 반영"
+                title="고친 내용을 바로 서버에 반영합니다 (Ctrl+Shift+S)"
+                onClick={() => void applyAll()}
+                disabled={!editable}
+              />
+              <RibbonButton
+                icon={<RotateCcw />}
+                label="페이지 되돌리기"
+                title="이 페이지에서 고친 것을 모두 원래대로 되돌립니다"
+                onClick={() => void resetPage()}
+                disabled={!editable}
+                danger
+              />
+            </RibbonGroup>
+          </RibbonPanel>
+        )}
+
+        {ribbonTab === 'edit' && (
+          <RibbonPanel label="편집">
+            <RibbonGroup label="넣기">
+              <RibbonButton
+                icon={<Type />}
+                label="텍스트 추가"
+                title="누른 뒤 페이지의 원하는 위치를 클릭하세요 (T)"
+                onClick={() => setAdding((a) => !a)}
+                disabled={!editable}
+                pressed={adding}
+              />
+              <RibbonButton
+                icon={<ImagePlus />}
+                label="그림 추가"
+                title="도장·서명·로고 같은 그림 파일(PNG, JPG)을 페이지에 넣습니다"
+                onClick={() => imageInput.current?.click()}
+                disabled={!editable}
+              />
+            </RibbonGroup>
+            <RibbonGroup label="선택한 항목">
+              <RibbonButton
+                icon={<CopyPlus />}
+                label="복제"
+                title="선택한 줄·상자·그림을 하나 더 만듭니다 (Ctrl+D)"
+                onClick={duplicateSelection}
+                disabled={!editable || (view === null && pickedImage === null)}
+              />
+              <RibbonButton
+                icon={<Trash />}
+                label="삭제"
+                title="선택한 텍스트 상자나 그림을 지웁니다 (Delete)"
+                onClick={() => {
+                  if (selected?.kind === 'added') removeAdded(selected.id)
+                  else if (pickedImage) removeImage(pickedImage.id)
+                }}
+                disabled={!editable || (selected?.kind !== 'added' && pickedImage === null)}
+                danger
+              />
+              <RibbonButton
+                icon={<RotateCcw />}
+                label="원위치"
+                title="선택한 줄의 글자·모양·위치를 원래대로 되돌립니다"
+                onClick={resetSelectedRun}
+                disabled={!editable || view?.kind !== 'run' || !view.canReset}
+              />
+              <RibbonButton
+                icon={<ALargeSmall />}
+                label="글꼴 통일"
+                title="줄 전체를 한 가지 대체 글꼴로 다시 그려 글자 모양을 통일합니다"
+                onClick={unifySelectedRun}
+                disabled={!editable || view?.kind !== 'run' || !view.mixedChars}
+              />
+            </RibbonGroup>
+            <RibbonGroup label="찾기">
+              <RibbonButton icon={<Search />} label="찾아 바꾸기" title="모든 페이지에서 글자를 찾아 바꿉니다 (Ctrl+F)" onClick={onOpenFind} />
+            </RibbonGroup>
+          </RibbonPanel>
+        )}
+
+        {ribbonTab === 'view' && (
+          <RibbonPanel label="보기">
+            <RibbonGroup label="화면 크기">
+              <RibbonButton icon={<ZoomIn />} label="확대" title="확대 (Ctrl++)" onClick={() => changeZoom(1)} />
+              <RibbonButton icon={<ZoomOut />} label="축소" title="축소 (Ctrl+−)" onClick={() => changeZoom(-1)} />
+              <RibbonButton
+                icon={<MoveHorizontal />}
+                label="폭 맞춤"
+                title="페이지를 창 폭에 맞춥니다 (Ctrl+0)"
+                onClick={() => setZoomMode('fit')}
+                pressed={zoomMode === 'fit'}
+              />
+            </RibbonGroup>
+            <RibbonGroup label="쪽 이동">
+              <RibbonButton icon={<ChevronLeft />} label="이전 쪽" title="이전 쪽으로 (Ctrl+←)" onClick={() => void navigate(-1)} disabled={position <= 0} />
+              <RibbonButton
+                icon={<ChevronRight />}
+                label="다음 쪽"
+                title="다음 쪽으로 (Ctrl+→)"
+                onClick={() => void navigate(1)}
+                disabled={position >= total - 1}
+              />
+            </RibbonGroup>
+          </RibbonPanel>
+        )}
+
+        {ribbonTab === 'tools' && (
+          <RibbonPanel label="도구">
+            <RibbonGroup label="글꼴">
+              <RibbonButton
+                icon={<RefreshCw />}
+                label={fontsBusy ? '읽는 중…' : '글꼴 다시 읽기'}
+                title="글꼴을 새로 설치했다면 눌러서 설치된 글꼴을 다시 읽습니다 (앱을 다시 켤 필요 없음)"
+                onClick={() => void reloadInstalledFonts()}
+                disabled={fontsBusy}
+              />
+              <RibbonButton
+                icon={<FileSearch />}
+                label="없는 글꼴 받기"
+                title="이 페이지에서 쓰는데 PC에 없는 글꼴과 구하는 방법을 보여 줍니다"
+                onClick={() => setFontHelpOpen(true)}
+              />
+            </RibbonGroup>
+            <RibbonGroup label="도움말">
+              <RibbonButton icon={<CircleQuestionMark />} label="도움말" title="사용 방법과 단축키 (?)" onClick={() => setHelpOpen(true)} />
+            </RibbonGroup>
+          </RibbonPanel>
+        )}
         <input
           ref={imageInput}
           type="file"
@@ -1387,41 +1589,6 @@ export function TextEditor({
             if (file) void addImageFromFile(file)
           }}
         />
-        <span className="te-group">
-          <button type="button" onClick={() => navigate(-1)} disabled={position <= 0} title="이전 페이지 (Ctrl+←)">
-            ◀
-          </button>
-          <span className="te-sub">
-            {position + 1} / {total}
-          </span>
-          <button type="button" onClick={() => navigate(1)} disabled={position >= total - 1} title="다음 페이지 (Ctrl+→)">
-            ▶
-          </button>
-        </span>
-        <button type="button" className="te-help-button" onClick={() => setHelpOpen(true)} title="사용 방법과 단축키 (?)">
-          ? 도움말
-        </button>
-        <details className="te-more">
-          <summary title="더 보기">⋯</summary>
-          <div className="te-menu" onClick={(e) => e.currentTarget.parentElement?.removeAttribute('open')}>
-            <button type="button" onClick={onOpenFind}>
-              찾아 바꾸기… (Ctrl+F)
-            </button>
-            <button type="button" onClick={applyAll} disabled={!editable}>
-              지금 수정 반영 (Ctrl+Shift+S)
-            </button>
-            <button type="button" onClick={resetPage} disabled={!editable}>
-              이 페이지 되돌리기
-            </button>
-          </div>
-        </details>
-        <label className="te-flatten" title="각 페이지를 그림으로 바꿔 내보냅니다. 수정 전 글자가 파일에서 완전히 사라지지만 검색·복사는 할 수 없습니다.">
-          <input type="checkbox" checked={flatten} onChange={(e) => onFlattenChange(e.target.checked)} />
-          이미지로 변환
-        </label>
-        <button type="button" className="primary" onClick={exportAll} disabled={busy} title="PDF로 내보내기 (Ctrl+S)">
-          PDF로 내보내기
-        </button>
       </header>
 
       {editable && (
@@ -1433,12 +1600,9 @@ export function TextEditor({
           onBold={(bold) => patchSelected({ bold })}
           onUnderline={() => patchSelected({ underline: true })}
           onColor={(color) => patchSelected({ color })}
-          onReset={resetSelectedRun}
-          onUnify={unifySelectedRun}
           onFontHelp={() => setFontHelpOpen(true)}
           onReloadFonts={() => void reloadInstalledFonts()}
           fontsBusy={fontsBusy}
-          onDelete={() => selected?.kind === 'added' && removeAdded(selected.id)}
           onDuplicate={duplicateSelection}
           image={imageView}
           onImageWidth={resizeSelectedImage}

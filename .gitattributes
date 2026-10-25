@@ -1,0 +1,3 @@
+# The built HWP editor (tools/build-hwp-studio.ps1) is kept byte for byte as it was built: no line ending
+# conversion on checkout.
+frontend/public/hwp-studio/** -text

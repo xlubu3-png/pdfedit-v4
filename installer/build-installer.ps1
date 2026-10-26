@@ -52,11 +52,17 @@ Write-Host '== 4/4 package (jpackage) =='
 $wixBin = 'C:\Program Files\WiX Toolset v7.0\bin'
 if ((Test-Path $wixBin) -and ($env:PATH -notlike "*$wixBin*")) { $env:PATH = "$wixBin;$env:PATH" }
 
+# The installed program, its shortcuts and its folder in Program Files are called this.
+$appName = 'WINTECH DocEditor'
+# What Windows knows the program by, whatever it is called: the code jpackage gave it while it was named
+# WINTECH_PDF. With the same code a new installer replaces the installed WINTECH_PDF instead of installing a
+# second program beside it. Never change it.
+$upgradeCode = '86BDF49F-B988-375C-BC21-F945E6338154'
+
 $common = @(
-    '--name', 'WINTECH_PDF',
+    '--name', $appName,
     '--app-version', $windowsVersion,
     '--vendor', 'WINTECH',
-    # The name stays WINTECH_PDF: Windows finds the installed copy to update by it. Only the description is new.
     '--description', 'WINTECH Document Editor (PDF, HWP, HWPX)',
     '--input', (Join-Path $work 'input'),
     '--main-jar', 'WINTECH_PDF.jar',
@@ -74,15 +80,17 @@ $common = @(
 if ($AppImageOnly) {
     & jpackage --type app-image @common --dest (Join-Path $work 'app-image')
     if ($LASTEXITCODE -ne 0) { throw 'jpackage (app-image) failed' }
-    Write-Host "Runnable folder: $work\app-image\WINTECH_PDF\WINTECH_PDF.exe"
+    Write-Host "Runnable folder: $work\app-image\$appName\$appName.exe"
     return
 }
 
 New-Item -ItemType Directory -Force -Path $dist | Out-Null
-& jpackage --type exe @common --win-menu --win-menu-group WINTECH_PDF --win-shortcut --win-dir-chooser --dest $dist
+& jpackage --type exe @common --win-upgrade-uuid $upgradeCode --win-menu --win-menu-group WINTECH --win-shortcut `
+    --win-dir-chooser --dest $dist
 if ($LASTEXITCODE -ne 0) { throw 'jpackage (exe) failed' }
 
-$built = Get-ChildItem $dist -Filter 'WINTECH_PDF-*.exe' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$built = Get-ChildItem $dist -Filter "$appName-*.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+# The file keeps its old name: installed copies look for WINTECH_PDF_Setup_*.exe among the release's files.
 $final = Join-Path $dist "WINTECH_PDF_Setup_$appVersion.exe"
 if (Test-Path $final) { Remove-Item $final -Force }
 Move-Item $built.FullName $final

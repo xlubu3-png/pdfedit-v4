@@ -2,8 +2,9 @@
 
 **WINTECH 문서편집기** (옛 이름: PDF 편집기). 브라우저에서 PDF를 열어 **본문 텍스트를 직접 수정**하고, 여러 PDF의 페이지를
 합치고·순서 바꾸고·회전·삭제·삽입·추출하며, 한글 문서(HWP·HWPX)를 열어 고치고, 두 문서를 비교하고, 개인정보를 찾아 가립니다.
-화면에 보이는 이름만 바뀌었고, 설치 폴더·데이터 폴더·설치 파일 이름·바로가기 이름은 업데이트가 이어지도록 `WINTECH_PDF`를
-그대로 씁니다.
+설치된 프로그램·바로가기·Program Files 폴더 이름은 0.079부터 **WINTECH DocEditor**입니다(그 전에는 `WINTECH_PDF`). 설치
+프로그램이 Windows의 같은 업그레이드 코드를 써서, 업데이트하면 옛 WINTECH_PDF를 지우고 그 자리에 설치됩니다. 데이터 폴더
+(`%USERPROFILE%\WINTECH_PDF`)와 설치 파일 이름(`WINTECH_PDF_Setup_<버전>.exe`, 자동 업데이트가 이 이름으로 찾음)은 그대로입니다.
 하나의 Spring Boot 앱(jar 하나, 포트 하나)이 UI와 API를 모두 제공합니다.
 
 **v4 = v3(0.035)에 글자 모양 편집·이동·텍스트 추가·그림 넣기·부분 서식을 더한 별도 프로그램입니다.** 현재 버전은 화면 맨 위에
@@ -58,7 +59,9 @@ Java 런타임이 들어 있어 사용자 PC에 Java가 없어도 됩니다. 설
 로그는 `%USERPROFILE%\WINTECH_PDF\app.log`. 아이콘은 `installer\WINTECH_PDF.ico`(기존 WINTECH_PDF와 동일).
 
 - **배포는 Setup.exe로만 합니다** (포터블 폴더/zip은 만들지 않음). 개발 중 설치 없이 확인하려면 `-AppImageOnly` —
-  `installer\build\app-image\WINTECH_PDF\WINTECH_PDF.exe`를 바로 실행할 수 있습니다.
+  `installer\build\app-image\WINTECH DocEditor\WINTECH DocEditor.exe`를 바로 실행할 수 있습니다.
+- **업그레이드 코드** `{86BDF49F-B988-375C-BC21-F945E6338154}`는 바꾸면 안 됩니다(`build-installer.ps1`의 `$upgradeCode`). 이
+  코드가 같아야 새 설치 파일이 이전 설치를 같은 프로그램으로 알아보고 교체합니다.
 - 설치된 앱의 작업 보관 폴더는 `%USERPROFILE%\WINTECH_PDF\data`, 로그는 `%USERPROFILE%\WINTECH_PDF\app.log` 입니다. 앱을 지우거나 새
   버전으로 덮어 설치해도 이 폴더는 그대로 남습니다.
 - **버전**: 화면·파일 이름·트레이에는 `app.version`(예: 0.035)이 쓰이지만, Windows 설치 파일 버전은 숫자 3자리여야 하고 낮은 버전으로는

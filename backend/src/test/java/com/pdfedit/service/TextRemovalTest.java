@@ -171,6 +171,76 @@ class TextRemovalTest {
         assertThat(textOf(service.buildSinglePage(pdf, 0, Map.of(index, RunEdit.ofText("Other"))))).contains("Stamp text");
     }
 
+    /** Three lines, the second and third written with ' (next line, then show), as some generators write them. */
+    private static byte[] quoteLines() throws IOException {
+        return pdf((doc, page, cs) -> {
+            cs.beginText();
+            cs.setFont(HELVETICA, 12);
+            cs.appendRawCommands("16 TL\n");
+            cs.newLineAtOffset(50, 700);
+            cs.appendRawCommands("(First line) Tj\n(Second line) '\n(Third line) '\n");
+            cs.endText();
+            line(cs, 50, 600, "After the text object");
+        });
+    }
+
+    @Test
+    void aLineWrittenWithAQuoteIsCutOutAndTheLinesAfterItStay() throws IOException {
+        byte[] pdf = quoteLines();
+        PageTextDto before = describe(pdf, Map.of());
+        TextRunDto third = run(before, "Third");
+        Map<Integer, RunEdit> edits = Map.of(run(before, "Second").index(), RunEdit.ofText("Changed"));
+
+        assertThat(run(describe(pdf, edits), "Second").originalRemoved()).isTrue();
+        byte[] baked = service.buildSinglePage(pdf, 0, edits);
+
+        assertThat(textOf(baked)).doesNotContain("Second").contains("First line").contains("Third line")
+                .contains("After the text object");
+        try (PDDocument doc = Loader.loadPDF(baked)) {
+            var stay = TextExtraction.extractRuns(doc, 0).stream().filter(r -> r.text().startsWith("Third")).findFirst()
+                    .orElseThrow();
+            assertThat(stay.x()).isEqualTo(third.x(), org.assertj.core.data.Offset.offset(0.5f));
+            assertThat(stay.y()).isEqualTo(third.y(), org.assertj.core.data.Offset.offset(0.5f));
+        }
+    }
+
+    @Test
+    void theLineAfterAQuoteIsCutOutToo() throws IOException {
+        // Counting the ' as two operators used to put every later operator one place off.
+        byte[] pdf = quoteLines();
+        Map<Integer, RunEdit> edits = Map.of(run(describe(pdf, Map.of()), "After").index(), RunEdit.ofText("Moved"));
+
+        assertThat(run(describe(pdf, edits), "After").originalRemoved()).isTrue();
+        assertThat(textOf(service.buildSinglePage(pdf, 0, edits))).doesNotContain("After the text object")
+                .contains("Third line");
+    }
+
+    @Test
+    void aLineWrittenWithADoubleQuoteKeepsItsSpacingForTheLinesAfterIt() throws IOException {
+        // " sets the word and character spacing, moves to the next line and shows the text.
+        byte[] pdf = pdf((doc, page, cs) -> {
+            cs.beginText();
+            cs.setFont(HELVETICA, 12);
+            cs.appendRawCommands("16 TL\n");
+            cs.newLineAtOffset(50, 700);
+            cs.appendRawCommands("(Top) Tj\n3 1 (Spaced words here) \"\n(Also spaced) '\n");
+            cs.endText();
+        });
+        PageTextDto before = describe(pdf, Map.of());
+        TextRunDto also = run(before, "Also");
+        Map<Integer, RunEdit> edits = Map.of(run(before, "Spaced").index(), RunEdit.ofText("Plain"));
+
+        assertThat(run(describe(pdf, edits), "Spaced").originalRemoved()).isTrue();
+        try (PDDocument doc = Loader.loadPDF(service.buildSinglePage(pdf, 0, edits))) {
+            var after = TextExtraction.extractRuns(doc, 0);
+            assertThat(after).noneMatch(r -> r.text().startsWith("Spaced"));
+            var stay = after.stream().filter(r -> r.text().startsWith("Also")).findFirst().orElseThrow();
+            assertThat(stay.y()).isEqualTo(also.y(), org.assertj.core.data.Offset.offset(0.5f));
+            assertThat(stay.width()).as("the spacing set by \" still applies").isEqualTo(also.width(),
+                    org.assertj.core.data.Offset.offset(0.5f));
+        }
+    }
+
     @Test
     void anOperatorThatAlsoDrawsALineThatStaysIsNotCut() throws IOException {
         // one TJ draws two pieces far apart: editing one must not take the other with it

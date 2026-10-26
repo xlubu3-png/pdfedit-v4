@@ -7,9 +7,11 @@ import {
   exportPdf,
   fetchAppInfo,
   fetchDocumentInfo,
+  fetchSettings,
   fetchUpdate,
   installUpdate,
   reloadFonts,
+  saveSettings,
   uploadDocument,
 } from './api'
 import { familyList, reloadMessage } from './fontHelp'
@@ -24,6 +26,7 @@ import { CompareView } from './components/CompareView'
 import { FindReplaceDialog } from './components/FindReplaceDialog'
 import { HwpEditor } from './components/HwpEditor'
 import { PasswordDialog } from './components/PasswordDialog'
+import { RetentionDialog } from './components/RetentionDialog'
 import { RedactDialog } from './components/RedactDialog'
 import { RedactEditor } from './components/RedactEditor'
 import { UpdateBanner } from './components/UpdateBanner'
@@ -47,7 +50,7 @@ import {
   SquareCheck,
   Trash,
 } from 'lucide-react'
-import type { AppInfo, PageItem, ReplaceResult, UpdateInfo, UploadResponse } from './types'
+import type { AppInfo, AppSettings, PageItem, ReplaceResult, UpdateInfo, UploadResponse } from './types'
 
 /**
  * The name the screen shows. The installed program, its folders and its installer keep the name WINTECH_PDF:
@@ -84,6 +87,8 @@ function App() {
   /** Changes whenever the open editor must start over, e.g. after a replace changed its page behind its back. */
   const [editorNonce, setEditorNonce] = useState(0)
   const [info, setInfo] = useState<AppInfo | null>(null)
+  const [settings, setSettings] = useState<AppSettings | null>(null)
+  const [retentionOpen, setRetentionOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [passwordAsk, setPasswordAsk] = useState<PasswordAsk | null>(null)
   /** A note about the last upload or export (a file opened with its password, what a redaction did). */
@@ -123,6 +128,9 @@ function App() {
         document.title = `${APP_NAME} v${loaded.version}`
       })
       .catch(() => setInfo(null))
+    fetchSettings()
+      .then(setSettings)
+      .catch(() => setSettings(null))
   }, [])
 
   // Pick up the pages of the last visit: the server keeps the documents and their edits.
@@ -567,6 +575,19 @@ function App() {
               {fontsBusy ? '읽는 중…' : '⟳ 글꼴 다시 읽기'}
             </button>
           )}
+          {settings && (
+            <>
+              {' · '}
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => setRetentionOpen(true)}
+                title={`올린 문서와 고친 내용은 ${settings.retentionDays}일 동안 열지 않으면 정리됩니다 (원본 파일은 그대로). 눌러서 기간을 바꿉니다`}
+              >
+                작업 보관 {settings.retentionDays}일
+              </button>
+            </>
+          )}
           {update?.enabled && (
             <>
               {' '}
@@ -802,6 +823,14 @@ function App() {
       )}
 
       {compareOpen && <CompareView pages={pages} onClose={() => setCompareOpen(false)} />}
+
+      {retentionOpen && settings && (
+        <RetentionDialog
+          days={settings.retentionDays}
+          onSave={async (days) => setSettings(await saveSettings({ ...settings, retentionDays: days }))}
+          onClose={() => setRetentionOpen(false)}
+        />
+      )}
 
       {hwpFile && <HwpEditor key={`${hwpFile.name}-${hwpFile.lastModified}`} file={hwpFile} onClose={() => setHwpFile(null)} />}
 

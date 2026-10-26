@@ -111,6 +111,8 @@ public final class TextExtraction {
             private final Deque<Frame> frames = new ArrayDeque<>();
             private String pendingDo;
             private OpBuilder current;
+            /** The text operator being run, while it runs. */
+            private String showing;
 
             {
                 // A text stripper only follows the operators that affect where text lands, so
@@ -145,18 +147,34 @@ public final class TextExtraction {
                     super.processOperator(operator, operands);
                     return;
                 }
+                if (isQuote(showing)) {
+                    // ' moves to the next line and runs a Tj of its own, " sets the spacing and runs a ' of its
+                    // own: those are part of it, not more operators of the stream, and the Tj's advance is its
+                    // advance (the line move is not).
+                    Matrix before = getTextMatrix() == null ? null : getTextMatrix().clone();
+                    super.processOperator(operator, operands);
+                    if (current != null && OperatorName.SHOW_TEXT.equals(name)) {
+                        current.adjust = advance(before, getTextMatrix());
+                    }
+                    return;
+                }
                 Frame frame = frames.peek();
                 ShowOpRef ref = frame.inert ? null : new ShowOpRef(frame.key, frame.count++);
                 OpBuilder builder = ref == null ? null : new OpBuilder(ref, name);
                 Matrix before = getTextMatrix() == null ? null : getTextMatrix().clone();
+                String outer = showing;
                 current = builder;
+                showing = name;
                 try {
                     super.processOperator(operator, operands);
                 } finally {
                     current = null;
+                    showing = outer;
                 }
                 if (builder != null && builder.seen) {
-                    builder.adjust = advance(before, getTextMatrix());
+                    if (!isQuote(name)) {
+                        builder.adjust = advance(before, getTextMatrix());
+                    }
                     builders.put(ref, builder);
                 }
             }
@@ -299,6 +317,11 @@ public final class TextExtraction {
     private static boolean isShowText(String operator) {
         return OperatorName.SHOW_TEXT.equals(operator) || OperatorName.SHOW_TEXT_ADJUSTED.equals(operator)
                 || OperatorName.SHOW_TEXT_LINE.equals(operator) || OperatorName.SHOW_TEXT_LINE_AND_SPACE.equals(operator);
+    }
+
+    /** ' or ": a text operator that moves to the next line first. */
+    private static boolean isQuote(String operator) {
+        return OperatorName.SHOW_TEXT_LINE.equals(operator) || OperatorName.SHOW_TEXT_LINE_AND_SPACE.equals(operator);
     }
 
     /**

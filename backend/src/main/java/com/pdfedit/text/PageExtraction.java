@@ -22,9 +22,10 @@ public record PageExtraction(List<TextRun> runs, List<Set<ShowOpRef>> runOps, Ma
      * What is known about one operator.
      *
      * @param operator   "Tj", "TJ", "'" or "\""
-     * @param adjust     the TJ number that moves the text position on by as much as this operator did, so
-     *                   that cutting the operator out leaves the text after it where it was; NaN when the
-     *                   advance is not a plain horizontal one (vertical writing)
+     * @param adjust     the TJ number that moves the text position on by as much as this operator's text did
+     *                   (for ' and ", after their move to the next line), so that cutting the operator out
+     *                   leaves the text after it where it was; NaN when the advance is not a plain horizontal
+     *                   one (vertical writing)
      * @param minX       left edge of its characters in user space
      * @param maxX       right edge
      * @param baseline   baseline of its first character in user space
@@ -33,9 +34,13 @@ public record PageExtraction(List<TextRun> runs, List<Set<ShowOpRef>> runOps, Ma
     public record ShowOp(ShowOpRef ref, String operator, double adjust, float minX, float maxX, float baseline,
                          float size) {
 
-        /** Whether it can be replaced by a plain advance: only Tj and TJ, with a plain horizontal advance. */
+        /**
+         * Whether it can be replaced by a plain advance: any text operator with a plain horizontal advance (a '
+         * or " keeps its move to the next line, and " its spacing, in front of the advance).
+         */
         public boolean cuttable() {
-            return ("Tj".equals(operator) || "TJ".equals(operator)) && !Double.isNaN(adjust);
+            return ("Tj".equals(operator) || "TJ".equals(operator) || "'".equals(operator) || "\"".equals(operator))
+                    && !Double.isNaN(adjust);
         }
     }
 }

@@ -13,6 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
@@ -48,9 +49,19 @@ public class PdfDocumentStore {
     private static final Duration TOUCH_INTERVAL = Duration.ofHours(1);
     private static final Duration CONTENT_IDLE = Duration.ofMinutes(10);
 
+    /** Longest retention the user can choose: ten years. */
+    public static final int MAX_RETENTION_DAYS = 3650;
+    /**
+     * The user's choices that outlive a restart, next to the documents. Not a .json file: those are the
+     * documents' own files, read back one by one at startup.
+     */
+    private static final String SETTINGS_FILE = "settings.properties";
+    private static final String RETENTION_KEY = "retentionDays";
+
     private final Map<String, Entry> documents = new ConcurrentHashMap<>();
     private final Path dataDir;
-    private final Duration retention;
+    /** The configured one until the user chooses another. */
+    private volatile Duration retention;
     private final JsonMapper mapper = JsonMapper.builder()
             .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
             .build();
@@ -74,7 +85,7 @@ public class PdfDocumentStore {
     }
 
     @Autowired
-    public PdfDocumentStore(@Value("${app.data-dir}") String dataDir, @Value("${app.retention-days:7}") int days) {
+    public PdfDocumentStore(@Value("${app.data-dir}") String dataDir, @Value("${app.retention-days:30}") int days) {
         this(dataDir == null || dataDir.isBlank() ? null : Path.of(dataDir), Duration.ofDays(days));
     }
 
@@ -87,7 +98,59 @@ public class PdfDocumentStore {
             } catch (IOException e) {
                 throw new UncheckedIOException("Cannot create the data folder " + dataDir, e);
             }
+            // Before loadAll: it already throws away the documents that are older than the retention.
+            readSettings();
             loadAll();
+        }
+    }
+
+    /** How many days a document nobody opens is kept. */
+    public int retentionDays() {
+        return (int) retention.toDays();
+    }
+
+    /**
+     * Changes how long untouched documents are kept, and remembers it across restarts. A shorter period takes
+     * effect at the next clean-up (every ten minutes).
+     *
+     * @throws InvalidEditException for less than a day or more than {@value #MAX_RETENTION_DAYS}
+     */
+    public void setRetentionDays(int days) {
+        if (days < 1 || days > MAX_RETENTION_DAYS) {
+            throw new InvalidEditException("보관 기간은 1일에서 " + MAX_RETENTION_DAYS + "일 사이로 정할 수 있습니다.");
+        }
+        retention = Duration.ofDays(days);
+        if (dataDir == null) {
+            return;
+        }
+        Properties settings = new Properties();
+        settings.setProperty(RETENTION_KEY, String.valueOf(days));
+        Path target = dataDir.resolve(SETTINGS_FILE);
+        Path temp = dataDir.resolve(SETTINGS_FILE + ".tmp");
+        try {
+            try (var out = Files.newBufferedWriter(temp)) {
+                settings.store(out, "WINTECH DocEditor settings");
+            }
+            Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Cannot save the settings", e);
+        }
+    }
+
+    private void readSettings() {
+        Path file = dataDir.resolve(SETTINGS_FILE);
+        if (!Files.exists(file)) {
+            return;
+        }
+        Properties settings = new Properties();
+        try (var in = Files.newBufferedReader(file)) {
+            settings.load(in);
+            int days = Integer.parseInt(settings.getProperty(RETENTION_KEY, "").trim());
+            if (days >= 1 && days <= MAX_RETENTION_DAYS) {
+                retention = Duration.ofDays(days);
+            }
+        } catch (IOException | NumberFormatException e) {
+            log.warn("Ignoring the unreadable settings in {}: {}", file, e.toString());
         }
     }
 

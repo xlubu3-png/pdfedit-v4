@@ -6,6 +6,12 @@ export interface AppInfo {
   unreadableFonts: string[]
 }
 
+/** What the user can set in the app. */
+export interface AppSettings {
+  /** Days an uploaded document nobody opens is kept before it is cleaned up. */
+  retentionDays: number
+}
+
 /** Whether a newer version of the app is published; `enabled` is false outside the installed app. */
 export interface UpdateInfo {
   enabled: boolean

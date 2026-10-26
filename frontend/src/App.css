@@ -1190,6 +1190,27 @@ button.primary:disabled {
   font-size: 11px;
 }
 
+/* How long untouched documents are kept. */
+.retention-dialog {
+  width: min(460px, 92vw);
+}
+
+.retention-dialog p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.retention-dialog select {
+  padding: 6px 8px;
+  font-size: 14px;
+}
+
+.retention-warn {
+  color: #b45309;
+  font-weight: 600;
+}
+
 /* Password question for an encrypted PDF that is being opened. */
 .password-dialog {
   width: min(420px, 92vw);

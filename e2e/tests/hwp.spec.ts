@@ -26,6 +26,26 @@ function zipEntry(zip: Buffer, name: string): string | null {
   return null
 }
 
+test('the browser keeps the HWP editor files, but not the pages, so updates show at once', async ({ page }) => {
+  const index = await page.request.get('/hwp-studio/index.html')
+  expect(index.headers()['cache-control'] ?? '').not.toContain('max-age')
+  const script = /\/hwp-studio\/assets\/index-[^"]+\.js/.exec(await index.text())![0]
+  const asset = await page.request.get(script)
+  expect(asset.headers()['cache-control']).toContain('max-age=31536000')
+  expect(asset.headers()['cache-control']).toContain('immutable')
+
+  const engine = /rhwp_bg-[A-Za-z0-9_-]+\.wasm/.exec(await asset.text())![0]
+  const wasm = await page.request.get(`/hwp-studio/assets/${engine}`)
+  expect(wasm.headers()['content-type']).toBe('application/wasm')
+  expect(wasm.headers()['cache-control']).toContain('max-age=31536000')
+
+  const font = await page.request.get('/hwp-studio/fonts/Pretendard-Regular.woff2')
+  expect(font.status()).toBe(200)
+  expect(font.headers()['cache-control']).toContain('max-age=2592000')
+
+  expect((await page.request.get('/')).headers()['cache-control'] ?? '').not.toContain('max-age')
+})
+
 test('a Hangul document opens in the HWP editor, is edited and saved as HWPX and HWP, all on this PC', async ({ page }) => {
   const outside: string[] = []
   page.on('request', (request) => {

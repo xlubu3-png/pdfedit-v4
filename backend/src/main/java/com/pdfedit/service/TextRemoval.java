@@ -272,6 +272,17 @@ final class TextRemoval {
                 if (isShowText(name)) {
                     Double adjust = cuts.get(ordinal++);
                     if (adjust != null) {
+                        // What ' and " do besides showing their text stays: the move to the next line, and
+                        // for " the word and character spacing it sets for the text after it.
+                        if (OperatorName.SHOW_TEXT_LINE_AND_SPACE.equals(name) && operands.size() >= 3) {
+                            out.add(operands.get(0));
+                            out.add(Operator.getOperator(OperatorName.SET_WORD_SPACING));
+                            out.add(operands.get(1));
+                            out.add(Operator.getOperator(OperatorName.SET_CHAR_SPACING));
+                        }
+                        if (OperatorName.SHOW_TEXT_LINE.equals(name) || OperatorName.SHOW_TEXT_LINE_AND_SPACE.equals(name)) {
+                            out.add(Operator.getOperator(OperatorName.NEXT_LINE));
+                        }
                         COSArray move = new COSArray();
                         move.add(new COSFloat(adjust.floatValue()));
                         out.add(move);

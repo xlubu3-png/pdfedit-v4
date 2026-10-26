@@ -2,6 +2,7 @@ import type {
   AddedImage,
   AddedText,
   AppInfo,
+  AppSettings,
   CompareResult,
   FindMatch,
   FontChoice,
@@ -77,6 +78,26 @@ export function thumbnailUrl(documentId: string, pageIndex: number, width = 240,
 
 export function previewUrl(documentId: string, pageIndex: number, revision: number, dpi = 150): string {
   return `${BASE}/documents/${documentId}/pages/${pageIndex}/preview?rev=${revision}&dpi=${dpi}`
+}
+
+export async function fetchSettings(): Promise<AppSettings> {
+  const response = await fetch(`${BASE}/settings`)
+  if (!response.ok) {
+    throw await failure(response, '설정을 불러오지 못했습니다')
+  }
+  return response.json()
+}
+
+export async function saveSettings(settings: AppSettings): Promise<AppSettings> {
+  const response = await fetch(`${BASE}/settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  })
+  if (!response.ok) {
+    throw await failure(response, '설정을 저장하지 못했습니다')
+  }
+  return response.json()
 }
 
 export async function fetchAppInfo(): Promise<AppInfo> {

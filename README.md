@@ -310,6 +310,7 @@ cd e2e;      npm ci; npm test              # 실제 화면: 앱을 새로 띄워
 
 - 외부 도구(LibreOffice, Tesseract, qpdf)는 쓰지 않습니다. 글자 인식은 앱에 든 모델과 ONNX Runtime으로, 암호 걸기는 PDFBox만으로
   합니다. 문서 변환을 붙일 때는 별도 설치가 필요합니다.
-- ONNX Runtime jar(약 51MB)에는 Windows·Linux·macOS용 실행 파일이 모두 들어 있어 설치 파일이 그만큼 커집니다(나중에 Windows용만 남길 수 있음).
+- ONNX Runtime jar(약 49MB)에는 Windows·Linux·macOS용 실행 파일이 모두 들어 있습니다. 설치 파일은 `gradlew bootJarWindows`로 만든
+  Windows용만 남긴 jar(`*-windows.jar`, 약 42MB 작음)를 쓰고, Docker 이미지는 Linux용이 든 보통 `bootJar`를 씁니다.
 - 이전 `pdf_edit_v1`에서 가져온 것: 텍스트 추출·글꼴 매칭·덮개 영역·내보내기 로직(PDFBox 3으로 이식, 같은 입력에서 v1과 **픽셀
   단위로 동일한 결과**임을 확인), 편집 UI(Thymeleaf → React). 버린 것: v1이 v2를 자식 프로세스로 띄우던 구조와 홈 링크, 두 앱의 포트 분리.

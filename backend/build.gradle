@@ -64,3 +64,31 @@ tasks.named('bootJar') {
         into 'BOOT-INF/classes/static'
     }
 }
+
+// The Windows installer's jar: ONNX Runtime with only its Windows library (about 6 MB of the jar's 49; the rest
+// is Linux and macOS). The Docker image keeps using bootJar, which has them all.
+def isOnnxRuntime = { File f -> f.name ==~ /onnxruntime-\d.*\.jar/ }
+
+tasks.register('onnxRuntimeWindows', Jar) {
+    archiveFileName = 'onnxruntime-windows.jar'
+    destinationDirectory = layout.buildDirectory.dir('onnxruntime')
+    from({ zipTree(configurations.runtimeClasspath.find(isOnnxRuntime)) }) {
+        exclude 'ai/onnxruntime/native/linux-*/**', 'ai/onnxruntime/native/osx-*/**'
+    }
+}
+
+tasks.register('bootJarWindows', org.springframework.boot.gradle.tasks.bundling.BootJar) {
+    group = 'build'
+    description = 'The boot jar for the Windows installer (ONNX Runtime for Windows only).'
+    if (!project.hasProperty('prebuiltFrontend')) {
+        dependsOn 'frontendBuild'
+    }
+    def standard = tasks.named('bootJar', org.springframework.boot.gradle.tasks.bundling.BootJar)
+    mainClass = standard.flatMap { it.mainClass }
+    targetJavaVersion = standard.flatMap { it.targetJavaVersion }
+    classpath = sourceSets.main.runtimeClasspath.filter { !isOnnxRuntime(it) } + files(tasks.named('onnxRuntimeWindows'))
+    from(new File(frontendDir, 'dist')) {
+        into 'BOOT-INF/classes/static'
+    }
+    archiveClassifier = 'windows'
+}

@@ -29,10 +29,11 @@ Write-Host "App version $appVersion -> Windows installer version $windowsVersion
 Write-Host '== 1/4 jar (with the frontend) =='
 Push-Location $backend
 try {
-    & .\gradlew.bat bootJar --no-daemon
-    if ($LASTEXITCODE -ne 0) { throw 'bootJar failed' }
+    # The Windows-only jar: ONNX Runtime without its Linux and macOS libraries (about 42 MB less).
+    & .\gradlew.bat bootJarWindows --no-daemon
+    if ($LASTEXITCODE -ne 0) { throw 'bootJarWindows failed' }
 } finally { Pop-Location }
-$jar = Get-ChildItem (Join-Path $backend 'build\libs') -Filter '*.jar' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$jar = Get-ChildItem (Join-Path $backend 'build\libs') -Filter '*-windows.jar' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 
 Write-Host '== 2/4 staging =='
 if (Test-Path $work) { Remove-Item $work -Recurse -Force }

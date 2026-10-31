@@ -35,6 +35,7 @@ import com.pdfedit.dto.TextRunDto;
 import com.pdfedit.text.AddedImage;
 import com.pdfedit.text.AddedText;
 import com.pdfedit.text.FontMatcher;
+import com.pdfedit.text.FontUnavailableException;
 import com.pdfedit.text.Glyph;
 import com.pdfedit.text.PageExtraction;
 import com.pdfedit.text.RunEdit;
@@ -90,6 +91,19 @@ public class TextEditService {
     /** A cache for one output document; share it between all the pages exported into that document. */
     public FontCache newFontCache() {
         return new FontCache(fontMatcher);
+    }
+
+    /**
+     * The default Korean font (the one added text boxes use), embedded once into the output document; null when
+     * this PC has no Korean font at all.
+     */
+    public PDFont defaultFont(FontCache fonts, PDDocument outDoc) {
+        try {
+            return fonts.styled.computeIfAbsent("family:|false", k -> fontMatcher.loadStyled(outDoc, null, false))
+                    .font();
+        } catch (FontUnavailableException e) {
+            return null;
+        }
     }
 
     public PageTextDto describePage(byte[] pdf, int pageIndex, Map<Integer, RunEdit> saved) throws IOException {

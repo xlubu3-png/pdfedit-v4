@@ -25,6 +25,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import com.pdfedit.ocr.OcrText;
 import com.pdfedit.redact.Redaction;
 import com.pdfedit.text.AddedImage;
 import com.pdfedit.text.AddedText;
@@ -72,7 +73,7 @@ public class PdfDocumentStore {
     /** What is written next to the PDF; page and run numbers are strings because JSON keys are. */
     record Stored(String fileName, int pageCount, Map<String, Map<String, RunEdit>> edits,
                   Map<String, List<AddedText>> added, Map<String, List<AddedImage>> images,
-                  Map<String, List<Redaction>> redactions) {
+                  Map<String, List<Redaction>> redactions, Map<String, List<OcrText>> ocr) {
     }
 
     /** Most pictures uploaded for one document, and the biggest one (bytes). */
@@ -229,6 +230,22 @@ public class PdfDocumentStore {
         persist(documentId);
     }
 
+    /** Replaces the text recognized on a page (empty: the page has none, or it was removed). */
+    public void setOcr(String documentId, int pageIndex, List<OcrText> lines) {
+        Entry entry = require(documentId);
+        if (lines.isEmpty()) {
+            entry.ocrByPage.remove(pageIndex);
+        } else {
+            entry.ocrByPage.put(pageIndex, List.copyOf(lines));
+        }
+        persist(documentId);
+    }
+
+    /** The text recognized on a page; empty when it was never recognized. */
+    public List<OcrText> ocr(String documentId, int pageIndex) {
+        return require(documentId).ocrByPage.getOrDefault(pageIndex, List.of());
+    }
+
     /** The redaction areas of a page; empty when it has none. */
     public List<Redaction> redactions(String documentId, int pageIndex) {
         return require(documentId).redactionsByPage.getOrDefault(pageIndex, List.of());
@@ -328,6 +345,10 @@ public class PdfDocumentStore {
         if (areas != null) {
             to.redactionsByPage.put(toPage, areas);
         }
+        List<OcrText> recognized = from.ocrByPage.get(fromPage);
+        if (recognized != null) {
+            to.ocrByPage.put(toPage, recognized);
+        }
         persist(toDocument);
     }
 
@@ -359,12 +380,14 @@ public class PdfDocumentStore {
         entry.imagesByPage.forEach((page, boxes) -> images.put(String.valueOf(page), boxes));
         Map<String, List<Redaction>> redactions = new LinkedHashMap<>();
         entry.redactionsByPage.forEach((page, areas) -> redactions.put(String.valueOf(page), areas));
+        Map<String, List<OcrText>> ocr = new LinkedHashMap<>();
+        entry.ocrByPage.forEach((page, lines) -> ocr.put(String.valueOf(page), lines));
         synchronized (entry) {
             Path target = metaPath(documentId);
             Path temp = target.resolveSibling(target.getFileName() + ".tmp");
             try {
                 Files.write(temp, mapper.writeValueAsBytes(
-                        new Stored(entry.fileName, entry.pageCount, edits, added, images, redactions)));
+                        new Stored(entry.fileName, entry.pageCount, edits, added, images, redactions, ocr)));
                 Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
             } catch (IOException e) {
                 log.warn("Could not save the edits of {}: {}", documentId, e.toString());
@@ -465,6 +488,9 @@ public class PdfDocumentStore {
                 stored.redactions().forEach((page, areas) ->
                         entry.redactionsByPage.put(Integer.valueOf(page), List.copyOf(areas)));
             }
+            if (stored.ocr() != null) {
+                stored.ocr().forEach((page, lines) -> entry.ocrByPage.put(Integer.valueOf(page), List.copyOf(lines)));
+            }
             entry.imageIds.addAll(savedImageIds(documentId));
             documents.put(documentId, entry);
         } catch (IOException | RuntimeException e) {
@@ -534,6 +560,8 @@ public class PdfDocumentStore {
         final Map<Integer, List<AddedImage>> imagesByPage = new ConcurrentHashMap<>();
         /** pageIndex to the areas redacted on export. */
         final Map<Integer, List<Redaction>> redactionsByPage = new ConcurrentHashMap<>();
+        /** pageIndex to the text recognized on that (scanned) page, written as invisible text on export. */
+        final Map<Integer, List<OcrText>> ocrByPage = new ConcurrentHashMap<>();
         /** Pictures uploaded for the document; their bytes are on disk, or here when there is no data folder. */
         final java.util.Set<String> imageIds = ConcurrentHashMap.newKeySet();
         final Map<String, byte[]> imagesInMemory = new ConcurrentHashMap<>();

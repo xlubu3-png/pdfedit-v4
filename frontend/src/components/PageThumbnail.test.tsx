@@ -15,11 +15,11 @@ const page: PageItem = {
   textRevision: 0,
 }
 
-function renderCard(busy: boolean, onEditText = vi.fn(), onDuplicate = vi.fn()) {
+function renderCard(busy: boolean, onEditText = vi.fn(), onDuplicate = vi.fn(), shown: PageItem = page) {
   const noop = () => {}
   const view = render(
     <PageThumbnail
-      page={page}
+      page={shown}
       index={0}
       isDragging={false}
       isSelected={false}
@@ -54,6 +54,17 @@ describe('PageThumbnail', () => {
     fireEvent.click(view.container.querySelector('button[title^="페이지 복제"]')!)
 
     expect(onDuplicate).toHaveBeenCalledWith('doc-1-0')
+  })
+
+  it('marks a page whose text was recognized', () => {
+    const plain = renderCard(false)
+    expect(plain.view.container.querySelector('.page-ocr')).toBeNull()
+    cleanup()
+
+    const { view } = renderCard(false, vi.fn(), vi.fn(), { ...page, ocrLines: 14 })
+    const badge = view.container.querySelector('.page-ocr')!
+    expect(badge.textContent).toBe('OCR')
+    expect(badge.getAttribute('title')).toContain('14줄')
   })
 
   it('does nothing while the app is busy', () => {

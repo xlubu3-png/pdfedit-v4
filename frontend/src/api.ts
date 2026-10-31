@@ -6,6 +6,7 @@ import type {
   CompareResult,
   FindMatch,
   FontChoice,
+  OcrResult,
   PageItem,
   PageText,
   PersonalInfoKind,
@@ -146,6 +147,15 @@ export async function createBlankDocument(): Promise<UploadResponse> {
   const response = await fetch(`${BASE}/documents/blank`, { method: 'POST' })
   if (!response.ok) {
     throw new ApiError(`빈 페이지 생성 실패 (${response.status})`, response.status)
+  }
+  return response.json()
+}
+
+/** Recognizes the text of a scanned page (a second or two); the server keeps it for the export. */
+export async function recognizePage(documentId: string, pageIndex: number): Promise<OcrResult> {
+  const response = await fetch(`${BASE}/documents/${documentId}/pages/${pageIndex}/ocr`, { method: 'POST' })
+  if (!response.ok) {
+    throw await failure(response, '글자를 인식하지 못했습니다')
   }
   return response.json()
 }

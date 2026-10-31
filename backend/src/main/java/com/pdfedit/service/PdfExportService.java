@@ -14,12 +14,15 @@ import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.font.PDFont;
 import org.apache.pdfbox.pdmodel.graphics.image.JPEGFactory;
 import org.apache.pdfbox.rendering.ImageType;
 import org.apache.pdfbox.rendering.PDFRenderer;
 import org.springframework.stereotype.Service;
 
 import com.pdfedit.dto.PageSpec;
+import com.pdfedit.ocr.OcrText;
+import com.pdfedit.ocr.OcrTextLayer;
 import com.pdfedit.redact.Redaction;
 import com.pdfedit.redact.Redactor;
 
@@ -93,6 +96,15 @@ public class PdfExportService {
                     removed += result.glyphsRemoved();
                     if (result.rasterized()) {
                         picturePages.add(output.getNumberOfPages());
+                    }
+                }
+                // Text recognized on a scan goes in as invisible text, so the export can be searched and copied;
+                // a picture-only export has no text anyway. Lines inside redaction areas are left out.
+                List<OcrText> recognized = store.ocr(spec.documentId(), spec.pageIndex());
+                if (!recognized.isEmpty() && !flatten) {
+                    PDFont font = textEditService.defaultFont(fonts, output);
+                    if (font != null) {
+                        OcrTextLayer.add(output, imported, recognized, font, redactions);
                     }
                 }
                 if (spec.rotation() != 0) {

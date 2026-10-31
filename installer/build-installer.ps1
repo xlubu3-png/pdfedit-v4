@@ -74,7 +74,9 @@ $common = @(
     # A cap instead of a share of the RAM (50% of a 64 GB PC is 32 GB the app would happily grow into),
     # and an idle collection so the memory used for a big document is given back after a minute.
     '--java-options', '-Xmx3g',
-    '--java-options', '-XX:G1PeriodicGCInterval=60000'
+    '--java-options', '-XX:G1PeriodicGCInterval=60000',
+    # Text recognition (ONNX Runtime) loads a native library; newer Java versions refuse that unless allowed.
+    '--java-options', '--enable-native-access=ALL-UNNAMED'
 )
 
 if ($AppImageOnly) {

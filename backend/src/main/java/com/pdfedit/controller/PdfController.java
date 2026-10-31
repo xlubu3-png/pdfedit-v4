@@ -10,6 +10,7 @@ import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.encryption.InvalidPasswordException;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.text.PDFTextStripper;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -45,6 +46,8 @@ public class PdfController {
     static final String REDACTION_HEADER = "X-Redaction-Report";
     private static final int MIN_THUMBNAIL_WIDTH = 16;
     private static final int MAX_THUMBNAIL_WIDTH = 2000;
+    /** Pages looked at to tell a scan; enough, and quick even for a long document. */
+    private static final int SCAN_CHECK_PAGES = 5;
 
     private final PdfDocumentStore store;
     private final PdfThumbnailService thumbnailService;
@@ -71,6 +74,7 @@ public class PdfController {
         int pageCount;
         boolean unlocked;
         Integer permissions;
+        boolean scanned;
         try {
             // An encrypted file is kept as a plain copy, so nothing after this line needs the password.
             PdfUnlocker.Unlocked plain = PdfUnlocker.unlock(file.getBytes(), password);
@@ -80,6 +84,7 @@ public class PdfController {
             content = PageRotationBaker.bake(plain.content());
             try (PDDocument document = Loader.loadPDF(content)) {
                 pageCount = document.getNumberOfPages();
+                scanned = pageCount > 0 && hasNoText(document);
             }
         } catch (InvalidPasswordException e) {
             throw new PasswordRequiredException(password == null || password.isEmpty()
@@ -92,7 +97,14 @@ public class PdfController {
             throw new InvalidEditException("페이지가 없는 PDF입니다.");
         }
         String documentId = store.store(file.getOriginalFilename(), content, pageCount);
-        return new UploadResponse(documentId, file.getOriginalFilename(), pageCount, unlocked, permissions);
+        return new UploadResponse(documentId, file.getOriginalFilename(), pageCount, unlocked, permissions, scanned);
+    }
+
+    /** No text on its first pages: a scan, most likely, that the screen offers to run text recognition on. */
+    private static boolean hasNoText(PDDocument document) throws IOException {
+        PDFTextStripper stripper = new PDFTextStripper();
+        stripper.setEndPage(Math.min(document.getNumberOfPages(), SCAN_CHECK_PAGES));
+        return stripper.getText(document).isBlank();
     }
 
     /** What the browser needs to pick a document up again after a reload: its name and page count. */

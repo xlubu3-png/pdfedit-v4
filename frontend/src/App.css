@@ -187,6 +187,21 @@ button.primary:disabled {
   z-index: 1;
 }
 
+/* A scanned page whose text was recognized: under the page number. */
+.page-ocr {
+  position: absolute;
+  top: 32px;
+  left: 12px;
+  background: #0f766e;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 4px;
+  z-index: 1;
+}
+
 .page-select {
   position: absolute;
   top: 10px;

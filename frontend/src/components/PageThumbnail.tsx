@@ -61,6 +61,14 @@ export function PageThumbnail({
       }}
     >
       <div className="page-number">{index + 1}</div>
+      {page.ocrLines !== undefined && page.ocrLines > 0 && (
+        <div
+          className="page-ocr"
+          title={`스캔한 쪽에서 글자 ${page.ocrLines}줄을 인식했습니다. 내보낸 PDF에서 검색·복사할 수 있습니다.`}
+        >
+          OCR
+        </div>
+      )}
       <label className="page-select" title="선택">
         <input type="checkbox" checked={isSelected} disabled={busy} onChange={() => onToggleSelect(page.key)} />
       </label>

@@ -109,6 +109,25 @@ export interface UploadResponse {
   unlocked?: boolean
   /** What the encrypted original allowed (its PDF permission bits); null when it was not encrypted. */
   permissions?: number | null
+  /** No text on its first pages: probably a scan, which text recognition can make searchable. */
+  scanned?: boolean
+}
+
+/** A line of text recognized on a scanned page, in PDF points (origin bottom-left; `y` is its bottom). */
+export interface OcrText {
+  text: string
+  x: number
+  y: number
+  width: number
+  height: number
+  score: number
+}
+
+export interface OcrResult {
+  lines: OcrText[]
+  /** Lines left out because the page already has real text there. */
+  alreadyText: number
+  seconds: number
 }
 
 export interface PageItem {
@@ -121,6 +140,8 @@ export interface PageItem {
   textRevision: number
   /** Set for a page of a document that was opened with its password: what the original allowed. */
   lockedPermissions?: number
+  /** Lines of text recognized on the page (a scan), once text recognition ran on it. */
+  ocrLines?: number
 }
 
 /** A line of text on a page; coordinates are PDF user space (origin bottom-left, y-up). */

@@ -3,7 +3,10 @@ import type { PageItem } from './types'
 const KEY = 'wintech-pdf-session'
 
 /** Pages as they are stored; the thumbnail revision is not (it only forces a re-fetch). */
-type StoredPage = Pick<PageItem, 'key' | 'documentId' | 'sourceFileName' | 'pageIndex' | 'rotation' | 'lockedPermissions'>
+type StoredPage = Pick<
+  PageItem,
+  'key' | 'documentId' | 'sourceFileName' | 'pageIndex' | 'rotation' | 'lockedPermissions' | 'ocrLines'
+>
 
 const ROTATIONS = [0, 90, 180, 270]
 
@@ -30,6 +33,7 @@ export function serializeSession(pages: PageItem[]): string {
     pageIndex: p.pageIndex,
     rotation: p.rotation,
     ...(p.lockedPermissions === undefined ? {} : { lockedPermissions: p.lockedPermissions }),
+    ...(p.ocrLines === undefined ? {} : { ocrLines: p.ocrLines }),
   }))
   return JSON.stringify(stored)
 }
@@ -40,10 +44,11 @@ export function parseSession(text: string | null): PageItem[] {
   try {
     const parsed: unknown = JSON.parse(text)
     if (!Array.isArray(parsed)) return []
-    return parsed.filter(isStoredPage).map(({ lockedPermissions, ...p }) => ({
+    return parsed.filter(isStoredPage).map(({ lockedPermissions, ocrLines, ...p }) => ({
       ...p,
       textRevision: 0,
       ...(Number.isInteger(lockedPermissions) ? { lockedPermissions } : {}),
+      ...(Number.isInteger(ocrLines) && ocrLines! >= 0 ? { ocrLines } : {}),
     }))
   } catch {
     return []

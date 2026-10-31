@@ -7,6 +7,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import com.pdfedit.ocr.OcrUnavailableException;
 import com.pdfedit.service.InvalidEditException;
 import com.pdfedit.service.PageNotEditableException;
 import com.pdfedit.service.PasswordRequiredException;
@@ -45,6 +46,11 @@ public class ApiExceptionHandler {
     @ExceptionHandler(UpdateFailedException.class)
     public ResponseEntity<String> handleUpdateFailed(UpdateFailedException e) {
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(e.getMessage());
+    }
+
+    @ExceptionHandler(OcrUnavailableException.class)
+    public ResponseEntity<String> handleNoOcr(OcrUnavailableException e) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(e.getMessage());
     }
 
     @ExceptionHandler(PageNotEditableException.class)

@@ -11,6 +11,7 @@ import {
   fetchSettings,
   fetchUpdate,
   installUpdate,
+  recognizePage,
   reloadFonts,
   saveSettings,
   uploadDocument,
@@ -20,6 +21,7 @@ import { printPdf } from './print'
 import { redactionMessage } from './redaction'
 import { exportFileName } from './exportName'
 import { keptPermissions } from './lock'
+import { ocrMessage, recognizeAll } from './ocr'
 import { keyCode } from './keys'
 import { dragHasFiles, pickPdfs } from './pdfFiles'
 import { clearSession, loadSession, saveSession } from './session'
@@ -51,6 +53,7 @@ import {
   Printer,
   RotateCcw,
   RotateCw,
+  ScanText,
   Search,
   SquareCheck,
   Trash,
@@ -107,6 +110,11 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   const [passwordAsk, setPasswordAsk] = useState<PasswordAsk | null>(null)
   const [lockAsk, setLockAsk] = useState<LockAsk | null>(null)
+  /** Just-opened documents that look scanned: the screen offers to recognize their text. */
+  const [scanSuggest, setScanSuggest] = useState<{ files: string[]; pages: PageItem[] } | null>(null)
+  /** How far a text recognition run is; null when none runs. */
+  const [ocrProgress, setOcrProgress] = useState<{ done: number; total: number } | null>(null)
+  const ocrStop = useRef(false)
   /** A note about the last upload or export (a file opened with its password, what a redaction did). */
   const [notice, setNotice] = useState<string | null>(null)
   const [redactOpen, setRedactOpen] = useState(false)
@@ -204,6 +212,7 @@ function App() {
     setBusy(true)
     setError(null)
     const unlocked: string[] = []
+    const scanned: { files: string[]; pages: PageItem[] } = { files: [], pages: [] }
     // One bad file must not keep the others from being opened.
     for (const file of pdfs) {
       try {
@@ -224,6 +233,10 @@ function App() {
           ...(uploaded.unlocked ? { lockedPermissions: uploaded.permissions ?? -4 } : {}),
         }))
         setPages((prev) => [...prev, ...newPages])
+        if (uploaded.scanned) {
+          scanned.files.push(uploaded.fileName)
+          scanned.pages.push(...newPages)
+        }
       } catch (e) {
         problems.push(e instanceof Error ? e.message : `업로드 중 오류가 발생했습니다: ${file.name}`)
       }
@@ -232,7 +245,38 @@ function App() {
     if (unlocked.length > 0) {
       setNotice(`암호를 풀어서 열었습니다: ${unlocked.join(', ')}. 내보낼 때 암호를 다시 걸 수 있습니다.`)
     }
+    setScanSuggest(scanned.pages.length > 0 ? scanned : null)
     setBusy(false)
+  }
+
+  /**
+   * Recognizes the text of scanned pages, one after another: the given ones, else the selected ones, else all.
+   * The result is kept by the server and goes into exports as invisible text.
+   */
+  async function handleOcr(target?: PageItem[]) {
+    const chosen = target ?? (selectedKeys.size > 0 ? pages.filter((p) => selectedKeys.has(p.key)) : pages)
+    if (chosen.length === 0 || busy) return
+    setBusy(true)
+    setError(null)
+    setScanSuggest(null)
+    ocrStop.current = false
+    try {
+      const summary = await recognizeAll(
+        chosen,
+        recognizePage,
+        (done, total) => setOcrProgress({ done, total }),
+        () => ocrStop.current,
+      )
+      setPages((prev) =>
+        prev.map((p) => (p.key in summary.linesByKey ? { ...p, ocrLines: summary.linesByKey[p.key] } : p)),
+      )
+      setNotice(ocrMessage(summary))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '글자를 인식하지 못했습니다')
+    } finally {
+      setOcrProgress(null)
+      setBusy(false)
+    }
   }
 
   /** Uploads the file, asking for its password for as long as the server refuses one; null when the user gives up. */
@@ -356,6 +400,7 @@ function App() {
           rotation: p.rotation,
           textRevision: 0,
           ...(p.lockedPermissions === undefined ? {} : { lockedPermissions: p.lockedPermissions }),
+          ...(p.ocrLines === undefined ? {} : { ocrLines: p.ocrLines }),
         })
       }
       setPages((prev) => prev.flatMap((p) => (copies.has(p.key) ? [p, copies.get(p.key)!] : [p])))
@@ -718,6 +763,32 @@ function App() {
         </div>
       )}
 
+      {scanSuggest && !ocrProgress && (
+        <div className="info-banner update-banner" role="status">
+          <span>
+            스캔한 문서로 보입니다: {scanSuggest.files.join(', ')}. 글자 인식(OCR)을 하면 내보낸 PDF에서 글자를
+            검색·복사할 수 있습니다 (쪽당 2초쯤).
+          </span>
+          <button type="button" className="primary" onClick={() => void handleOcr(scanSuggest.pages)} disabled={busy}>
+            글자 인식
+          </button>
+          <button type="button" onClick={() => setScanSuggest(null)}>
+            나중에
+          </button>
+        </div>
+      )}
+
+      {ocrProgress && (
+        <div className="info-banner update-banner" role="status">
+          <span>
+            글자 인식 중… {ocrProgress.done}/{ocrProgress.total}쪽
+          </span>
+          <button type="button" onClick={() => (ocrStop.current = true)}>
+            중지
+          </button>
+        </div>
+      )}
+
       {notice && (
         <div className="info-banner" role="status">
           <span>{notice}</span>
@@ -824,6 +895,13 @@ function App() {
                   label="개인정보 가리기"
                   title="주민등록번호·전화번호 같은 개인정보를 찾아 가리거나, 가릴 곳을 직접 그립니다. 내보낼 때 실제로 지워집니다."
                   onClick={() => setRedactOpen(true)}
+                  disabled={busy}
+                />
+                <RibbonButton
+                  icon={<ScanText />}
+                  label="글자 인식(OCR)"
+                  title="스캔한 쪽의 글자를 읽어, 내보낸 PDF에서 검색·복사할 수 있게 합니다. 선택한 쪽(없으면 모든 쪽)을 차례로 인식하며 쪽당 2초쯤 걸립니다. 이 PC 안에서만 처리합니다."
+                  onClick={() => void handleOcr()}
                   disabled={busy}
                 />
                 <RibbonButton

@@ -31,6 +31,13 @@ describe('session', () => {
     expect(parseSession(JSON.stringify([{ ...locked, lockedPermissions: 'x' }]))[0].lockedPermissions).toBeUndefined()
   })
 
+  it('remembers how many lines were recognized on a scanned page', () => {
+    const recognized = { ...page('a'), ocrLines: 12 }
+
+    expect(parseSession(serializeSession([recognized]))).toEqual([{ ...recognized, textRevision: 0 }])
+    expect(parseSession(JSON.stringify([{ ...recognized, ocrLines: -1 }]))[0].ocrLines).toBeUndefined()
+  })
+
   it('treats missing, broken or foreign data as an empty session', () => {
     expect(parseSession(null)).toEqual([])
     expect(parseSession('')).toEqual([])

@@ -72,6 +72,47 @@ export function simplePdf(lines: string[], pages = 1, password?: string): Buffer
   return Buffer.from(out, 'latin1')
 }
 
+/** An A4 PDF whose one page is nothing but the JPEG picture `jpeg` (`width` x `height`), as a scanner makes it. */
+export function scannedPdf(jpeg: Buffer, width: number, height: number): Buffer {
+  const draw = 'q 595 0 0 842 0 0 cm /Im1 Do Q'
+  const parts: Buffer[] = []
+  const offsets: number[] = []
+  let length = 0
+  const add = (piece: Buffer | string) => {
+    const b = typeof piece === 'string' ? Buffer.from(piece, 'latin1') : piece
+    parts.push(b)
+    length += b.length
+  }
+  add('%PDF-1.4\n')
+  const objects: (string | Buffer[])[] = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /XObject << /Im1 5 0 R >> >> >>',
+    `<< /Length ${draw.length} >>\nstream\n${draw}\nendstream`,
+    [
+      Buffer.from(
+        `<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} /ColorSpace /DeviceRGB ` +
+          `/BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`,
+        'latin1',
+      ),
+      jpeg,
+      Buffer.from('\nendstream', 'latin1'),
+    ],
+  ]
+  objects.forEach((body, i) => {
+    offsets.push(length)
+    add(`${i + 1} 0 obj\n`)
+    if (typeof body === 'string') add(body)
+    else body.forEach(add)
+    add('\nendobj\n')
+  })
+  const xref = length
+  add(`xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`)
+  add(offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join(''))
+  add(`trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`)
+  return Buffer.concat(parts)
+}
+
 function chunk(type: string, data: Buffer): Buffer {
   const length = Buffer.alloc(4)
   length.writeUInt32BE(data.length)

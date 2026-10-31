@@ -28,7 +28,7 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler(FontUnavailableException.class)
     public ResponseEntity<String> handleNoFont(FontUnavailableException e) {
-        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(e.getMessage());
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_CONTENT).body(e.getMessage());
     }
 
     @ExceptionHandler(InvalidEditException.class)

@@ -160,6 +160,15 @@ export async function recognizePage(documentId: string, pageIndex: number): Prom
   return response.json()
 }
 
+/** The text recognized on the page earlier (no lines when it never was). */
+export async function fetchPageOcr(documentId: string, pageIndex: number): Promise<OcrResult> {
+  const response = await fetch(`${BASE}/documents/${documentId}/pages/${pageIndex}/ocr`)
+  if (!response.ok) {
+    throw await failure(response, '인식한 글자를 불러오지 못했습니다')
+  }
+  return response.json()
+}
+
 /** A copy of the page, with everything done to it, as a one-page document of its own. */
 export async function duplicatePage(documentId: string, pageIndex: number): Promise<UploadResponse> {
   const response = await fetch(`${BASE}/documents/${documentId}/pages/${pageIndex}/duplicate`, { method: 'POST' })

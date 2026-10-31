@@ -3,9 +3,11 @@ import type { PointerEvent } from 'react'
 import {
   ApiError,
   fetchFonts,
+  fetchPageOcr,
   fetchPageText,
   imageUrl,
   previewUrl,
+  recognizePage,
   reloadFonts,
   resetTextEdits,
   saveAddedImages,
@@ -19,10 +21,11 @@ import { editorTipSeen, markEditorTipSeen } from '../editorTip'
 import { foreignChars, SIMILAR_ENOUGH } from '../fontMix'
 import { History } from '../history'
 import { keyCode } from '../keys'
+import { ocrMessage, recognizeAll } from '../ocr'
 import type { SnapTargets } from '../snap'
 import { clearField, formatRange, lookAt, remapSpans, toggleFor } from '../spans'
 import type { LookPatch } from '../spans'
-import type { AddedImage, AddedText, AppInfo, FontChoice, PageItem, PageText, RunState, TextRun } from '../types'
+import type { AddedImage, AddedText, AppInfo, FontChoice, OcrText, PageItem, PageText, RunState, TextRun } from '../types'
 import { fitPageZoom, fitZoom, previewDpi, PX_PER_PT_AT_100, zoomStep } from '../zoom'
 import { HelpDialog } from './HelpDialog'
 import { MissingFontDialog } from './MissingFontDialog'
@@ -39,6 +42,7 @@ import {
   ChevronUp,
   CircleQuestionMark,
   CopyPlus,
+  Eye,
   FileDown,
   FileImage,
   FileSearch,
@@ -46,6 +50,7 @@ import {
   MoveHorizontal,
   Printer,
   Scan,
+  ScanText,
   Redo2,
   RefreshCw,
   RotateCcw,
@@ -85,6 +90,8 @@ interface TextEditorProps {
   unreadableFonts: string[]
   /** Called after the installed fonts were read again, with what the server now reports. */
   onFontsReloaded: (info: AppInfo) => void
+  /** Called after the text of this page was recognized, with how many lines were found. */
+  onRecognized: (pageKey: string, lines: number) => void
   busy: boolean
 }
 
@@ -194,6 +201,7 @@ export function TextEditor({
   installedFonts,
   unreadableFonts,
   onFontsReloaded,
+  onRecognized,
   busy,
 }: TextEditorProps) {
   const { documentId, pageIndex, key: pageKey } = page
@@ -221,6 +229,11 @@ export function TextEditor({
   /** The box that takes keyboard input; a selected box that is not being edited only moves and restyles. */
   const [editing, setEditing] = useState<Selection>(null)
   const [adding, setAdding] = useState(false)
+  /** The lines text recognition found on this page (a scan's), outlined on the page while `showOcr`. */
+  const [ocrLines, setOcrLines] = useState<OcrText[]>([])
+  const [showOcr, setShowOcr] = useState(true)
+  const [ocrBusy, setOcrBusy] = useState(false)
+  const [ocrNote, setOcrNote] = useState<string | null>(null)
   const [ribbonTab, setRibbonTab] = useState('edit')
   /** The tool row can be folded away to give the page more room; picking a menu unfolds it. */
   const [ribbonOpen, setRibbonOpen] = useState(true)
@@ -325,6 +338,19 @@ export function TextEditor({
       cancelled = true
     }
   }, [documentId, pageIndex, reloadToken, putStates, putAdded, putImages])
+
+  useEffect(() => {
+    let cancelled = false
+    fetchPageOcr(documentId, pageIndex)
+      .then((result) => {
+        if (!cancelled) setOcrLines(result.lines)
+      })
+      // Only the outlines of recognized lines go missing; editing and recognizing again still work.
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [documentId, pageIndex])
 
   /**
    * After a save: which edited lines have their original letters cut out of the page and which are only
@@ -1006,6 +1032,34 @@ export function TextEditor({
     onNavigate(delta)
   }
 
+  /** Recognizes the text of this page (a second or two), outlines what was found and tells the page list. */
+  async function recognizeThisPage() {
+    setOcrBusy(true)
+    setOcrNote(null)
+    setError(null)
+    let found: OcrText[] = []
+    try {
+      const summary = await recognizeAll(
+        [page],
+        async (id, index) => {
+          const result = await recognizePage(id, index)
+          found = result.lines
+          return result
+        },
+        () => {},
+        () => false,
+      )
+      setOcrLines(found)
+      setShowOcr(true)
+      setOcrNote(ocrMessage(summary))
+      onRecognized(pageKey, found.length)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '글자를 인식하지 못했습니다')
+    } finally {
+      setOcrBusy(false)
+    }
+  }
+
   async function resetPage() {
     if (!window.confirm('이 페이지의 모든 텍스트 수정과 추가한 텍스트를 되돌릴까요? (Ctrl+Z로 다시 살릴 수 있습니다)')) return
     checkpoint(`reset-page:${Date.now()}`)
@@ -1426,6 +1480,23 @@ export function TextEditor({
           <span className="te-title" title={page.sourceFileName}>
             PDF 문서 · {page.sourceFileName} · {pageIndex + 1}쪽
           </span>
+          <span className="te-pager" role="group" aria-label="쪽 이동">
+            <button type="button" onClick={() => void navigate(-1)} disabled={position <= 0} title="이전 쪽 (Ctrl+←)" aria-label="이전 쪽">
+              <ChevronLeft size={16} aria-hidden="true" />
+            </button>
+            <span className="te-sub">
+              {position + 1} / {total}
+            </span>
+            <button
+              type="button"
+              onClick={() => void navigate(1)}
+              disabled={position >= total - 1}
+              title="다음 쪽 (Ctrl+→)"
+              aria-label="다음 쪽"
+            >
+              <ChevronRight size={16} aria-hidden="true" />
+            </button>
+          </span>
           <span className="te-spacer" />
           <span className="te-status" aria-live="polite">
             {status}
@@ -1615,6 +1686,23 @@ export function TextEditor({
             <RibbonGroup label="찾기">
               <RibbonButton icon={<Search />} label="찾아 바꾸기" title="모든 페이지에서 글자를 찾아 바꿉니다 (Ctrl+F)" onClick={onOpenFind} />
             </RibbonGroup>
+            <RibbonGroup label="글자 인식">
+              <RibbonButton
+                icon={<ScanText />}
+                label={ocrBusy ? '인식 중…' : '글자 인식(OCR)'}
+                title="스캔한 이 쪽의 글자를 읽어, 내보낸 PDF에서 검색·복사할 수 있게 합니다 (2초쯤, 이 PC 안에서만 처리). 여러 쪽은 페이지 목록의 글자 인식으로 한 번에 할 수 있습니다."
+                onClick={() => void recognizeThisPage()}
+                disabled={ocrBusy || busy}
+              />
+              <RibbonButton
+                icon={<Eye />}
+                label="인식 표시"
+                title="인식한 글자 줄을 페이지 위에 점선으로 표시합니다"
+                onClick={() => setShowOcr((show) => !show)}
+                disabled={ocrLines.length === 0}
+                pressed={showOcr && ocrLines.length > 0}
+              />
+            </RibbonGroup>
           </RibbonPanel>
         )}
 
@@ -1742,6 +1830,15 @@ export function TextEditor({
         </div>
       )}
 
+      {ocrNote && (
+        <div className="te-tip te-ocr-note" role="status">
+          <span>{ocrNote}</span>
+          <button type="button" onClick={() => setOcrNote(null)} aria-label="닫기">
+            ✕
+          </button>
+        </div>
+      )}
+
       {error && (
         <div className="error-banner te-error">
           <span>{error}</span>
@@ -1792,10 +1889,16 @@ export function TextEditor({
             회전된 상태로 저장된 문서입니다. 새 버전은 올릴 때 회전을 풀어 주므로, 이 PDF를 다시 올리면 텍스트를 편집할 수 있습니다.
           </p>
         )}
-        {data && !data.rotated && data.runs.length === 0 && (
+        {data && !data.rotated && data.runs.length === 0 && ocrLines.length > 0 && (
           <p className="te-notice">
-            이 페이지에는 고칠 수 있는 기존 글자가 없습니다 (빈 페이지이거나 스캔 이미지일 수 있습니다). 위의 ‘＋ 텍스트 추가’로
-            글자를 넣을 수 있습니다.
+            스캔한 쪽입니다. 인식한 글자 {ocrLines.length}줄(점선)은 내보낸 PDF에 들어가 검색·복사할 수 있지만, 그림 속 글자라 여기서
+            고치지는 못합니다. 위의 ‘텍스트 추가’로 글자를 넣을 수 있습니다.
+          </p>
+        )}
+        {data && !data.rotated && data.runs.length === 0 && ocrLines.length === 0 && (
+          <p className="te-notice">
+            이 페이지에는 고칠 수 있는 기존 글자가 없습니다 (빈 페이지이거나 스캔 이미지일 수 있습니다). 위의 ‘텍스트 추가’로
+            글자를 넣을 수 있고, 스캔한 쪽이면 ‘글자 인식(OCR)’으로 내보낸 PDF에서 글자를 검색할 수 있게 합니다.
           </p>
         )}
         {data && !data.rotated && (
@@ -1815,6 +1918,20 @@ export function TextEditor({
                 ref={layerRef}
                 onPointerDown={handleLayerPointerDown}
               >
+                {showOcr &&
+                  ocrLines.map((line, i) => (
+                    <div
+                      key={`ocr${i}`}
+                      className="te-ocr-line"
+                      data-text={line.text}
+                      style={{
+                        left: (line.x - data.originX) * scale,
+                        top: (data.pageHeight - (line.y + line.height - data.originY)) * scale,
+                        width: line.width * scale,
+                        height: line.height * scale,
+                      }}
+                    />
+                  ))}
                 {data.runs.map((run) => (
                   <RunBox
                     key={run.index}

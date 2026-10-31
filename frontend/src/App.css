@@ -343,6 +343,20 @@ button.primary:disabled {
   color: var(--text);
 }
 
+/* Previous / next page beside the title, where it is seen without opening a menu. */
+.te-pager {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.te-pager button {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 6px;
+}
+
 .te-spacer {
   flex: 1;
 }
@@ -361,13 +375,17 @@ button.primary:disabled {
   flex: 1;
   overflow: auto;
   display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
   justify-content: center;
   align-items: flex-start;
   padding: 20px;
 }
 
+/* A line of its own above the page, not a narrow column squeezed beside it. */
 .te-notice {
-  margin: 40px auto;
+  flex: 0 0 100%;
+  margin: 0 0 16px;
   text-align: center;
   color: var(--text);
 }
@@ -1125,6 +1143,15 @@ button.primary:disabled {
   pointer-events: none;
   background: #e0368a;
   z-index: 3;
+}
+
+/* A line text recognition found on a scan: only outlined, clicks go through to the page. */
+.te-ocr-line {
+  position: absolute;
+  pointer-events: none;
+  border: 1px dashed #2a9d6f;
+  background: rgba(42, 157, 111, 0.08);
+  border-radius: 2px;
 }
 
 .te-guide.v {

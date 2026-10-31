@@ -71,3 +71,40 @@ test('text recognition from the menu says when a page already has text', async (
   })
   await expect(page.locator('.page-card .page-ocr')).toHaveCount(0)
 })
+
+test('the text editor recognizes the page it shows, outlines what it found, and steps to the next page', async ({ page }) => {
+  await page.goto('/')
+  const pdf = await scan(page)
+  await page.locator('input[type=file]').setInputFiles([
+    { name: 'scan.pdf', mimeType: 'application/pdf', buffer: pdf },
+    { name: 'typed.pdf', mimeType: 'application/pdf', buffer: simplePdf(['Real text line']) },
+  ])
+  await expect(page.locator('.page-card')).toHaveCount(2)
+  await page.getByRole('button', { name: '나중에' }).click()
+
+  await page.locator('button[title="텍스트 편집"]').first().click()
+  const pager = page.getByRole('group', { name: '쪽 이동' })
+  await expect(pager).toContainText('1 / 2')
+  await expect(page.locator('.te-title')).toContainText('scan.pdf')
+
+  const editor = page.getByRole('dialog', { name: '텍스트 편집' })
+  await editor.getByRole('button', { name: '글자 인식(OCR)' }).click()
+  await expect(page.locator('.te-ocr-note')).toContainText('1쪽에서 글자 2줄을 인식했습니다', {
+    timeout: 60_000,
+  })
+  await expect(page.locator('.te-ocr-line')).toHaveCount(2)
+  await editor.getByRole('button', { name: '인식 표시' }).click()
+  await expect(page.locator('.te-ocr-line')).toHaveCount(0)
+
+  await pager.getByRole('button', { name: '다음 쪽' }).click()
+  await expect(page.locator('.te-title')).toContainText('typed.pdf')
+  await expect(pager).toContainText('2 / 2')
+  await expect(page.locator('.te-box[data-index="0"]')).toHaveText('Real text line')
+  await expect(pager.getByRole('button', { name: '다음 쪽' })).toBeDisabled()
+
+  // Back on the first page the lines found earlier are outlined again, and the page list marks it.
+  await pager.getByRole('button', { name: '이전 쪽' }).click()
+  await expect(page.locator('.te-ocr-line')).toHaveCount(2)
+  await page.locator('.rb-back').click()
+  await expect(page.locator('.page-card .page-ocr')).toHaveCount(1)
+})

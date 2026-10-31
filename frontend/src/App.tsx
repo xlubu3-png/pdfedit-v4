@@ -982,6 +982,7 @@ function App() {
           installedFonts={info?.installedFonts}
           unreadableFonts={info?.unreadableFonts ?? []}
           onFontsReloaded={handleFontsReloaded}
+          onRecognized={(key, lines) => setPages((prev) => prev.map((p) => (p.key === key ? { ...p, ocrLines: lines } : p)))}
           busy={busy}
         />
       )}

@@ -23,8 +23,8 @@ import org.springframework.context.ConfigurableApplicationContext;
 /**
  * What only makes sense for the Windows installer build, where the app is a background process the
  * user starts from a shortcut: finding a copy that is already running, and a tray icon to reopen
- * and quit it. The installer's launcher sets {@code jpackage.app-path}; during development and in
- * Docker it is absent, so none of this runs there.
+ * and quit it. The installer's launcher sets {@code jpackage.app-path}; during development it is
+ * absent, so none of this runs there.
  */
 final class InstalledApp {
 

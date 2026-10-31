@@ -62,7 +62,7 @@ public class PdfEditApplication {
         return System.getenv("DISPLAY") != null || System.getenv("WAYLAND_DISPLAY") != null;
     }
 
-    /** SERVER_PORT (used by the Docker/NAS deployment) wins if set; otherwise 19000. */
+    /** SERVER_PORT wins if set; otherwise 19000. */
     private static int resolvePreferredPort() {
         String fromEnv = System.getenv("SERVER_PORT");
         if (fromEnv != null) {
@@ -93,7 +93,7 @@ public class PdfEditApplication {
         return preferred;
     }
 
-    /** Opens the UI only when a desktop is available; headless Docker/NAS deployments skip it. */
+    /** Opens the UI only when a desktop is available; headless servers skip it. */
     private static void openBrowser(String url) {
         try {
             if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {

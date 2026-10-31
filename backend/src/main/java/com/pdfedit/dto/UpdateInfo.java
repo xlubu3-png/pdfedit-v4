@@ -3,7 +3,7 @@ package com.pdfedit.dto;
 /**
  * Whether a newer version of the app is available, as the UI shows it.
  *
- * @param enabled    updating is switched on (only the Windows installer build; not in development or Docker)
+ * @param enabled    updating is switched on (only the Windows installer build; not in development)
  * @param current    the version that is running
  * @param latest     the newest published version, or null when it could not be found out
  * @param newer      {@code latest} is newer than {@code current} and can be installed

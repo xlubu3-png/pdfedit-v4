@@ -3,13 +3,13 @@
 # Shown in the UI. Raise it by 0.001 with every change to the app. Keep it in quotes: unquoted, YAML reads
 # 0.050 as the number 0.05 and the screen would show "v0.05".
 app:
-  version: "0.085"
+  version: "0.086"
   # Uploaded documents and their edits are kept here, so they survive a restart of the app.
-  # PDFEDIT_DATA_DIR moves it (Docker: a mounted volume); documents untouched for this many days are deleted.
+  # PDFEDIT_DATA_DIR moves it; documents untouched for this many days are deleted.
   data-dir: ${PDFEDIT_DATA_DIR:${user.home}/WINTECH_PDF/data}
   retention-days: ${PDFEDIT_RETENTION_DAYS:30}
   update:
-    # Switched on by the installer build (application-installed.yml); never in development or Docker.
+    # Switched on by the installer build (application-installed.yml); never in development.
     enabled: false
     repo: xlubu3-png/pdfedit-v4
   # When set (PDFEDIT_PASSWORD), every request must carry this password (HTTP Basic, any user name):

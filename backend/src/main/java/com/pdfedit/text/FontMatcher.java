@@ -29,7 +29,7 @@ import org.springframework.stereotype.Component;
 public class FontMatcher {
 
     private static final String NO_FONT_MESSAGE = "이 PC에서 사용할 수 있는 한글 글꼴을 찾지 못했습니다. "
-            + "맑은 고딕·나눔고딕 같은 글꼴을 설치한 뒤 다시 시도하세요. (Linux/Docker: fonts-nanum 패키지)";
+            + "맑은 고딕·나눔고딕 같은 글꼴을 설치한 뒤 다시 시도하세요.";
 
     /** Tried, in this order, when the font matching the source font isn't installed. */
     private static final List<String> SERIF_FALLBACKS = List.of("nanummyeongjo", "batang", "unbatang", "gungsuh");

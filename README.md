@@ -8,7 +8,7 @@
 하나의 Spring Boot 앱(jar 하나, 포트 하나)이 UI와 API를 모두 제공합니다.
 
 **v4 = v3(0.035)에 글자 모양 편집·이동·텍스트 추가·그림 넣기·부분 서식을 더한 별도 프로그램입니다.** 현재 버전은 화면 맨 위에
-표시됩니다. v3와 따로 돌도록 Docker 이름·포트(`pdfedit-v4`, `:5907`)를 분리했습니다. 새 기능은
+표시됩니다. 새 기능은
 [텍스트 편집 도구](#텍스트-편집-도구)에 있습니다.
 
 이전에는 두 프로그램이었습니다 — v1(`pdf_edit_v1`: PDF 내용 편집기, Spring Boot 3 + PDFBox 2 + Thymeleaf)과
@@ -71,17 +71,6 @@ Java 런타임이 들어 있어 사용자 PC에 Java가 없어도 됩니다. 설
   업그레이드 설치됩니다.
 - 코드 서명이 없어서 처음 실행할 때 Windows SmartScreen이 "알 수 없는 게시자" 경고를 띄울 수 있습니다 (더 알아보기 → 실행).
 
-### Docker / NAS
-
-```
-docker compose up --build
-```
-
-`http://<host>:5907` (v3의 `:5905`와 겹치지 않음). 헤드리스 환경에서는 브라우저를 열지 않습니다.
-`SERVER_PORT` 환경변수로 포트를 바꿀 수 있습니다.
-
-> Docker 이미지는 이 환경에 Docker가 없어 빌드를 직접 검증하지 못했습니다.
-
 ## 기능
 
 - **텍스트 수정** — 페이지 카드의 `T` 버튼 → 본문 줄을 클릭해 직접 수정, 자동 저장, 페이지 단위 되돌리기
@@ -89,7 +78,7 @@ docker compose up --build
 - **자동 업데이트** — 설치한 앱(Setup.exe)은 시작할 때 GitHub의 최신 릴리스를 확인하고(결과는 몇 시간 동안 기억), 새 버전이 있으면 위에
   안내를 띄웁니다. `지금 업데이트`를 누르면 설치 파일을 내려받아 릴리스에 적힌 SHA-256과 맞는지 확인한 뒤 설치 프로그램을 열고 앱을
   종료합니다(Windows 권한 확인 창이 한 번 뜹니다). 맞지 않으면 설치하지 않습니다. `나중에`는 그 버전을 다시 알리지 않고, 첫 화면의
-  `업데이트 확인`으로 언제든 다시 확인할 수 있습니다. 개발 실행과 Docker에서는 꺼져 있습니다(`app.update.enabled`, 저장소는
+  `업데이트 확인`으로 언제든 다시 확인할 수 있습니다. 개발 실행에서는 꺼져 있습니다(`app.update.enabled`, 저장소는
   `app.update.repo`). 코드 서명이 없으므로 설치 프로그램 실행 시 SmartScreen 경고가 뜰 수 있습니다.
   - **새 버전 배포:** `app.version`을 올리고 커밋·푸시한 뒤 `.\installer\build-installer.ps1`로 빌드하고
     `.\installer\publish-release.ps1`을 실행하면 태그 `v<버전>`으로 릴리스를 만들어 설치 파일과 `.sha256`을 올립니다.
@@ -193,7 +182,7 @@ docker compose up --build
 ## 작업 보관, 내보내기, 찾아 바꾸기
 
 - **작업 보관** — 올린 문서와 수정 내용(고친 줄·글꼴·이동·부분 서식·추가한 텍스트와 그림)은 서버의 데이터 폴더(`PDFEDIT_DATA_DIR`, 기본
-  `%USERPROFILE%\WINTECH_PDF\data`, Docker는 `/data` 볼륨)에 저장되고, 브라우저도 페이지 목록을 기억합니다. 새로고침하거나 앱을 다시
+  `%USERPROFILE%\WINTECH_PDF\data`)에 저장되고, 브라우저도 페이지 목록을 기억합니다. 새로고침하거나 앱을 다시
   시작해도 "이전 작업을 불러왔습니다"로 이어서 작업하며(`모두 지우기`로 비움), 정한 기간(기본 30일, 첫 화면 위쪽의 `작업 보관 N일`을 눌러 7일~1년으로 바꿈 — 데이터 폴더의
   `settings.properties`에 저장, 처음 값은 `app.retention-days`·환경변수 `PDFEDIT_RETENTION_DAYS`) 동안 한 번도 열지 않은 문서만
   지워집니다. 저장이 서버에 닿지 않았을 때는 입력한 내용을 화면에 남기고 `다시 시도`를 보여 주며, 서버가 거절한 변경(글꼴에 없는 글자 등)은
@@ -280,12 +269,8 @@ Linux(`/usr/share/fonts`, `~/.fonts` 등), macOS의 글꼴 폴더를 처음 필�
 - 원본 글꼴과 같은 계열의 글꼴이 있으면 그것을, 없으면 비슷한 계열(명조 계열 → 나눔명조·바탕, 고딕 계열 → 맑은 고딕·나눔고딕·돋움·굴림)을
   씁니다. 휴먼명조·휴먼고딕은 한컴 오피스가 설치된 PC에서만 정확히 일치합니다.
 - 한글을 그릴 수 있는 글꼴이 하나도 없으면 글자가 사라지지 않도록, 수정을 저장하는 시점에 "한글 글꼴을 찾지 못했습니다"라고 알립니다.
-- Windows에는 맑은 고딕이 기본 설치되어 있어 따로 할 일이 없습니다. Linux/Docker에서는 `fonts-nanum` 같은 한글 글꼴 패키지가 필요하며
-  Docker 이미지에는 이미 포함되어 있습니다.
-- 글꼴 폴더를 더 지정하려면 환경변수 `PDFEDIT_FONT_DIRS`에 PATH처럼 구분해서 적습니다. 로컬 `docker-compose.yml`은 Windows 글꼴
-  폴더를 읽기 전용으로 `/host-fonts`에 연결하고 이 변수로 알려 주므로, Docker Desktop에서도 이 PC의 맑은 고딕·바탕 등을 씁니다.
-  `/usr/share/fonts` 밖에 연결하는 이유는 PDFBox가 그 폴더를 직접 훑어 글꼴 캐시를 만드는데, Docker Desktop의 파일 공유로 수백 개를
-  읽으면 첫 요청이 2분 넘게 걸렸기 때문입니다. (NAS용 `docker-compose.nas.yml`에는 연결하지 않습니다.)
+- Windows에는 맑은 고딕이 기본 설치되어 있어 따로 할 일이 없습니다.
+- 글꼴 폴더를 더 지정하려면 환경변수 `PDFEDIT_FONT_DIRS`에 PATH처럼 구분해서 적습니다.
 - 화면 맨 위에 앱 버전(`app.version`, 변경할 때마다 0.001씩 올림)과 읽어온 로컬 글꼴 개수가 표시됩니다.
 
 ## 테스트
@@ -311,6 +296,6 @@ cd e2e;      npm ci; npm test              # 실제 화면: 앱을 새로 띄워
 - 외부 도구(LibreOffice, Tesseract, qpdf)는 쓰지 않습니다. 글자 인식은 앱에 든 모델과 ONNX Runtime으로, 암호 걸기는 PDFBox만으로
   합니다. 문서 변환을 붙일 때는 별도 설치가 필요합니다.
 - ONNX Runtime jar(약 49MB)에는 Windows·Linux·macOS용 실행 파일이 모두 들어 있습니다. 설치 파일은 `gradlew bootJarWindows`로 만든
-  Windows용만 남긴 jar(`*-windows.jar`, 약 42MB 작음)를 쓰고, Docker 이미지는 Linux용이 든 보통 `bootJar`를 씁니다.
+  Windows용만 남긴 jar(`*-windows.jar`, 약 42MB 작음)를 쓰고, 화면 테스트는 보통 `bootJar`를 씁니다.
 - 이전 `pdf_edit_v1`에서 가져온 것: 텍스트 추출·글꼴 매칭·덮개 영역·내보내기 로직(PDFBox 3으로 이식, 같은 입력에서 v1과 **픽셀
   단위로 동일한 결과**임을 확인), 편집 UI(Thymeleaf → React). 버린 것: v1이 v2를 자식 프로세스로 띄우던 구조와 홈 링크, 두 앱의 포트 분리.

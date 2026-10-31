@@ -33,8 +33,7 @@ tasks.named('test') {
 // The React frontend is built with npm and packaged into the boot jar as static resources, so a
 // single jar serves both the UI and the API. Only bootJar depends on this: `gradlew test` and
 // `bootRun` (used together with the Vite dev server) need no Node installation.
-// Pass -PprebuiltFrontend to package an already built ../frontend/dist without invoking npm
-// (the Docker build builds the frontend in its own stage).
+// Pass -PprebuiltFrontend to package an already built ../frontend/dist without invoking npm.
 def isWindows = org.gradle.internal.os.OperatingSystem.current().isWindows()
 def frontendDir = layout.projectDirectory.dir('../frontend').asFile
 def npmCommand = { List<String> args -> isWindows ? ['cmd', '/c', 'npm'] + args : ['npm'] + args }
@@ -66,7 +65,7 @@ tasks.named('bootJar') {
 }
 
 // The Windows installer's jar: ONNX Runtime with only its Windows library (about 6 MB of the jar's 49; the rest
-// is Linux and macOS). The Docker image keeps using bootJar, which has them all.
+// is Linux and macOS). Development and the e2e tests keep using bootJar, which has them all.
 def isOnnxRuntime = { File f -> f.name ==~ /onnxruntime-\d.*\.jar/ }
 
 tasks.register('onnxRuntimeWindows', Jar) {

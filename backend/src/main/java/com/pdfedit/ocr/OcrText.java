@@ -3,6 +3,7 @@ package com.pdfedit.ocr;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.pdfedit.text.AddedText;
 import com.pdfedit.text.TextLines;
 
 /**
@@ -21,6 +22,17 @@ public record OcrText(String text, float x, float y, float width, float height, 
     /** Whether the line touches the rectangle at all. */
     public boolean overlaps(float rx, float ry, float rw, float rh) {
         return x < rx + rw && rx < x + width && y < ry + rh && ry < y + height;
+    }
+
+    /** The lines that no text box rewrites: those whose middle is not under the cover of one of the boxes. */
+    public static List<OcrText> notRewritten(List<OcrText> lines, List<AddedText> boxes) {
+        List<AddedText.Cover> covers = boxes.stream().map(AddedText::cover).filter(c -> c != null).toList();
+        if (covers.isEmpty()) {
+            return lines;
+        }
+        return lines.stream()
+                .filter(l -> covers.stream().noneMatch(c -> c.contains(l.x + l.width / 2, l.y + l.height / 2)))
+                .toList();
     }
 
     /**

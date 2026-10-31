@@ -256,6 +256,13 @@ public class TextEditService {
             if (!(Math.abs(box.x()) <= MAX_OFFSET && Math.abs(box.y()) <= MAX_OFFSET)) {
                 throw new InvalidEditException("텍스트 상자 위치가 페이지 밖입니다.");
             }
+            AddedText.Cover cover = box.cover();
+            if (cover != null && !(cover.color() != null && cover.color().matches(COLOUR_PATTERN)
+                    && Math.abs(cover.x()) <= MAX_OFFSET && Math.abs(cover.y()) <= MAX_OFFSET
+                    && cover.width() > 0 && cover.width() <= MAX_OFFSET
+                    && cover.height() > 0 && cover.height() <= MAX_OFFSET)) {
+                throw new InvalidEditException("고쳐 쓴 글자의 바탕 영역이 올바르지 않습니다.");
+            }
             String text = box.text() == null ? "" : box.text();
             if (text.length() > MAX_ADDED_LENGTH) {
                 throw new InvalidEditException("텍스트 상자 하나에는 " + MAX_ADDED_LENGTH + "자까지 쓸 수 있습니다.");
@@ -598,6 +605,15 @@ public class TextEditService {
 
     private void drawAdded(PDPageContentStream cs, PDDocument outDoc, AddedText box, FontCache fonts)
             throws IOException {
+        if (box.cover() != null) {
+            // The scanned letters the box rewrites, painted over in the colour of the paper around them.
+            AddedText.Cover cover = box.cover();
+            cs.saveGraphicsState();
+            cs.setNonStrokingColor(RunEdit.colour(cover.color(), Color.WHITE));
+            cs.addRect(cover.x(), cover.y(), cover.width(), cover.height());
+            cs.fill();
+            cs.restoreGraphicsState();
+        }
         if (box.text() == null || box.text().isBlank()) {
             return;
         }

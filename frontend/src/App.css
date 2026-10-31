@@ -1145,13 +1145,41 @@ button.primary:disabled {
   z-index: 3;
 }
 
-/* A line text recognition found on a scan: only outlined, clicks go through to the page. */
+/* A line text recognition found on a scan: click to pick it (to copy), double click to rewrite it. */
 .te-ocr-line {
   position: absolute;
-  pointer-events: none;
   border: 1px dashed #2a9d6f;
   background: rgba(42, 157, 111, 0.08);
   border-radius: 2px;
+  cursor: pointer;
+}
+
+.te-ocr-line:hover {
+  background: rgba(42, 157, 111, 0.16);
+}
+
+.te-ocr-line.picked {
+  border: 2px solid #2a9d6f;
+  background: rgba(42, 157, 111, 0.2);
+}
+
+/* While placing a new text box a click means "put it here", even on a recognized line. */
+.te-layer.adding .te-ocr-line {
+  pointer-events: none;
+}
+
+/*
+ * The patch over the scanned letters of a rewritten line. The preview the server draws already has it, so
+ * it only shows while that preview is on its way.
+ */
+.te-cover {
+  position: absolute;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.te-layer.stale .te-cover {
+  visibility: visible;
 }
 
 .te-guide.v {

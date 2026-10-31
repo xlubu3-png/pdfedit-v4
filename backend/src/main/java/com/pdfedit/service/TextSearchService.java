@@ -57,7 +57,13 @@ public class TextSearchService {
                         }
                     }
                     List<OcrText> recognized = store.ocr(doc.getKey(), pageIndex);
+                    // A line rewritten as a text box no longer says what was recognized.
+                    List<OcrText> shown = OcrText.notRewritten(recognized,
+                            store.pageEditsSnapshot(doc.getKey(), pageIndex).added());
                     for (int k = 0; k < recognized.size() && found.size() < MAX_MATCHES; k++) {
+                        if (!shown.contains(recognized.get(k))) {
+                            continue;
+                        }
                         String text = recognized.get(k).text();
                         if (pattern.matcher(text).find()) {
                             found.add(new FindMatch(doc.getKey(), pageIndex, -1 - k, text, true));

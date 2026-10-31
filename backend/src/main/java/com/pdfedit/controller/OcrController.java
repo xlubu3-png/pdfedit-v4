@@ -13,8 +13,10 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.pdfedit.ocr.OcrText;
 import com.pdfedit.ocr.PageOcr;
+import com.pdfedit.ocr.RecognizedLineBox;
 import com.pdfedit.service.InvalidEditException;
 import com.pdfedit.service.PdfDocumentStore;
+import com.pdfedit.text.AddedText;
 
 /**
  * Text recognition of scanned pages. What is recognized is kept with the document and written into exports as
@@ -26,10 +28,12 @@ public class OcrController {
 
     private final PdfDocumentStore store;
     private final PageOcr pageOcr;
+    private final RecognizedLineBox lineBox;
 
-    public OcrController(PdfDocumentStore store, PageOcr pageOcr) {
+    public OcrController(PdfDocumentStore store, PageOcr pageOcr, RecognizedLineBox lineBox) {
         this.store = store;
         this.pageOcr = pageOcr;
+        this.lineBox = lineBox;
     }
 
     /**
@@ -54,6 +58,21 @@ public class OcrController {
     public OcrResponse recognized(@PathVariable String documentId, @PathVariable int pageIndex) {
         checkPage(documentId, pageIndex);
         return new OcrResponse(store.ocr(documentId, pageIndex), 0, 0);
+    }
+
+    /**
+     * A text box that rewrites recognized line {@code line} of the page so it can be edited: the letters over a
+     * patch hiding the scanned ones. Nothing is stored; the editor adds the box like any other.
+     */
+    @PostMapping("/{line}/text-box")
+    public AddedText textBox(@PathVariable String documentId, @PathVariable int pageIndex, @PathVariable int line)
+            throws IOException {
+        checkPage(documentId, pageIndex);
+        List<OcrText> lines = store.ocr(documentId, pageIndex);
+        if (line < 0 || line >= lines.size()) {
+            throw new InvalidEditException("인식한 글자 줄을 찾지 못했습니다. 글자 인식을 다시 해 주세요.");
+        }
+        return lineBox.of(store.getContent(documentId), pageIndex, lines.get(line));
     }
 
     /** Drops what was recognized: the page is exported as a plain picture again. */

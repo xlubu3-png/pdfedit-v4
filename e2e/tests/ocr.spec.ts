@@ -108,3 +108,43 @@ test('the text editor recognizes the page it shows, outlines what it found, and 
   await page.locator('.rb-back').click()
   await expect(page.locator('.page-card .page-ocr')).toHaveCount(1)
 })
+
+test('a recognized line is copied with Ctrl+C, and a double click rewrites it so the export says the new text', async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.goto('/')
+  await page.locator('input[type=file]').setInputFiles({ name: 'scan.pdf', mimeType: 'application/pdf', buffer: await scan(page) })
+  await page.getByRole('button', { name: '나중에' }).click()
+  await page.locator('button[title="텍스트 편집"]').first().click()
+  const editor = page.getByRole('dialog', { name: '텍스트 편집' })
+  await editor.getByRole('button', { name: '글자 인식(OCR)' }).click()
+  const phone = page.locator('.te-ocr-line[data-ocr="1"]')
+  await expect(phone).toBeVisible({ timeout: 60_000 })
+
+  await phone.click()
+  await expect(phone).toHaveClass(/picked/)
+  await page.keyboard.press('Control+c')
+  await expect(page.locator('.te-status')).toContainText('인식한 글자 1줄을 복사했습니다')
+  expect((await page.evaluate(() => navigator.clipboard.readText())).replace(/\s+/g, '')).toBe('연락처010-2345-6789')
+
+  await phone.dblclick()
+  const box = page.locator('.te-box[data-added]')
+  await expect(box).toBeFocused()
+  expect((await box.textContent())?.replace(/\s+/g, '')).toBe('연락처010-2345-6789')
+  await expect(page.locator('.te-ocr-line')).toHaveCount(1) // the rewritten line gives way to its box
+  await page.keyboard.press('Control+a')
+  await page.keyboard.type('연락처 010-9999-0000')
+  await page.locator('.te-layer').click({ position: { x: 5, y: 5 } })
+  await expect(page.locator('.te-status')).toContainText('반영됨')
+
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    editor.getByRole('button', { name: 'PDF로 내보내기' }).click(),
+  ])
+  const text = await textOf(page, readFileSync(await download.path()))
+  expect(text).toContain('010-9999-0000')
+  expect(text).toContain('스캔문서글자인식시험')
+  expect(text).not.toContain('2345')
+})

@@ -99,8 +99,10 @@ public class PdfExportService {
                     }
                 }
                 // Text recognized on a scan goes in as invisible text, so the export can be searched and copied;
-                // a picture-only export has no text anyway. Lines inside redaction areas are left out.
-                List<OcrText> recognized = store.ocr(spec.documentId(), spec.pageIndex());
+                // a picture-only export has no text anyway. Lines inside redaction areas are left out, and so are
+                // lines rewritten as text boxes: their scanned letters are covered, the box holds the text now.
+                List<OcrText> recognized = OcrText.notRewritten(store.ocr(spec.documentId(), spec.pageIndex()),
+                        edits.added());
                 if (!recognized.isEmpty() && !flatten) {
                     PDFont font = textEditService.defaultFont(fonts, output);
                     if (font != null) {

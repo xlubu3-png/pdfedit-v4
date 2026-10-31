@@ -3,6 +3,7 @@ package com.pdfedit.controller;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
+import static org.assertj.core.api.Assertions.within;
 import static org.assertj.core.api.Assumptions.assumeThat;
 
 import java.awt.Color;
@@ -39,6 +40,7 @@ import com.pdfedit.dto.PersonalInfoRequest;
 import com.pdfedit.dto.UploadResponse;
 import com.pdfedit.ocr.OcrText;
 import com.pdfedit.ocr.PageOcr;
+import com.pdfedit.ocr.RecognizedLineBox;
 import com.pdfedit.redact.Redaction;
 import com.pdfedit.service.InvalidEditException;
 import com.pdfedit.service.PdfDocumentStore;
@@ -47,6 +49,7 @@ import com.pdfedit.service.PdfThumbnailService;
 import com.pdfedit.service.TextEditService;
 import com.pdfedit.service.TextSearchService;
 import com.pdfedit.dto.FindMatch;
+import com.pdfedit.text.AddedText;
 import com.pdfedit.text.FontMatcher;
 
 /** A scanned page: recognized, kept with the document, and exported as a page that can be searched. */
@@ -62,7 +65,7 @@ class OcrControllerTest {
     private final PdfController pdf = new PdfController(
             store, new PdfThumbnailService(), new PdfExportService(store, textEditService), textEditService);
     private final PageOcr pageOcr = new PageOcr(textEditService);
-    private final OcrController ocr = new OcrController(store, pageOcr);
+    private final OcrController ocr = new OcrController(store, pageOcr, new RecognizedLineBox(new FontMatcher()));
 
     private static byte[] scannedPdf() throws Exception {
         return scannedPdf(LINES);
@@ -240,7 +243,7 @@ class OcrControllerTest {
         PdfDocumentStore saved = new PdfDocumentStore(data, Duration.ofDays(30));
         PdfController savedPdf = new PdfController(saved, new PdfThumbnailService(),
                 new PdfExportService(saved, textEditService), textEditService);
-        OcrController savedOcr = new OcrController(saved, pageOcr);
+        OcrController savedOcr = new OcrController(saved, pageOcr, new RecognizedLineBox(new FontMatcher()));
         UploadResponse upload = savedPdf.upload(file(scannedPdf()), null);
         List<OcrText> lines = savedOcr.recognize(upload.documentId(), 0).lines();
 
@@ -253,6 +256,52 @@ class OcrControllerTest {
         savedOcr.forget(upload.documentId(), 0);
         assertThat(saved.ocr(upload.documentId(), 0)).isEmpty();
         assertThat(saved.ocr(copy.documentId(), 0)).isEqualTo(lines);
+    }
+
+    @Test
+    void aRecognizedLineBecomesATextBoxThatHidesTheScannedLettersAndCanBeRewritten() throws Exception {
+        String[] lines = {"공문서 스캔 시험 첫째 줄입니다", "연락처 010-2345-6789"};
+        UploadResponse upload = pdf.upload(file(scannedPdf(lines)), null);
+        OcrText phone = ocr.recognize(upload.documentId(), 0).lines().get(1);
+
+        AddedText box = ocr.textBox(upload.documentId(), 0, 1);
+
+        assertThat(plain(box.text())).isEqualTo(plain(lines[1]));
+        Color ink = Color.decode(box.color());
+        assertThat(Math.max(ink.getRed(), Math.max(ink.getGreen(), ink.getBlue()))).as("the black of the scan")
+                .isLessThan(0x40);
+        assertThat(box.cover().color()).as("the white paper around it").isEqualTo("#ffffff");
+        assertThat(box.cover().contains(phone.x(), phone.y())).isTrue();
+        assertThat(box.cover().contains(phone.x() + phone.width(), phone.y() + phone.height())).isTrue();
+        // Drawn 36 px high at 200 dpi, its baseline 460 px from the top.
+        float k = PDRectangle.A4.getHeight() / HEIGHT;
+        assertThat(box.fontSize()).isBetween(36 * k * 0.8f, 36 * k * 1.15f);
+        assertThat(box.y()).isCloseTo(PDRectangle.A4.getHeight() - 460 * k, within(2f));
+
+        // The number is rewritten in the box: the export holds the new one, and nothing of the old.
+        AddedText rewritten = new AddedText("b1", "연락처 010-9999-0000", box.x(), box.y(), null, box.fontSize(),
+                false, box.color(), List.of(), box.cover());
+        store.setAddedTexts(upload.documentId(), 0,
+                textEditService.checkAdded(store.getContent(upload.documentId()), 0, List.of(rewritten)));
+
+        String text = exportedText(upload.documentId(), false);
+        assertThat(text).contains(plain(lines[0]), "010-9999-0000").doesNotContain("2345");
+        assertThat(new TextSearchService(store, textEditService).find(List.of(new PageSpec(upload.documentId(), 0, 0)),
+                "2345", false)).as("the rewritten line is not found by what was recognized").isEmpty();
+        byte[] picture = pdf.export(new ExportRequest(List.of(new PageSpec(upload.documentId(), 0, 0)), "a.pdf", true,
+                null, null)).getBody();
+        String seen = String.join(" ", pageOcr.recognize(picture, 0).lines().stream().map(OcrText::text).toList());
+        assertThat(seen).as("the scanned number is covered on the page itself").contains("9999-0000")
+                .doesNotContain("2345");
+    }
+
+    @Test
+    void aLineThatWasNotRecognizedCannotBeRewritten() throws Exception {
+        UploadResponse upload = pdf.upload(file(scannedPdf()), null);
+        ocr.recognize(upload.documentId(), 0);
+
+        assertThatThrownBy(() -> ocr.textBox(upload.documentId(), 0, 9)).isInstanceOf(InvalidEditException.class);
+        assertThatThrownBy(() -> ocr.textBox(upload.documentId(), 0, -1)).isInstanceOf(InvalidEditException.class);
     }
 
     @Test

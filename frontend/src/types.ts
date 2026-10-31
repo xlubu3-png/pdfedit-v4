@@ -214,6 +214,20 @@ export interface AddedText {
   color: string | null
   /** Parts of the text with a look of their own, as character positions in `text` (line breaks counted). */
   spans: Span[]
+  /**
+   * Painted over before the text is drawn, hiding the scanned letters a box rewrites (see "고쳐 쓰기"); `y` is its
+   * bottom edge. It stays where it is when the box moves.
+   */
+  cover?: Cover | null
+}
+
+/** A rectangle in PDF user space filled with one colour ("#rrggbb"). */
+export interface Cover {
+  x: number
+  y: number
+  width: number
+  height: number
+  color: string
 }
 
 /** A picture (stamp, signature, logo) the user put on the page; coordinates are PDF user space, `y` is the bottom edge. */

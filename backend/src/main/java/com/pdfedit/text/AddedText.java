@@ -4,7 +4,7 @@ import java.util.List;
 
 /**
  * A text box the user put on a page. Unlike a {@link RunEdit} it does not replace anything of the
- * original page: it is simply drawn on top.
+ * original page: it is simply drawn on top - over its {@code cover}, when it has one.
  *
  * @param id         chosen by the browser, only to tell boxes apart
  * @param text       may contain line breaks
@@ -15,16 +15,37 @@ import java.util.List;
  * @param color      "#rrggbb"; null for black
  * @param spans      parts of the text with a look of their own (bold, colour, size, underline), as character
  *                   positions in {@code text} (line breaks counted); never null
+ * @param cover      an area painted over before the text is drawn, to hide the letters of a scan the box
+ *                   rewrites; null for none. It stays where it is when the box is moved.
  */
 public record AddedText(String id, String text, float x, float y, String fontFamily, float fontSize,
-                        boolean bold, String color, List<RunEdit.Span> spans) {
+                        boolean bold, String color, List<RunEdit.Span> spans, Cover cover) {
+
+    /**
+     * A rectangle in PDF user space filled with one colour.
+     *
+     * @param y     bottom edge
+     * @param color "#rrggbb"
+     */
+    public record Cover(float x, float y, float width, float height, String color) {
+
+        /** Whether the point lies inside. */
+        public boolean contains(float px, float py) {
+            return px >= x && px <= x + width && py >= y && py <= y + height;
+        }
+    }
 
     public AddedText {
         spans = spans == null ? List.of() : List.copyOf(spans);
     }
 
     public AddedText(String id, String text, float x, float y, String fontFamily, float fontSize,
+                     boolean bold, String color, List<RunEdit.Span> spans) {
+        this(id, text, x, y, fontFamily, fontSize, bold, color, spans, null);
+    }
+
+    public AddedText(String id, String text, float x, float y, String fontFamily, float fontSize,
                      boolean bold, String color) {
-        this(id, text, x, y, fontFamily, fontSize, bold, color, List.of());
+        this(id, text, x, y, fontFamily, fontSize, bold, color, List.of(), null);
     }
 }

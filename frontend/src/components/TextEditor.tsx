@@ -7,6 +7,7 @@ import {
   fetchPageText,
   imageUrl,
   previewUrl,
+  ocrTextBox,
   recognizePage,
   reloadFonts,
   resetTextEdits,
@@ -21,6 +22,7 @@ import { editorTipSeen, markEditorTipSeen } from '../editorTip'
 import { foreignChars, SIMILAR_ENOUGH } from '../fontMix'
 import { History } from '../history'
 import { keyCode } from '../keys'
+import { copyText } from '../clipboard'
 import { ocrMessage, recognizeAll } from '../ocr'
 import type { SnapTargets } from '../snap'
 import { clearField, formatRange, lookAt, remapSpans, toggleFor } from '../spans'
@@ -41,7 +43,9 @@ import {
   ChevronRight,
   ChevronUp,
   CircleQuestionMark,
+  Copy,
   CopyPlus,
+  PenLine,
   Eye,
   FileDown,
   FileImage,
@@ -234,6 +238,8 @@ export function TextEditor({
   const [showOcr, setShowOcr] = useState(true)
   const [ocrBusy, setOcrBusy] = useState(false)
   const [ocrNote, setOcrNote] = useState<string | null>(null)
+  /** The recognized line clicked on (its index in `ocrLines`): Ctrl+C copies it, Enter or a double click rewrites it. */
+  const [ocrPicked, setOcrPicked] = useState<number | null>(null)
   const [ribbonTab, setRibbonTab] = useState('edit')
   /** The tool row can be folded away to give the page more room; picking a menu unfolds it. */
   const [ribbonOpen, setRibbonOpen] = useState(true)
@@ -749,6 +755,7 @@ export function TextEditor({
     if (active instanceof HTMLElement && active.closest('[data-index], [data-added]')) active.blur()
     setSelected(next)
     setEditing(null)
+    setOcrPicked(null)
   }, [])
 
   function patchSelected(patch: {
@@ -987,6 +994,7 @@ export function TextEditor({
     if (active instanceof HTMLElement && active.closest('[data-index], [data-added]')) active.blur()
     setSelected(null)
     setEditing(null)
+    setOcrPicked(null)
     putAdded(addedRef.current.filter(nonEmpty))
   }
 
@@ -1032,6 +1040,51 @@ export function TextEditor({
     onNavigate(delta)
   }
 
+  /** Recognized lines a text box rewrites (its cover lies over their middle): their outline gives way to the box. */
+  const rewritten = useMemo(() => {
+    const covers = added.flatMap((b) => (b.cover ? [b.cover] : []))
+    return new Set(
+      ocrLines.flatMap((line, i) => {
+        const mx = line.x + line.width / 2
+        const my = line.y + line.height / 2
+        const covered = covers.some((c) => mx >= c.x && mx <= c.x + c.width && my >= c.y && my <= c.y + c.height)
+        return covered ? [i] : []
+      }),
+    )
+  }, [added, ocrLines])
+
+  /** Copies the picked recognized line, or with none picked every line of the page, top to bottom. */
+  async function copyRecognized() {
+    const lines = ocrPicked !== null ? [ocrLines[ocrPicked]] : ocrLines.filter((_, i) => !rewritten.has(i))
+    if (lines.length === 0 || lines[0] === undefined) return
+    const copied = await copyText(lines.map((l) => l.text).join('\n'))
+    setStatus(copied ? `인식한 글자 ${lines.length}줄을 복사했습니다` : '복사하지 못했습니다')
+  }
+
+  /**
+   * Turns recognized line `index` into a text box that can be edited: the server works out its size and colours
+   * and a patch hiding the scanned letters. The box is added like any other (Ctrl+Z takes it back).
+   */
+  async function rewriteLine(index: number) {
+    if (!editable) return
+    setOcrPicked(null)
+    setStatus('고쳐 쓸 수 있게 바꾸는 중…')
+    try {
+      const look = await ocrTextBox(documentId, pageIndex, index)
+      checkpoint(`rewrite:${index}:${Date.now()}`)
+      const box: AddedText = { ...look, id: newId(), spans: look.spans ?? [] }
+      putAdded([...addedRef.current, box])
+      addedDirty.current = true
+      setSelected({ kind: 'added', id: box.id })
+      setEditing({ kind: 'added', id: box.id })
+      scheduleSave()
+      setStatus('')
+    } catch (e) {
+      setStatus('')
+      setError(e instanceof Error ? e.message : '인식한 글자를 고쳐 쓸 수 있게 바꾸지 못했습니다')
+    }
+  }
+
   /** Recognizes the text of this page (a second or two), outlines what was found and tells the page list. */
   async function recognizeThisPage() {
     setOcrBusy(true)
@@ -1050,8 +1103,12 @@ export function TextEditor({
         () => false,
       )
       setOcrLines(found)
+      setOcrPicked(null)
       setShowOcr(true)
-      setOcrNote(ocrMessage(summary))
+      setOcrNote(
+        ocrMessage(summary) +
+          (found.length > 0 ? ' 점선 줄을 클릭해 Ctrl+C로 복사하거나, 두 번 클릭해 고쳐 쓸 수 있습니다.' : ''),
+      )
       onRecognized(pageKey, found.length)
     } catch (e) {
       setError(e instanceof Error ? e.message : '글자를 인식하지 못했습니다')
@@ -1323,6 +1380,12 @@ export function TextEditor({
         return
       }
       // Ctrl+C copies the line, unless text is selected inside the box being typed in: that is a text copy.
+      if (ocrPicked !== null && !inField && !box && (ctrl ? code === 'KeyC' : e.key === 'Enter')) {
+        e.preventDefault()
+        if (ctrl) void copyRecognized()
+        else void rewriteLine(ocrPicked)
+        return
+      }
       if (ctrl && code === 'KeyC' && selected && !inField && !(box && textSelected)) {
         e.preventDefault()
         copySelection()
@@ -1366,6 +1429,7 @@ export function TextEditor({
         else if (box || inField) el?.blur()
         else if (editing) setEditing(null)
         else if (selected) setSelected(null)
+        else if (ocrPicked !== null) setOcrPicked(null)
         else void close()
         return
       }
@@ -1698,9 +1762,26 @@ export function TextEditor({
                 icon={<Eye />}
                 label="인식 표시"
                 title="인식한 글자 줄을 페이지 위에 점선으로 표시합니다"
-                onClick={() => setShowOcr((show) => !show)}
+                onClick={() => {
+                  setShowOcr((show) => !show)
+                  setOcrPicked(null)
+                }}
                 disabled={ocrLines.length === 0}
                 pressed={showOcr && ocrLines.length > 0}
+              />
+              <RibbonButton
+                icon={<Copy />}
+                label="글자 복사"
+                title="점선 줄을 클릭해 고른 줄을, 고르지 않았으면 이 쪽에서 인식한 글자를 모두 복사합니다 (Ctrl+C)"
+                onClick={() => void copyRecognized()}
+                disabled={ocrLines.length === rewritten.size}
+              />
+              <RibbonButton
+                icon={<PenLine />}
+                label="고쳐 쓰기"
+                title="고른 점선 줄을 고칠 수 있는 글자로 바꿉니다 (두 번 클릭 또는 Enter). 스캔의 글자는 바탕색으로 덮입니다."
+                onClick={() => ocrPicked !== null && void rewriteLine(ocrPicked)}
+                disabled={!editable || ocrPicked === null}
               />
             </RibbonGroup>
           </RibbonPanel>
@@ -1891,8 +1972,8 @@ export function TextEditor({
         )}
         {data && !data.rotated && data.runs.length === 0 && ocrLines.length > 0 && (
           <p className="te-notice">
-            스캔한 쪽입니다. 인식한 글자 {ocrLines.length}줄(점선)은 내보낸 PDF에 들어가 검색·복사할 수 있지만, 그림 속 글자라 여기서
-            고치지는 못합니다. 위의 ‘텍스트 추가’로 글자를 넣을 수 있습니다.
+            스캔한 쪽입니다. 인식한 글자 {ocrLines.length}줄이 점선으로 표시됩니다: 클릭해 고른 뒤 Ctrl+C로 복사하고, 두 번
+            클릭하면 고쳐 쓸 수 있습니다. 내보낸 PDF에서도 검색·복사됩니다.
           </p>
         )}
         {data && !data.rotated && data.runs.length === 0 && ocrLines.length === 0 && (
@@ -1918,20 +1999,46 @@ export function TextEditor({
                 ref={layerRef}
                 onPointerDown={handleLayerPointerDown}
               >
+                {/* Until the new preview arrives, the patch a rewritten line puts over the scan is shown here. */}
+                {added.map(
+                  (box) =>
+                    box.cover && (
+                      <div
+                        key={`cover${box.id}`}
+                        className="te-cover"
+                        style={{
+                          left: (box.cover.x - data.originX) * scale,
+                          top: (data.pageHeight - (box.cover.y + box.cover.height - data.originY)) * scale,
+                          width: box.cover.width * scale,
+                          height: box.cover.height * scale,
+                          background: box.cover.color,
+                        }}
+                      />
+                    ),
+                )}
                 {showOcr &&
-                  ocrLines.map((line, i) => (
-                    <div
-                      key={`ocr${i}`}
-                      className="te-ocr-line"
-                      data-text={line.text}
-                      style={{
-                        left: (line.x - data.originX) * scale,
-                        top: (data.pageHeight - (line.y + line.height - data.originY)) * scale,
-                        width: line.width * scale,
-                        height: line.height * scale,
-                      }}
-                    />
-                  ))}
+                  ocrLines.map((line, i) =>
+                    rewritten.has(i) ? null : (
+                      <div
+                        key={`ocr${i}`}
+                        className={`te-ocr-line${ocrPicked === i ? ' picked' : ''}`}
+                        data-ocr={i}
+                        title={`${line.text}\n클릭: 고르기 (Ctrl+C 복사) · 두 번 클릭: 고쳐 쓰기`}
+                        style={{
+                          left: (line.x - data.originX) * scale,
+                          top: (data.pageHeight - (line.y + line.height - data.originY)) * scale,
+                          width: line.width * scale,
+                          height: line.height * scale,
+                        }}
+                        onPointerDown={(e) => {
+                          e.stopPropagation()
+                          select(null)
+                          setOcrPicked(i)
+                        }}
+                        onDoubleClick={() => void rewriteLine(i)}
+                      />
+                    ),
+                  )}
                 {data.runs.map((run) => (
                   <RunBox
                     key={run.index}

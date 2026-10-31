@@ -169,6 +169,20 @@ export async function fetchPageOcr(documentId: string, pageIndex: number): Promi
   return response.json()
 }
 
+/**
+ * A text box that rewrites recognized line `line` of the page: its letters, sized and coloured like the scan's,
+ * over a patch that hides the scanned ones. Nothing is saved until the box is.
+ */
+export async function ocrTextBox(documentId: string, pageIndex: number, line: number): Promise<Omit<AddedText, 'id'>> {
+  const response = await fetch(`${BASE}/documents/${documentId}/pages/${pageIndex}/ocr/${line}/text-box`, {
+    method: 'POST',
+  })
+  if (!response.ok) {
+    throw await failure(response, '인식한 글자를 고쳐 쓸 수 있게 바꾸지 못했습니다')
+  }
+  return response.json()
+}
+
 /** A copy of the page, with everything done to it, as a one-page document of its own. */
 export async function duplicatePage(documentId: string, pageIndex: number): Promise<UploadResponse> {
   const response = await fetch(`${BASE}/documents/${documentId}/pages/${pageIndex}/duplicate`, { method: 'POST' })

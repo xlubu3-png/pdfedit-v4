@@ -97,6 +97,20 @@ class RecognizedLineBoxTest {
 
         assertThat(box.cover().patch()).isNotNull();
         assertThat(box.cover().color()).isEqualTo("#ffffff");
+        // A viewer that smooths the patch blends colours before transparency: see-through pixels must be paper too.
+        BufferedImage patch = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(
+                java.util.Base64.getDecoder().decode(box.cover().patch())));
+        int clear = 0;
+        for (int y = 0; y < patch.getHeight(); y++) {
+            for (int x = 0; x < patch.getWidth(); x++) {
+                int argb = patch.getRGB(x, y);
+                if (argb >>> 24 == 0) {
+                    clear++;
+                    assertThat(argb & 0xFFFFFF).isEqualTo(0xFFFFFF);
+                }
+            }
+        }
+        assertThat(clear).isPositive();
         AddedText coverOnly = new AddedText("c", "", box.x(), box.y(), null, box.fontSize(), false, box.color(),
                 List.of(), box.cover());
         byte[] covered = textEditService.buildSinglePage(pdf, 0, new PageEdits(Map.of(), List.of(coverOnly)));

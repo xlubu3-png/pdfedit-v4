@@ -99,6 +99,8 @@ public class RecognizedLineBox {
     private static final double LIGHTEST_TONE = 0.7;
     /** Colour channels are grouped by this much to find the paper's colour in a noisy (JPEG) scan. */
     private static final int BUCKET = 24;
+    /** Pixels this close (summed channel difference) to the paper's commonest colour are paper, specks and all. */
+    private static final int PAPER_SPECKS = 36;
 
     private final FontMatcher fontMatcher;
 
@@ -709,6 +711,14 @@ public class RecognizedLineBox {
         }
         BufferedImage patch = new BufferedImage(area.width(), area.height(), BufferedImage.TYPE_INT_ARGB);
         int fill = 0xFF000000 | paper.getRGB() & 0xFFFFFF;
+        // See-through pixels are the paper's colour too, not black: a viewer that smooths the picture blends its
+        // colours before its transparency, and see-through black would show as a grey rim round the patch.
+        int clear = paper.getRGB() & 0xFFFFFF;
+        for (int ay = 0; ay < area.height(); ay++) {
+            for (int ax = 0; ax < area.width(); ax++) {
+                patch.setRGB(ax, ay, clear);
+            }
+        }
         for (int ay = 0; ay < area.height(); ay++) {
             for (int ax = 0; ax < area.width(); ax++) {
                 if (paint[ay][ax] && !structure(ax + area.x0(), ay + area.y0(), core, ink, ruleRow, ruleColumn)) {
@@ -873,12 +883,35 @@ public class RecognizedLineBox {
     }
 
     /**
-     * The paper's colour: the commonest colour, once colours a little apart are taken as one (a scan's paper is
-     * never one exact colour), averaged over the pixels that have it. When one exact colour makes up most of
-     * them (paper drawn as a flat fill) it is that colour: an average of 255 and the soft edges of the letters
-     * would be 254, a faint grey patch on white paper.
+     * The paper's colour: around the commonest colour (once colours a little apart are taken as one, or the one
+     * exact colour most of them have, for paper drawn as a flat fill), the average of the pixels close to it. A
+     * scan's paper is that colour strewn with lighter and darker specks, which a viewer averages when it shows the
+     * page smaller: painted in the commonest colour alone, a patch stands out lighter or darker than the paper.
      */
     static Color paper(List<Integer> pixels) {
+        Color base = commonestPaper(pixels);
+        long r = 0;
+        long g = 0;
+        long b = 0;
+        int n = 0;
+        for (int rgb : pixels) {
+            if (difference(rgb, base) <= PAPER_SPECKS) {
+                r += rgb >> 16 & 0xFF;
+                g += rgb >> 8 & 0xFF;
+                b += rgb & 0xFF;
+                n++;
+            }
+        }
+        return n == 0 ? base
+                : new Color((int) Math.round(r / (double) n), (int) Math.round(g / (double) n),
+                        (int) Math.round(b / (double) n));
+    }
+
+    /**
+     * The commonest colour, once colours a little apart are taken as one, averaged over the pixels that have it;
+     * when one exact colour makes up most of them (paper drawn as a flat fill), that colour.
+     */
+    private static Color commonestPaper(List<Integer> pixels) {
         Map<Integer, long[]> buckets = new HashMap<>();
         Map<Integer, Integer> exact = new HashMap<>();
         int bestBucket = -1;

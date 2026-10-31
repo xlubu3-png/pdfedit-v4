@@ -928,13 +928,30 @@ public class TextEditService {
      * Paints over the scanned letters a box rewrites: with its patch (the paper's colour on the letters only, so
      * the table rules around them stay), or for a box without one with a plain fill in the paper's colour.
      */
+    /**
+     * The patch with its see-through pixels in the paper's colour (patches made before 0.095 have them black): a
+     * viewer that smooths the picture blends colours before transparency, and see-through black shows as a grey
+     * rim round the painted letters.
+     */
+    private static BufferedImage paperUnder(BufferedImage patch, AddedText.Cover cover) {
+        int paper = RunEdit.colour(cover.color(), Color.WHITE).getRGB() & 0xFFFFFF;
+        BufferedImage out = new BufferedImage(patch.getWidth(), patch.getHeight(), BufferedImage.TYPE_INT_ARGB);
+        for (int y = 0; y < patch.getHeight(); y++) {
+            for (int x = 0; x < patch.getWidth(); x++) {
+                int argb = patch.getRGB(x, y);
+                out.setRGB(x, y, (argb >>> 24) == 0 ? paper : argb);
+            }
+        }
+        return out;
+    }
+
     private static void drawCover(PDPageContentStream cs, PDDocument outDoc, AddedText.Cover cover) throws IOException {
         if (cover.patch() != null) {
             try {
                 BufferedImage patch = ImageIO.read(new ByteArrayInputStream(Base64.getDecoder().decode(cover.patch())));
                 if (patch != null) {
-                    cs.drawImage(LosslessFactory.createFromImage(outDoc, patch), cover.x(), cover.y(), cover.width(),
-                            cover.height());
+                    cs.drawImage(LosslessFactory.createFromImage(outDoc, paperUnder(patch, cover)), cover.x(), cover.y(),
+                            cover.width(), cover.height());
                     return;
                 }
             } catch (IOException | IllegalArgumentException unreadable) {

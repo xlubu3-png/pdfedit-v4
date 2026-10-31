@@ -15,7 +15,7 @@ const page: PageItem = {
   textRevision: 0,
 }
 
-function renderCard(busy: boolean, onEditText = vi.fn()) {
+function renderCard(busy: boolean, onEditText = vi.fn(), onDuplicate = vi.fn()) {
   const noop = () => {}
   const view = render(
     <PageThumbnail
@@ -32,10 +32,11 @@ function renderCard(busy: boolean, onEditText = vi.fn()) {
       onToggleSelect={noop}
       onInsertBlankAfter={noop}
       onExtract={noop}
+      onDuplicate={onDuplicate}
       onEditText={onEditText}
     />,
   )
-  return { view, onEditText }
+  return { view, onEditText, onDuplicate }
 }
 
 describe('PageThumbnail', () => {
@@ -45,6 +46,14 @@ describe('PageThumbnail', () => {
     fireEvent.doubleClick(view.container.querySelector('img')!)
 
     expect(onEditText).toHaveBeenCalledWith('doc-1-0')
+  })
+
+  it('duplicates the page from its card', () => {
+    const { view, onDuplicate } = renderCard(false)
+
+    fireEvent.click(view.container.querySelector('button[title^="페이지 복제"]')!)
+
+    expect(onDuplicate).toHaveBeenCalledWith('doc-1-0')
   })
 
   it('does nothing while the app is busy', () => {

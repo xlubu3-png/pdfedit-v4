@@ -323,14 +323,19 @@ interface ZoomControlProps {
   onZoomIn: () => void
   onZoomOut: () => void
   onZoomFit: () => void
+  /** Show the whole page, its height too. */
+  onZoomPage: () => void
 }
 
 /** The zoom at the right end of the status bar. */
-export function ZoomControl({ zoom, onZoomIn, onZoomOut, onZoomFit }: ZoomControlProps) {
+export function ZoomControl({ zoom, onZoomIn, onZoomOut, onZoomFit, onZoomPage }: ZoomControlProps) {
   return (
     <span className="te-zoom" role="group" aria-label="화면 크기">
       <button type="button" onClick={onZoomFit} title="폭에 맞춤 (Ctrl+0)">
         폭 맞춤
+      </button>
+      <button type="button" onClick={onZoomPage} title="쪽 전체가 보이게 맞춤 (Ctrl+9)">
+        쪽 맞춤
       </button>
       <button type="button" onClick={onZoomOut} title="축소 (Ctrl+−)" aria-label="축소">
         −

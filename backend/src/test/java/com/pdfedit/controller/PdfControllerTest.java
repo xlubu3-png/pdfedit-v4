@@ -104,6 +104,83 @@ class PdfControllerTest {
         assertThat(controller.upload(pdf(plain), "ignored").unlocked()).isFalse();
     }
 
+    private static byte[] restrictedPdf() throws IOException {
+        try (PDDocument document = new PDDocument(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            document.addPage(new PDPage());
+            AccessPermission permissions = new AccessPermission();
+            permissions.setCanPrint(false);
+            permissions.setCanExtractContent(false);
+            StandardProtectionPolicy policy = new StandardProtectionPolicy("owner", "user", permissions);
+            policy.setEncryptionKeyLength(256);
+            document.protect(policy);
+            document.save(out);
+            return out.toByteArray();
+        }
+    }
+
+    @Test
+    void theUploadReportsWhatTheOriginalAllowedButNotItsPassword() throws IOException {
+        UploadResponse response = controller.upload(pdf(restrictedPdf()), "user");
+
+        assertThat(response.permissions()).isNotNull();
+        AccessPermission allowed = new AccessPermission(response.permissions());
+        assertThat(allowed.canPrint()).isFalse();
+        assertThat(allowed.canExtractContent()).isFalse();
+        assertThat(allowed.canModify()).isTrue();
+    }
+
+    @Test
+    void anOrdinaryPdfHasNoPermissionsToKeep() throws IOException {
+        UploadResponse blank = controller.createBlankDocument(200, 200);
+
+        assertThat(blank.permissions()).isNull();
+    }
+
+    @Test
+    void anExportWithAPasswordIsLockedAgainWithTheOriginalsPermissions() throws IOException {
+        UploadResponse upload = controller.upload(pdf(restrictedPdf()), "user");
+
+        byte[] exported = controller.export(new ExportRequest(List.of(new PageSpec(upload.documentId(), 0, 0)),
+                "a.pdf", false, "새암호", upload.permissions())).getBody();
+
+        assertThatThrownBy(() -> Loader.loadPDF(exported).close())
+                .isInstanceOf(org.apache.pdfbox.pdmodel.encryption.InvalidPasswordException.class);
+        try (PDDocument locked = Loader.loadPDF(exported, "새암호")) {
+            assertThat(locked.isEncrypted()).isTrue();
+            assertThat(locked.getEncryption().getLength()).isEqualTo(256);
+            assertThat(locked.getCurrentAccessPermission().isOwnerPermission())
+                    .as("the password opens it, it does not lift the restrictions").isFalse();
+            AccessPermission allowed = locked.getCurrentAccessPermission();
+            assertThat(allowed.canPrint()).isFalse();
+            assertThat(allowed.canExtractContent()).isFalse();
+        }
+    }
+
+    @Test
+    void aFlattenedExportCanBeLockedToo() throws IOException {
+        UploadResponse blank = controller.createBlankDocument(200, 200);
+
+        byte[] exported = controller.export(new ExportRequest(List.of(new PageSpec(blank.documentId(), 0, 0)),
+                "a.pdf", true, "pw", null)).getBody();
+
+        try (PDDocument locked = Loader.loadPDF(exported, "pw")) {
+            assertThat(locked.isEncrypted()).isTrue();
+            assertThat(locked.getCurrentAccessPermission().canPrint()).as("nothing to keep: all allowed").isTrue();
+        }
+    }
+
+    @Test
+    void anExportWithoutAPasswordStaysOpen() throws IOException {
+        UploadResponse upload = controller.upload(pdf(restrictedPdf()), "user");
+
+        byte[] exported = controller.export(new ExportRequest(List.of(new PageSpec(upload.documentId(), 0, 0)),
+                "a.pdf", false, "  ", upload.permissions())).getBody();
+
+        try (PDDocument open = Loader.loadPDF(exported)) {
+            assertThat(open.isEncrypted()).isFalse();
+        }
+    }
+
     @Test
     void exportingNoPagesIsRefused() {
         assertThatThrownBy(() -> controller.export(new ExportRequest(null, "a.pdf")))

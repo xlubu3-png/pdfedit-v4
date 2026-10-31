@@ -21,6 +21,16 @@ describe('session', () => {
     ])
   })
 
+  it('remembers what a protected original allowed, so the export can be locked again after a reload', () => {
+    const locked = { ...page('a'), lockedPermissions: -44 }
+
+    expect(parseSession(serializeSession([locked, page('b')]))).toEqual([
+      { ...locked, textRevision: 0 },
+      { ...page('b'), textRevision: 0 },
+    ])
+    expect(parseSession(JSON.stringify([{ ...locked, lockedPermissions: 'x' }]))[0].lockedPermissions).toBeUndefined()
+  })
+
   it('treats missing, broken or foreign data as an empty session', () => {
     expect(parseSession(null)).toEqual([])
     expect(parseSession('')).toEqual([])

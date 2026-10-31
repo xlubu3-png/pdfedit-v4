@@ -23,7 +23,7 @@ import type { SnapTargets } from '../snap'
 import { clearField, formatRange, lookAt, remapSpans, toggleFor } from '../spans'
 import type { LookPatch } from '../spans'
 import type { AddedImage, AddedText, AppInfo, FontChoice, PageItem, PageText, RunState, TextRun } from '../types'
-import { fitZoom, previewDpi, PX_PER_PT_AT_100, zoomStep } from '../zoom'
+import { fitPageZoom, fitZoom, previewDpi, PX_PER_PT_AT_100, zoomStep } from '../zoom'
 import { HelpDialog } from './HelpDialog'
 import { MissingFontDialog } from './MissingFontDialog'
 import { StyleBar, StyleInfo, ZoomControl } from './StyleBar'
@@ -45,6 +45,7 @@ import {
   ImagePlus,
   MoveHorizontal,
   Printer,
+  Scan,
   Redo2,
   RefreshCw,
   RotateCcw,
@@ -228,9 +229,10 @@ export function TextEditor({
     setRibbonOpen(true)
   }
   const [guides, setGuides] = useState<Guides | null>(null)
-  /** 'fit' follows the window width; a number is a fixed zoom (1 = 100%). */
-  const [zoomMode, setZoomMode] = useState<'fit' | number>('fit')
+  /** 'fit' follows the window width, 'page' shows the whole page; a number is a fixed zoom (1 = 100%). */
+  const [zoomMode, setZoomMode] = useState<'fit' | 'page' | number>('fit')
   const [containerWidth, setContainerWidth] = useState(1000)
+  const [containerHeight, setContainerHeight] = useState(800)
   const mainRef = useRef<HTMLElement>(null)
   const layerRef = useRef<HTMLDivElement>(null)
   const dataRef = useRef<PageText | null>(null)
@@ -292,7 +294,10 @@ export function TextEditor({
   useEffect(() => {
     const el = mainRef.current
     if (!el) return
-    const update = () => setContainerWidth(el.clientWidth)
+    const update = () => {
+      setContainerWidth(el.clientWidth)
+      setContainerHeight(el.clientHeight)
+    }
     update()
     const observer = new ResizeObserver(update)
     observer.observe(el)
@@ -1034,7 +1039,14 @@ export function TextEditor({
   }, [])
 
   const fit = data ? fitZoom(containerWidth, data.pageWidth) : 1
-  const zoom = zoomMode === 'fit' ? fit : zoomMode
+  const zoom =
+    zoomMode === 'fit'
+      ? fit
+      : zoomMode === 'page'
+        ? data
+          ? fitPageZoom(containerWidth, containerHeight, data.pageWidth, data.pageHeight)
+          : 1
+        : zoomMode
   const missingFonts = useMemo(() => missingFontNames(data?.runs ?? []), [data])
   // Of the fonts the page lacks, those the PC does have - but as .otf files, which the app cannot read.
   const otfOnly = useMemo(
@@ -1287,6 +1299,11 @@ export function TextEditor({
       if (ctrl && (e.key === '0' || code === 'Numpad0')) {
         e.preventDefault()
         setZoomMode('fit')
+        return
+      }
+      if (ctrl && (e.key === '9' || code === 'Numpad9')) {
+        e.preventDefault()
+        setZoomMode('page')
         return
       }
       if (e.key === 'Escape') {
@@ -1613,6 +1630,13 @@ export function TextEditor({
                 onClick={() => setZoomMode('fit')}
                 pressed={zoomMode === 'fit'}
               />
+              <RibbonButton
+                icon={<Scan />}
+                label="쪽 맞춤"
+                title="쪽 전체가 창 안에 보이게 맞춥니다 (Ctrl+9)"
+                onClick={() => setZoomMode('page')}
+                pressed={zoomMode === 'page'}
+              />
             </RibbonGroup>
             <RibbonGroup label="쪽 이동">
               <RibbonButton icon={<ChevronLeft />} label="이전 쪽" title="이전 쪽으로 (Ctrl+←)" onClick={() => void navigate(-1)} disabled={position <= 0} />
@@ -1886,7 +1910,7 @@ export function TextEditor({
         ) : (
           <span className="te-style-info" />
         )}
-        <ZoomControl zoom={zoom} onZoomIn={() => changeZoom(1)} onZoomOut={() => changeZoom(-1)} onZoomFit={() => setZoomMode('fit')} />
+        <ZoomControl zoom={zoom} onZoomIn={() => changeZoom(1)} onZoomOut={() => changeZoom(-1)} onZoomFit={() => setZoomMode('fit')} onZoomPage={() => setZoomMode('page')} />
       </footer>
       {helpOpen && <HelpDialog onClose={() => setHelpOpen(false)} />}
       {fontHelpOpen && (

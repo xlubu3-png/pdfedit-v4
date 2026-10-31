@@ -12,6 +12,7 @@ interface PageGridProps {
   onToggleSelect: (key: string) => void
   onInsertBlankAfter: (key: string) => void
   onExtract: (key: string) => void
+  onDuplicate: (key: string) => void
   onEditText: (key: string) => void
 }
 
@@ -25,6 +26,7 @@ export function PageGrid({
   onToggleSelect,
   onInsertBlankAfter,
   onExtract,
+  onDuplicate,
   onEditText,
 }: PageGridProps) {
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null)
@@ -62,6 +64,7 @@ export function PageGrid({
           onToggleSelect={onToggleSelect}
           onInsertBlankAfter={onInsertBlankAfter}
           onExtract={onExtract}
+          onDuplicate={onDuplicate}
           onEditText={onEditText}
         />
       ))}

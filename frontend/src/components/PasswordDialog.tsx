@@ -46,7 +46,7 @@ export function PasswordDialog({ fileName, wrong, onSubmit, onCancel }: Password
           onChange={(e) => setPassword(e.target.value)}
         />
         <p className="password-note">
-          암호를 풀어서 편집합니다. 내보낸 PDF에는 암호가 걸려 있지 않습니다.
+          암호를 풀어서 편집합니다. 암호는 저장하지 않으며, 내보낼 때 암호를 다시 걸 수 있습니다.
         </p>
         <div className="find-actions">
           <button type="button" onClick={onCancel}>

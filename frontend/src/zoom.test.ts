@@ -1,5 +1,22 @@
 import { describe, expect, it } from 'vitest'
-import { clampZoom, fitZoom, MAX_ZOOM, MIN_ZOOM, previewDpi, PX_PER_PT_AT_100, zoomStep } from './zoom'
+import { clampZoom, fitPageZoom, fitZoom, MAX_ZOOM, MIN_ZOOM, previewDpi, PX_PER_PT_AT_100, zoomStep } from './zoom'
+
+describe('fitPageZoom', () => {
+  it('shows a whole A4 page (595 x 842pt) in a wide, low window: the height decides', () => {
+    // 700px high, 48px breathing room: 652 / (842 * 4/3) = 0.58
+    expect(fitPageZoom(1400, 700, 595, 842)).toBeCloseTo(0.58, 2)
+    expect(fitPageZoom(1400, 700, 595, 842)).toBeLessThan(fitZoom(1400, 595))
+  })
+
+  it('in a narrow, tall window the width decides, as with fitting the width', () => {
+    expect(fitPageZoom(500, 2000, 595, 842)).toBe(fitZoom(500, 595))
+  })
+
+  it('stays in the allowed range and copes with a page of no size', () => {
+    expect(fitPageZoom(10, 10, 5000, 5000)).toBe(MIN_ZOOM)
+    expect(fitPageZoom(1000, 800, 0, 0)).toBe(1)
+  })
+})
 
 describe('zoom', () => {
   it('fits an A4 page (595pt) to a window', () => {

@@ -1,7 +1,15 @@
 import type { DragEvent } from 'react'
 import { thumbnailUrl } from '../api'
 import type { PageItem } from '../types'
-import { DeleteIcon, EditTextIcon, ExtractIcon, InsertPageIcon, RotateLeftIcon, RotateRightIcon } from './icons'
+import {
+  DeleteIcon,
+  DuplicateIcon,
+  EditTextIcon,
+  ExtractIcon,
+  InsertPageIcon,
+  RotateLeftIcon,
+  RotateRightIcon,
+} from './icons'
 
 interface PageThumbnailProps {
   page: PageItem
@@ -17,6 +25,7 @@ interface PageThumbnailProps {
   onToggleSelect: (key: string) => void
   onInsertBlankAfter: (key: string) => void
   onExtract: (key: string) => void
+  onDuplicate: (key: string) => void
   onEditText: (key: string) => void
 }
 
@@ -34,6 +43,7 @@ export function PageThumbnail({
   onToggleSelect,
   onInsertBlankAfter,
   onExtract,
+  onDuplicate,
   onEditText,
 }: PageThumbnailProps) {
   return (
@@ -79,6 +89,9 @@ export function PageThumbnail({
         </button>
         <button type="button" title="이 페이지만 추출" disabled={busy} onClick={() => onExtract(page.key)}>
           <ExtractIcon />
+        </button>
+        <button type="button" title="페이지 복제 (Ctrl+D): 고친 내용째로 바로 뒤에 복사" disabled={busy} onClick={() => onDuplicate(page.key)}>
+          <DuplicateIcon />
         </button>
         <button type="button" title="뒤에 빈 페이지 삽입" disabled={busy} onClick={() => onInsertBlankAfter(page.key)}>
           <InsertPageIcon />

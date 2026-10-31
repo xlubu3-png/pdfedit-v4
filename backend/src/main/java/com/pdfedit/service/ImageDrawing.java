@@ -4,12 +4,15 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.Iterator;
 import java.util.List;
 
 import javax.imageio.IIOImage;
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
 import javax.imageio.ImageWriteParam;
 import javax.imageio.ImageWriter;
+import javax.imageio.stream.ImageInputStream;
 import javax.imageio.stream.ImageOutputStream;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -22,6 +25,7 @@ import com.pdfedit.text.AddedImage;
 public final class ImageDrawing {
 
     private static final long MAX_PIXELS = 40_000_000L;
+    private static final String TOO_BIG = "그림이 너무 큽니다. 크기를 줄여서 올려 주세요.";
     private static final float MAX_OFFSET = 10_000f;
     private static final float MIN_SIDE = 1f;
     private static final float MAX_SIDE = 10_000f;
@@ -51,12 +55,17 @@ public final class ImageDrawing {
             throw new InvalidEditException(
                     "그림 파일은 " + PdfDocumentStore.MAX_IMAGE_BYTES / (1024 * 1024) + "MB까지 올릴 수 있습니다.");
         }
+        // A small file can say it holds a picture of billions of pixels: the size is taken from its
+        // header and refused there, since decoding it is what would fill the memory.
+        if (headerPixels(data) > MAX_PIXELS) {
+            throw new InvalidEditException(TOO_BIG);
+        }
         BufferedImage image = ImageIO.read(new ByteArrayInputStream(data));
         if (image == null) {
             throw new InvalidEditException("그림으로 읽을 수 없는 파일입니다. PNG, JPG, GIF, BMP 파일을 올려 주세요.");
         }
         if ((long) image.getWidth() * image.getHeight() > MAX_PIXELS) {
-            throw new InvalidEditException("그림이 너무 큽니다. 크기를 줄여서 올려 주세요.");
+            throw new InvalidEditException(TOO_BIG);
         }
         if (isPng(data)) {
             return new Upload(data, image.getWidth(), image.getHeight(), "image/png");
@@ -74,6 +83,25 @@ public final class ImageDrawing {
         ByteArrayOutputStream png = new ByteArrayOutputStream();
         ImageIO.write(image, "png", png);
         return new Upload(png.toByteArray(), image.getWidth(), image.getHeight(), "image/png");
+    }
+
+    /** The pixels the first picture in the file says it has, without decoding it; 0 when no reader knows the file. */
+    private static long headerPixels(byte[] data) throws IOException {
+        try (ImageInputStream stream = ImageIO.createImageInputStream(new ByteArrayInputStream(data))) {
+            Iterator<ImageReader> readers = stream == null ? null : ImageIO.getImageReaders(stream);
+            if (readers == null || !readers.hasNext()) {
+                return 0;
+            }
+            ImageReader reader = readers.next();
+            try {
+                reader.setInput(stream, true, true);
+                return (long) reader.getWidth(0) * reader.getHeight(0);
+            } catch (IOException | RuntimeException unreadable) {
+                return 0; // left to the full read, which says the file is not a picture
+            } finally {
+                reader.dispose();
+            }
+        }
     }
 
     /**

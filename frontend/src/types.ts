@@ -105,8 +105,10 @@ export interface UploadResponse {
   documentId: string
   fileName: string
   pageCount: number
-  /** It was encrypted; the stored copy, and so the export, has no password. */
+  /** It was encrypted; the stored copy, and so the export, has no password unless one is set on export. */
   unlocked?: boolean
+  /** What the encrypted original allowed (its PDF permission bits); null when it was not encrypted. */
+  permissions?: number | null
 }
 
 export interface PageItem {
@@ -117,6 +119,8 @@ export interface PageItem {
   rotation: 0 | 90 | 180 | 270
   /** Bumped whenever the page's text edits change, so its thumbnail is re-fetched. */
   textRevision: number
+  /** Set for a page of a document that was opened with its password: what the original allowed. */
+  lockedPermissions?: number
 }
 
 /** A line of text on a page; coordinates are PDF user space (origin bottom-left, y-up). */

@@ -18,6 +18,19 @@ export function fitZoom(containerWidthPx: number, pageWidthPt: number, padding =
   return clampZoom(Math.round(zoom * 100) / 100)
 }
 
+/** The zoom at which the whole page, its height too, fits in the container: "쪽 맞춤". */
+export function fitPageZoom(
+  containerWidthPx: number,
+  containerHeightPx: number,
+  pageWidthPt: number,
+  pageHeightPt: number,
+  padding = 48,
+): number {
+  if (pageWidthPt <= 0 || pageHeightPt <= 0) return 1
+  const byHeight = clampZoom(Math.floor(((containerHeightPx - padding) / (pageHeightPt * PX_PER_PT_AT_100)) * 100) / 100)
+  return Math.min(fitZoom(containerWidthPx, pageWidthPt, padding), byHeight)
+}
+
 /** The next zoom step in or out of `zoom`. */
 export function zoomStep(zoom: number, direction: 1 | -1): number {
   if (direction > 0) return STEPS.find((s) => s > zoom + 0.001) ?? MAX_ZOOM

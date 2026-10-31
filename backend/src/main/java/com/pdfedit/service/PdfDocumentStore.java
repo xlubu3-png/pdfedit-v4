@@ -292,6 +292,45 @@ public class PdfDocumentStore {
                 entry.addedByPage.getOrDefault(pageIndex, List.of()), images);
     }
 
+    /**
+     * Gives a page of another document everything done to this one: text edits, added text boxes and
+     * pictures (each picture stored again, so either page can drop it on its own) and redaction areas.
+     */
+    public void copyPageEdits(String fromDocument, int fromPage, String toDocument, int toPage) {
+        Entry from = require(fromDocument);
+        Entry to = require(toDocument);
+        Map<Integer, RunEdit> runs = from.editsByPage.get(fromPage);
+        if (runs != null && !runs.isEmpty()) {
+            to.editsByPage.put(toPage, new ConcurrentHashMap<>(runs));
+        }
+        List<AddedText> added = from.addedByPage.get(fromPage);
+        if (added != null) {
+            to.addedByPage.put(toPage, added);
+        }
+        List<AddedImage> boxes = from.imagesByPage.get(fromPage);
+        if (boxes != null) {
+            Map<String, String> copied = new HashMap<>();
+            List<AddedImage> moved = new java.util.ArrayList<>();
+            for (AddedImage box : boxes) {
+                byte[] data = imageBytes(fromDocument, box.imageId());
+                if (data == null) {
+                    continue;
+                }
+                String imageId = copied.computeIfAbsent(box.imageId(), old -> storeImage(toDocument, data));
+                moved.add(new AddedImage(box.id(), imageId, box.x(), box.y(), box.width(), box.height(),
+                        box.keyOutWhite()));
+            }
+            if (!moved.isEmpty()) {
+                to.imagesByPage.put(toPage, List.copyOf(moved));
+            }
+        }
+        List<Redaction> areas = from.redactionsByPage.get(fromPage);
+        if (areas != null) {
+            to.redactionsByPage.put(toPage, areas);
+        }
+        persist(toDocument);
+    }
+
     public void clearPageEdits(String documentId, int pageIndex) {
         Entry entry = require(documentId);
         entry.editsByPage.remove(pageIndex);

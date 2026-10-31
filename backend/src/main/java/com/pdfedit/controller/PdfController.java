@@ -31,6 +31,7 @@ import com.pdfedit.service.InvalidEditException;
 import com.pdfedit.service.PageEdits;
 import com.pdfedit.service.PageRotationBaker;
 import com.pdfedit.service.PasswordRequiredException;
+import com.pdfedit.service.PdfProtector;
 import com.pdfedit.service.PdfUnlocker;
 import com.pdfedit.service.PdfDocumentStore;
 import com.pdfedit.service.PdfExportService;
@@ -69,10 +70,12 @@ public class PdfController {
         byte[] content;
         int pageCount;
         boolean unlocked;
+        Integer permissions;
         try {
             // An encrypted file is kept as a plain copy, so nothing after this line needs the password.
             PdfUnlocker.Unlocked plain = PdfUnlocker.unlock(file.getBytes(), password);
             unlocked = plain.wasEncrypted();
+            permissions = plain.permissions();
             // Pages that carry a /Rotate are turned into unrotated ones once, here, so editing never has to care.
             content = PageRotationBaker.bake(plain.content());
             try (PDDocument document = Loader.loadPDF(content)) {
@@ -89,7 +92,7 @@ public class PdfController {
             throw new InvalidEditException("페이지가 없는 PDF입니다.");
         }
         String documentId = store.store(file.getOriginalFilename(), content, pageCount);
-        return new UploadResponse(documentId, file.getOriginalFilename(), pageCount, unlocked);
+        return new UploadResponse(documentId, file.getOriginalFilename(), pageCount, unlocked, permissions);
     }
 
     /** What the browser needs to pick a document up again after a reload: its name and page count. */
@@ -119,6 +122,30 @@ public class PdfController {
         }
         String documentId = store.store("빈 페이지", content, 1);
         return new UploadResponse(documentId, "빈 페이지", 1);
+    }
+
+    /**
+     * A copy of one page as a document of its own, with everything done to the page so far; edited after
+     * this, the copy and the original go their own ways.
+     */
+    @PostMapping("/documents/{documentId}/pages/{pageIndex}/duplicate")
+    public UploadResponse duplicatePage(@PathVariable String documentId, @PathVariable int pageIndex)
+            throws IOException {
+        PdfDocumentStore.DocumentInfo info = store.getInfo(documentId);
+        if (pageIndex < 0 || pageIndex >= info.pageCount()) {
+            throw new InvalidEditException("없는 페이지는 복제할 수 없습니다.");
+        }
+        byte[] content;
+        try (PDDocument source = Loader.loadPDF(store.getContent(documentId));
+                PDDocument copy = new PDDocument();
+                ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            copy.importPage(source.getPage(pageIndex));
+            copy.save(out);
+            content = out.toByteArray();
+        }
+        String copyId = store.store(info.fileName(), content, 1);
+        store.copyPageEdits(documentId, pageIndex, copyId, 0);
+        return new UploadResponse(copyId, info.fileName(), 1);
     }
 
     @GetMapping(value = "/documents/{documentId}/pages/{pageIndex}/thumbnail", produces = MediaType.IMAGE_PNG_VALUE)
@@ -155,6 +182,8 @@ public class PdfController {
         // Quotes, backslashes and control characters would break out of the header's quoted file name.
         String requested = request.fileName() == null ? "" : request.fileName().replaceAll("[\\p{Cntrl}\"\\\\]", "_").trim();
         String fileName = requested.isEmpty() ? "edited.pdf" : requested;
+        byte[] pdf = request.password() == null || request.password().isBlank() ? result.pdf()
+                : PdfProtector.lock(result.pdf(), request.password(), request.permissions());
 
         PdfExportService.RedactionReport redaction = result.redaction();
         return ResponseEntity.ok()
@@ -164,6 +193,6 @@ public class PdfController {
                         + ";pictures=" + redaction.picturePages().stream().map(String::valueOf)
                                 .collect(Collectors.joining(",")))
                 .contentType(MediaType.APPLICATION_PDF)
-                .body(result.pdf());
+                .body(pdf);
     }
 }

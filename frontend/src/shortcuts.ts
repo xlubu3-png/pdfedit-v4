@@ -61,6 +61,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: ['Ctrl', '+'], label: '확대' },
       { keys: ['Ctrl', '-'], label: '축소' },
       { keys: ['Ctrl', '0'], label: '폭에 맞춤' },
+      { keys: ['Ctrl', '9'], label: '쪽 맞춤 (쪽 전체가 보이게)' },
       { keys: ['Ctrl', '←'], label: '이전 페이지' },
       { keys: ['Ctrl', '→'], label: '다음 페이지' },
     ],

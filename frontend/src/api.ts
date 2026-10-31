@@ -150,6 +150,15 @@ export async function createBlankDocument(): Promise<UploadResponse> {
   return response.json()
 }
 
+/** A copy of the page, with everything done to it, as a one-page document of its own. */
+export async function duplicatePage(documentId: string, pageIndex: number): Promise<UploadResponse> {
+  const response = await fetch(`${BASE}/documents/${documentId}/pages/${pageIndex}/duplicate`, { method: 'POST' })
+  if (!response.ok) {
+    throw await failure(response, '페이지를 복제하지 못했습니다')
+  }
+  return response.json()
+}
+
 export async function fetchPageText(documentId: string, pageIndex: number): Promise<PageText> {
   const response = await fetch(`${BASE}/documents/${documentId}/pages/${pageIndex}/text-runs`)
   if (!response.ok) {
@@ -354,11 +363,15 @@ export async function findPersonalInfo(
   return response.json()
 }
 
-/** The exported file, and what its redaction did (null from a server without the report). */
+/**
+ * The exported file, and what its redaction did (null from a server without the report). With a lock, the
+ * file is encrypted with that password and allows what `permissions` allows (everything when undefined).
+ */
 export async function exportPdf(
   pages: PageItem[],
   fileName: string,
   flatten = false,
+  lock?: { password: string; permissions?: number },
 ): Promise<{ blob: Blob; redaction: RedactionReport | null }> {
   const response = await fetch(`${BASE}/export`, {
     method: 'POST',
@@ -371,6 +384,7 @@ export async function exportPdf(
       })),
       fileName,
       flatten,
+      ...(lock ? { password: lock.password, permissions: lock.permissions ?? null } : {}),
     }),
   })
   if (!response.ok) {

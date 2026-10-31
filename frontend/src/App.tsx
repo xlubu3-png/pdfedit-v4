@@ -4,6 +4,7 @@ import {
   ApiError,
   createBlankDocument,
   deleteDocument,
+  duplicatePage,
   exportPdf,
   fetchAppInfo,
   fetchDocumentInfo,
@@ -18,6 +19,7 @@ import { familyList, reloadMessage } from './fontHelp'
 import { printPdf } from './print'
 import { redactionMessage } from './redaction'
 import { exportFileName } from './exportName'
+import { keptPermissions } from './lock'
 import { keyCode } from './keys'
 import { dragHasFiles, pickPdfs } from './pdfFiles'
 import { clearSession, loadSession, saveSession } from './session'
@@ -25,6 +27,7 @@ import { readSkippedVersion, shouldAnnounce, skipVersion } from './updateNotice'
 import { CompareView } from './components/CompareView'
 import { FindReplaceDialog } from './components/FindReplaceDialog'
 import { HwpEditor } from './components/HwpEditor'
+import { LockDialog } from './components/LockDialog'
 import { PasswordDialog } from './components/PasswordDialog'
 import { RetentionDialog } from './components/RetentionDialog'
 import { RedactDialog } from './components/RedactDialog'
@@ -35,10 +38,12 @@ import { TextEditor } from './components/TextEditor'
 import { UploadZone } from './components/UploadZone'
 import { RibbonButton, RibbonGroup, RibbonPanel } from './components/Ribbon'
 import {
+  CopyPlus,
   Eraser,
   EyeOff,
   FileDown,
   FileImage,
+  FileLock,
   FileOutput,
   FilePlus,
   FolderOpen,
@@ -64,6 +69,16 @@ interface PasswordAsk {
   wrong: boolean
   resolve: (password: string | null) => void
 }
+
+/** An open question whether to lock an export: the export waits on `resolve`. */
+interface LockAsk {
+  fromProtected: boolean
+  /** The password to lock with, 'plain' for none, null to export nothing. */
+  resolve: (choice: { password: string } | 'plain' | null) => void
+}
+
+/** How an export is locked: with this password, allowing these permissions (all when undefined). */
+type ExportLock = { password: string; permissions?: number }
 
 function downloadBlob(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob)
@@ -91,6 +106,7 @@ function App() {
   const [retentionOpen, setRetentionOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [passwordAsk, setPasswordAsk] = useState<PasswordAsk | null>(null)
+  const [lockAsk, setLockAsk] = useState<LockAsk | null>(null)
   /** A note about the last upload or export (a file opened with its password, what a redaction did). */
   const [notice, setNotice] = useState<string | null>(null)
   const [redactOpen, setRedactOpen] = useState(false)
@@ -204,6 +220,8 @@ function App() {
           pageIndex: i,
           rotation: 0,
           textRevision: 0,
+          // -4: every permission bit, for a server that does not report them.
+          ...(uploaded.unlocked ? { lockedPermissions: uploaded.permissions ?? -4 } : {}),
         }))
         setPages((prev) => [...prev, ...newPages])
       } catch (e) {
@@ -212,7 +230,7 @@ function App() {
     }
     setError(problems.length > 0 ? problems.join('\n') : null)
     if (unlocked.length > 0) {
-      setNotice(`암호를 풀어서 열었습니다: ${unlocked.join(', ')}. 내보낸 PDF에는 암호가 걸려 있지 않습니다.`)
+      setNotice(`암호를 풀어서 열었습니다: ${unlocked.join(', ')}. 내보낼 때 암호를 다시 걸 수 있습니다.`)
     }
     setBusy(false)
   }
@@ -320,19 +338,70 @@ function App() {
     setPages((prev) => prev.map((p) => (selectedKeys.has(p.key) ? rotate(p, delta) : p)))
   }
 
+  /** Copies the pages, edits and all, each right after its original; afterwards each is edited on its own. */
+  async function handleDuplicate(keys: string[]) {
+    const targets = pages.filter((p) => keys.includes(p.key))
+    if (targets.length === 0 || busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      const copies = new Map<string, PageItem>()
+      for (const p of targets) {
+        const copy = await duplicatePage(p.documentId, p.pageIndex)
+        copies.set(p.key, {
+          key: `${copy.documentId}-0`,
+          documentId: copy.documentId,
+          sourceFileName: p.sourceFileName,
+          pageIndex: 0,
+          rotation: p.rotation,
+          textRevision: 0,
+          ...(p.lockedPermissions === undefined ? {} : { lockedPermissions: p.lockedPermissions }),
+        })
+      }
+      setPages((prev) => prev.flatMap((p) => (copies.has(p.key) ? [p, copies.get(p.key)!] : [p])))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '페이지를 복제하지 못했습니다')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   function handleBulkDelete() {
     setPages((prev) => prev.filter((p) => !selectedKeys.has(p.key)))
     clearSelection()
   }
 
+  /**
+   * Whether an export of these pages is locked: asked when they come from a protected document, or always
+   * (the menu's "암호 걸어 내보내기"). Undefined for no password, null when the user gave up.
+   */
+  async function askLock(target: PageItem[], always = false): Promise<ExportLock | undefined | null> {
+    const permissions = keptPermissions(target)
+    if (!always && permissions === undefined) return undefined
+    const choice = await new Promise<{ password: string } | 'plain' | null>((resolve) =>
+      setLockAsk({ fromProtected: permissions !== undefined, resolve }),
+    )
+    setLockAsk(null)
+    if (choice === null) return null
+    if (choice === 'plain') return undefined
+    return { password: choice.password, permissions }
+  }
+
+  function exportedNotice(redaction: Parameters<typeof redactionMessage>[0], lock: ExportLock | undefined) {
+    const lines = [lock ? '암호를 걸어 내보냈습니다.' : null, redactionMessage(redaction)].filter(Boolean)
+    return lines.length > 0 ? lines.join(' ') : null
+  }
+
   async function handleExtract(targetPages: PageItem[], fileName: string) {
     if (targetPages.length === 0) return
+    const lock = await askLock(targetPages)
+    if (lock === null) return
     setBusy(true)
     setError(null)
     try {
-      const { blob, redaction } = await exportPdf(targetPages, fileName, flatten)
+      const { blob, redaction } = await exportPdf(targetPages, fileName, flatten, lock)
       downloadBlob(blob, fileName)
-      setNotice(redactionMessage(redaction))
+      setNotice(exportedNotice(redaction, lock))
     } catch (e) {
       setError(e instanceof Error ? e.message : '추출 중 오류가 발생했습니다')
     } finally {
@@ -371,15 +440,18 @@ function App() {
     }
   }
 
-  async function handleExport() {
-    if (pages.length === 0) return
+  /** @param locked from "암호 걸어 내보내기": ask for a password even when no page came protected */
+  async function handleExport(locked = false) {
+    if (pages.length === 0 || busy) return
+    const lock = await askLock(pages, locked)
+    if (lock === null) return
     setBusy(true)
     setError(null)
     try {
       const fileName = exportFileName(pages)
-      const { blob, redaction } = await exportPdf(pages, fileName, flatten)
+      const { blob, redaction } = await exportPdf(pages, fileName, flatten, lock)
       downloadBlob(blob, fileName)
-      setNotice(redactionMessage(redaction))
+      setNotice(exportedNotice(redaction, lock))
     } catch (e) {
       setError(e instanceof Error ? e.message : '내보내기 중 오류가 발생했습니다')
     } finally {
@@ -509,9 +581,13 @@ function App() {
   const shortcut = useRef<(e: KeyboardEvent) => void>(() => {})
   useEffect(() => {
     shortcut.current = (e) => {
-      if (e.isComposing || e.keyCode === 229 || pages.length === 0 || passwordAsk !== null) return
+      if (e.isComposing || e.keyCode === 229 || pages.length === 0 || passwordAsk !== null || lockAsk !== null) return
       const el = e.target instanceof HTMLElement ? e.target : null
-      const inField = el?.closest('input, select, textarea, [contenteditable="true"], [contenteditable="plaintext-only"]') != null
+      // A page's tick box is not somewhere to type: Ctrl+D or Delete right after ticking one acts on the selection.
+      const inField =
+        el?.closest(
+          'input:not([type=checkbox]), select, textarea, [contenteditable="true"], [contenteditable="plaintext-only"]',
+        ) != null
       const ctrl = e.ctrlKey || e.metaKey
       const code = keyCode(e)
       if (ctrl && (code === 'KeyF' || code === 'KeyH')) {
@@ -530,6 +606,10 @@ function App() {
       } else if (ctrl && code === 'KeyA') {
         e.preventDefault()
         setSelectedKeys(new Set(pages.map((p) => p.key)))
+      } else if (ctrl && code === 'KeyD' && selectedKeys.size > 0) {
+        // The browser would bookmark the page.
+        e.preventDefault()
+        void handleDuplicate([...selectedKeys])
       } else if (e.key === 'Delete' && selectedKeys.size > 0) {
         e.preventDefault()
         handleBulkDelete()
@@ -716,6 +796,13 @@ function App() {
                   disabled={busy || selectedKeys.size === 0}
                 />
                 <RibbonButton
+                  icon={<CopyPlus />}
+                  label="복제"
+                  title="선택한 페이지를 고친 내용째로 복사해 각각 바로 뒤에 넣습니다 (Ctrl+D)"
+                  onClick={() => void handleDuplicate([...selectedKeys])}
+                  disabled={busy || selectedKeys.size === 0}
+                />
+                <RibbonButton
                   icon={<FileOutput />}
                   label="추출"
                   title="선택한 페이지만 PDF로 내려받습니다"
@@ -767,6 +854,13 @@ function App() {
                   disabled={busy}
                 />
                 <RibbonButton
+                  icon={<FileLock />}
+                  label="암호 걸어 내보내기"
+                  title="열 때 암호를 묻는 PDF로 내려받습니다 (AES-256). 암호가 걸려 있던 문서는 원래의 인쇄·복사 제한도 다시 걸립니다."
+                  onClick={() => void handleExport(true)}
+                  disabled={busy}
+                />
+                <RibbonButton
                   icon={<FileDown />}
                   label="PDF로 내보내기"
                   title="목록의 모든 페이지를 순서대로 하나의 PDF로 내려받습니다 (Ctrl+S)"
@@ -787,6 +881,7 @@ function App() {
             onToggleSelect={handleToggleSelect}
             onInsertBlankAfter={handleInsertBlank}
             onExtract={handleExtractOne}
+            onDuplicate={(key) => void handleDuplicate([key])}
             onEditText={setEditingKey}
           />
         </>
@@ -801,7 +896,7 @@ function App() {
           onNavigate={handleNavigateEditor}
           onClose={handleCloseEditor}
           onEdited={handleTextEdited}
-          onExport={handleExport}
+          onExport={() => handleExport()}
           onPrint={() => handlePrint(pages)}
           flatten={flatten}
           onFlattenChange={setFlatten}
@@ -859,6 +954,15 @@ function App() {
           wrong={passwordAsk.wrong}
           onSubmit={(password) => passwordAsk.resolve(password)}
           onCancel={() => passwordAsk.resolve(null)}
+        />
+      )}
+
+      {lockAsk && (
+        <LockDialog
+          fromProtected={lockAsk.fromProtected}
+          onLock={(password) => lockAsk.resolve({ password })}
+          onPlain={() => lockAsk.resolve('plain')}
+          onCancel={() => lockAsk.resolve(null)}
         />
       )}
     </div>

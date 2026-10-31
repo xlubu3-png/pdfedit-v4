@@ -463,6 +463,18 @@ button.primary:disabled {
   outline: 2px solid var(--accent);
 }
 
+/*
+ * A rewritten scan line is meant to look like the page: no frame of its own once written, only a faint one
+ * under the pointer, and the usual one while selected.
+ */
+.te-item.rewritten:not(.selected):not(.dragging) .te-box.edited:not(:focus) {
+  outline-color: transparent;
+}
+
+.te-item.rewritten:not(.selected) .te-box.edited:not(:focus):hover {
+  outline: 1px dashed var(--accent-border);
+}
+
 /* The grip that moves a line: shown when the pointer is over the line, or the line is selected. */
 .te-handle {
   position: absolute;

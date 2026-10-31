@@ -72,7 +72,7 @@ public class OcrController {
         if (line < 0 || line >= lines.size()) {
             throw new InvalidEditException("인식한 글자 줄을 찾지 못했습니다. 글자 인식을 다시 해 주세요.");
         }
-        return lineBox.of(store.getContent(documentId), pageIndex, lines.get(line));
+        return lineBox.of(store.getContent(documentId), pageIndex, lines.get(line), lines);
     }
 
     /** Drops what was recognized: the page is exported as a plain picture again. */

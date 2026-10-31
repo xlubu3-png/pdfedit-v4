@@ -24,6 +24,7 @@ import org.springframework.stereotype.Component;
 import com.pdfedit.service.PageNotEditableException;
 import com.pdfedit.text.AddedText;
 import com.pdfedit.text.FontMatcher;
+import com.pdfedit.text.SystemFonts;
 
 /**
  * Turns a line recognized on a scan into a text box that can be edited: the recognized letters in the app's
@@ -56,6 +57,32 @@ public class RecognizedLineBox {
     private static final float MIDDLE_ABOVE_BASELINE = 0.36f;
     /** Summed difference of the colour channels from the paper from which a pixel is ink. */
     private static final int INK_DIFFERENCE = 150;
+    /** The same for the solid ink of a letter (not its soft edge), which fonts are compared against. */
+    private static final int SOLID_DIFFERENCE = 100;
+    /** Pages whose fonts were compared, remembered for their next rewrites. */
+    private static final int PAGES_REMEMBERED = 32;
+    /** At most this many of the page's other lines, read at least this surely and this long, judge its font. */
+    private static final int PAGE_SAMPLES = 8;
+    /** A line keeps a face of the other style only when it is this much more like it (0-1) than the page's font. */
+    private static final double OTHER_FONT = 0.15;
+    /** Faces fitting a page's lines within this of the best fit as well as it (a coarse scan tells them apart poorly). */
+    private static final double TIE = 0.03;
+    /**
+     * The scan's letters covering this many times what the font's plain letters cover are bold; and this many
+     * times, on a page found bold.
+     */
+    private static final double BOLD_ALONE = 1.35;
+    private static final double BOLD_WITH_PAGE = 1.15;
+    /** How much a font's fit drops per unit of the (natural) log of how much heavier or lighter it is than the scan. */
+    private static final double WEIGHT_MISFIT = 0.3;
+    /** Sizes this close (a share) to one of the page's lines' are that line's size. */
+    private static final double SAME_SIZE = 0.08;
+    /** Colours this close in lightness (0-255) to the page's text colour are that colour. */
+    private static final int SAME_COLOUR = 40;
+    private static final float SURE_LINE = 0.85f;
+    private static final int SAMPLE_LETTERS = 4;
+    /** A rewritten line's ink is lightened at most this far towards the paper (1 is the scan's own ink). */
+    private static final double LIGHTEST_TONE = 0.45;
     /** Colour channels are grouped by this much to find the paper's colour in a noisy (JPEG) scan. */
     private static final int BUCKET = 24;
 
@@ -65,53 +92,81 @@ public class RecognizedLineBox {
         this.fontMatcher = fontMatcher;
     }
 
+    /** The font each page was found set in, kept for the page's next rewrites. */
+    private final Map<String, PageFont> pageFonts = java.util.Collections.synchronizedMap(
+            new java.util.LinkedHashMap<>(16, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, PageFont> eldest) {
+                    return size() > PAGES_REMEMBERED;
+                }
+            });
+
+    /**
+     * The font a page's text is set in: its family, whether its letters are bold, the sizes its lines are set at
+     * (pixels of the scan, one per line looked at) and the colour its text is redrawn in. Null family when the
+     * page has no line to tell by.
+     */
+    record PageFont(String family, boolean bold, List<Double> sizes, Color colour) {
+    }
+
     /** The box for {@code line} of page {@code pageIndex}; its id is left for the browser to choose. */
     public AddedText of(byte[] pdf, int pageIndex, OcrText line) throws IOException {
+        return of(pdf, pageIndex, line, List.of());
+    }
+
+    /**
+     * The box for {@code line} of page {@code pageIndex}; its id is left for the browser to choose.
+     *
+     * @param pageLines the lines recognized on the page: the font is chosen to suit them as well, as a page is
+     *                  usually set in one font (so rows of one table are not each rewritten in another)
+     */
+    public AddedText of(byte[] pdf, int pageIndex, OcrText line, List<OcrText> pageLines) throws IOException {
         try (PDDocument doc = Loader.loadPDF(pdf)) {
             PDPage page = doc.getPage(pageIndex);
             if (page.getRotation() % 360 != 0) {
                 throw new PageNotEditableException("회전된 페이지의 글자는 고쳐 쓸 수 없습니다.");
             }
             PDRectangle crop = page.getCropBox();
-            int pageWidth = Math.max(1, (int) Math.floor(crop.getWidth() * SCALE));
-            int pageHeight = Math.max(1, (int) Math.floor(crop.getHeight() * SCALE));
-
-            // The line's pixels, and around them the few the patch may spread into (pixels of the whole page).
-            int x0 = clamp((int) Math.floor((line.x() - crop.getLowerLeftX()) * SCALE), 0, pageWidth - 1);
-            int y0 = clamp((int) Math.floor((crop.getUpperRightY() - (line.y() + line.height())) * SCALE), 0,
-                    pageHeight - 1);
-            Px core = new Px(x0, y0,
-                    clamp((int) Math.ceil((line.x() + line.width() - crop.getLowerLeftX()) * SCALE), x0 + 1, pageWidth),
-                    clamp((int) Math.ceil((crop.getUpperRightY() - line.y()) * SCALE), y0 + 1, pageHeight));
-            Px area = new Px(Math.max(0, core.x0() - SPREAD), Math.max(0, core.y0() - SPREAD),
-                    Math.min(pageWidth, core.x1() + SPREAD), Math.min(pageHeight, core.y1() + SPREAD));
-
-            // Only that part of the page is drawn: the whole page this sharp is hundreds of megabytes for a large
-            // drawing. In the picture of the part, the line starts SPREAD pixels in (less at the page's edge).
-            BufferedImage image = new BufferedImage(area.width(), area.height(), BufferedImage.TYPE_INT_RGB);
-            Graphics2D g = image.createGraphics();
-            try {
-                g.setColor(Color.WHITE);
-                g.fillRect(0, 0, area.width(), area.height());
-                g.translate(-area.x0(), -area.y0());
-                new PDFRenderer(doc).renderPageToGraphics(pageIndex, g, SCALE);
-            } finally {
-                g.dispose();
-            }
-            Px coreInImage = new Px(core.x0() - area.x0(), core.y0() - area.y0(), core.x1() - area.x0(),
-                    core.y1() - area.y0());
+            PDFRenderer renderer = new PDFRenderer(doc);
+            Region region = region(renderer, pageIndex, crop, line);
+            BufferedImage image = region.image();
+            Px area = region.area();
+            Px coreInImage = region.core();
             Px areaInImage = new Px(0, 0, area.width(), area.height());
 
             Color paper = paper(pixels(image, coreInImage));
             List<Integer> letterPixels = new ArrayList<>();
-            BufferedImage patch = patch(image, coreInImage, areaInImage, paper, letterPixels, line.vertical());
+            boolean[][] solid = new boolean[coreInImage.height()][coreInImage.width()];
+            BufferedImage patch = patch(image, coreInImage, areaInImage, paper, letterPixels, line.vertical(), solid);
             Color ink = ink(letterPixels, paper);
 
             String text = line.text();
+            String family = null;
+            boolean bold = false;
             float size;
             float x;
             float baseline;
             float rotation = 0;
+            float spacing = 0;
+            ScanLook.Ink scanInk = line.vertical() ? null : ScanLook.Ink.of(solid);
+            ScanLook.Look look = null;
+            if (scanInk != null) {
+                // Across the page: the words as the scan spaces them, in the installed font most like its letters
+                // and the page's other lines.
+                text = ScanLook.spacedAsScanned(line.text(), line.centers(), scanInk, coreInImage.width());
+                List<SystemFonts.Face> faces = fontMatcher.documentFaces();
+                PageFont pageFont = pageFont(pdf, renderer, pageIndex, crop, pageLines, faces);
+                double darkness = darkness(image, coreInImage, scanInk, paper);
+                look = chosenLook(text, scanInk, faces, pageFont, heavy(darkness, paper, fullInk(letterPixels, paper)));
+                if (look != null && look.face().family().equals(pageFont.family())) {
+                    // Lines of one size on the page (rows of a table) get one size, not each its own few pixels
+                    // off; and one colour.
+                    look = ScanLook.at(text, scanInk, look.face(), pageSize(pageFont.sizes(), look.sizePx()));
+                    ink = alike(toned(ink, paper, darkness, look.coverage()), pageFont.colour());
+                } else if (look != null) {
+                    ink = toned(ink, paper, darkness, look.coverage());
+                }
+            }
             if (line.turned()) {
                 // A line turned a quarter: the box is turned the same way, its text along the line. Down the page
                 // the letters' tops face right and the line starts at the top; up it, they face left and it
@@ -133,8 +188,16 @@ public class RecognizedLineBox {
                 x = round(line.x() + (line.width() - size) / 2f);
                 float firstMiddle = line.y() + line.height() / 2f + (letters - 1) * size * LINE_SPACING / 2f;
                 baseline = round(firstMiddle - size * MIDDLE_ABOVE_BASELINE);
+            } else if (look != null) {
+                family = look.face().family();
+                bold = look.face().bold();
+                size = round(clamp((float) (look.sizePx() / SCALE), 1f, 500f));
+                spacing = round((float) (look.spacingPx() / SCALE));
+                x = round(crop.getLowerLeftX() + (float) (area.x0() + coreInImage.x0() + look.originX()) / SCALE);
+                baseline = round(crop.getUpperRightY()
+                        - (float) (area.y0() + coreInImage.y0() + look.baselineY()) / SCALE);
             } else {
-                size = round(fittedSize(doc, line.text(), line.height(), line.width()));
+                size = round(fittedSize(doc, text, line.height(), line.width()));
                 x = round(line.x());
                 baseline = round(line.y() + line.height() / 2f - size * MIDDLE_ABOVE_BASELINE);
             }
@@ -142,8 +205,259 @@ public class RecognizedLineBox {
                     : new AddedText.Cover(round(crop.getLowerLeftX() + area.x0() / SCALE),
                             round(crop.getUpperRightY() - area.y1() / SCALE), round(area.width() / SCALE),
                             round(area.height() / SCALE), hex(paper), png(patch));
-            return new AddedText(null, text, x, baseline, null, size, false, hex(ink), List.of(), cover, rotation);
+            return new AddedText(null, text, x, baseline, family, size, bold, hex(ink), List.of(), cover, rotation,
+                    spacing);
         }
+    }
+
+    /**
+     * A line's part of the page, drawn: the picture, where it is on the whole page (pixels), and where the line's
+     * own box is in the picture (the picture reaches SPREAD pixels further, less at the page's edge).
+     */
+    private record Region(BufferedImage image, Px area, Px core) {
+    }
+
+    /**
+     * Only the line's part of the page is drawn: the whole page this sharp is hundreds of megabytes for a large
+     * drawing.
+     */
+    private static Region region(PDFRenderer renderer, int pageIndex, PDRectangle crop, OcrText line)
+            throws IOException {
+        int pageWidth = Math.max(1, (int) Math.floor(crop.getWidth() * SCALE));
+        int pageHeight = Math.max(1, (int) Math.floor(crop.getHeight() * SCALE));
+        int x0 = clamp((int) Math.floor((line.x() - crop.getLowerLeftX()) * SCALE), 0, pageWidth - 1);
+        int y0 = clamp((int) Math.floor((crop.getUpperRightY() - (line.y() + line.height())) * SCALE), 0,
+                pageHeight - 1);
+        Px core = new Px(x0, y0,
+                clamp((int) Math.ceil((line.x() + line.width() - crop.getLowerLeftX()) * SCALE), x0 + 1, pageWidth),
+                clamp((int) Math.ceil((crop.getUpperRightY() - line.y()) * SCALE), y0 + 1, pageHeight));
+        Px area = new Px(Math.max(0, core.x0() - SPREAD), Math.max(0, core.y0() - SPREAD),
+                Math.min(pageWidth, core.x1() + SPREAD), Math.min(pageHeight, core.y1() + SPREAD));
+        BufferedImage image = new BufferedImage(area.width(), area.height(), BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = image.createGraphics();
+        try {
+            g.setColor(Color.WHITE);
+            g.fillRect(0, 0, area.width(), area.height());
+            g.translate(-area.x0(), -area.y0());
+            renderer.renderPageToGraphics(pageIndex, g, SCALE);
+        } finally {
+            g.dispose();
+        }
+        return new Region(image, area, new Px(core.x0() - area.x0(), core.y0() - area.y0(), core.x1() - area.x0(),
+                core.y1() - area.y0()));
+    }
+
+    /**
+     * The look of the line: in the page's font (as rows of one table are set in one font, and one line of a coarse
+     * scan tells fonts apart poorly), unless the line is clearly more like a face of the other style (명조 among
+     * 고딕, or the other way round); bold when
+     * its strokes are clearly heavier than the font's plain ones, or the page's are and the line's not clearly
+     * lighter.
+     *
+     * @param heavy how much of the rectangle around the scan's letters their ink covers
+     */
+    private static ScanLook.Look chosenLook(String text, ScanLook.Ink ink, List<SystemFonts.Face> faces,
+            PageFont page, double heavy) {
+        Map<SystemFonts.Face, ScanLook.Look> looks = ScanLook.looks(text, ink, faces.stream().filter(f -> !f.bold())
+                .toList());
+        if (looks.isEmpty()) {
+            return null;
+        }
+        Map.Entry<SystemFonts.Face, ScanLook.Look> own = looks.entrySet().stream()
+                .max(java.util.Comparator.comparingDouble(e -> score(e.getValue(), heavy))).orElseThrow();
+        Map.Entry<SystemFonts.Face, ScanLook.Look> chosen = own;
+        if (page.family() != null) {
+            chosen = looks.entrySet().stream().filter(e -> e.getKey().family().equals(page.family())).findFirst()
+                    .filter(e -> serif(own.getKey()) == serif(e.getKey())
+                            || score(own.getValue(), heavy) - score(e.getValue(), heavy) <= OTHER_FONT)
+                    .orElse(own);
+        }
+        double weight = heavy / Math.max(1e-6, chosen.getValue().coverage());
+        boolean bold = weight > BOLD_ALONE || (page.bold() && weight > BOLD_WITH_PAGE);
+        if (!bold) {
+            return chosen.getValue();
+        }
+        String family = chosen.getKey().family();
+        return faces.stream().filter(f -> f.bold() && f.family().equals(family)).findFirst()
+                .map(face -> ScanLook.looks(text, ink, List.of(face)).get(face))
+                .orElse(chosen.getValue());
+    }
+
+    /**
+     * How well a font's look fits the scan: its strokes falling on the scan's, made less the further its weight is
+     * from the scan's (a heavy display face otherwise passes for a plain one on a coarse scan).
+     *
+     * @param heavy how much of the rectangle around the scan's letters their ink covers
+     */
+    private static double score(ScanLook.Look look, double heavy) {
+        double weight = heavy / Math.max(1e-6, look.coverage());
+        return look.likeness() * Math.max(0.5, 1 - WEIGHT_MISFIT * Math.abs(Math.log(Math.max(1e-6, weight))));
+    }
+
+    /** Whether the face is of the serif style (명조, 바탕), told by its name. */
+    static boolean serif(SystemFonts.Face face) {
+        String name = (face.family() + " " + face.label()).toLowerCase(java.util.Locale.ROOT);
+        return name.contains("명조") || name.contains("바탕") || name.contains("myeongjo") || name.contains("batang")
+                || name.contains("serif");
+    }
+
+    /** The size of the page's lines nearest {@code size} when one is within a few percent; else {@code size}. */
+    static double pageSize(List<Double> sizes, double size) {
+        List<Double> near = sizes.stream().filter(s -> Math.abs(s - size) <= SAME_SIZE * size).sorted().toList();
+        return near.isEmpty() ? size : near.get(near.size() / 2);
+    }
+
+    /** The page's colour when {@code colour} is about the same, so lines of a page are not each a shade apart. */
+    static Color alike(Color colour, Color page) {
+        if (page == null) {
+            return colour;
+        }
+        return Math.abs(lightness(colour.getRGB()) - lightness(page.getRGB())) / 1000 <= SAME_COLOUR ? page : colour;
+    }
+
+    /**
+     * The font the page is set in, told by its longest lines read surely: the family that fits them best, on
+     * average; bold when their strokes are clearly heavier than its plain ones; the sizes they are set at and the
+     * colour they are redrawn in (the middle one). Kept for the page's next rewrites.
+     */
+    private PageFont pageFont(byte[] pdf, PDFRenderer renderer, int pageIndex, PDRectangle crop,
+            List<OcrText> pageLines, List<SystemFonts.Face> faces) throws IOException {
+        List<OcrText> samples = pageLines.stream()
+                .filter(l -> !l.vertical() && l.score() >= SURE_LINE
+                        && l.text().replace(" ", "").length() >= SAMPLE_LETTERS)
+                .sorted(java.util.Comparator.comparingInt((OcrText l) -> -l.text().length()))
+                .limit(PAGE_SAMPLES).toList();
+        if (samples.isEmpty()) {
+            return new PageFont(null, false, List.of(), null);
+        }
+        String key = pageIndex + ":" + pdf.length + ":" + java.util.Arrays.hashCode(
+                java.util.Arrays.copyOf(pdf, Math.min(pdf.length, 4096))) + ":" + samples.hashCode();
+        PageFont known = pageFonts.get(key);
+        if (known != null) {
+            return known;
+        }
+        List<SystemFonts.Face> plain = faces.stream().filter(f -> !f.bold()).toList();
+        Map<String, Double> fits = new HashMap<>();
+        Map<String, Integer> counts = new HashMap<>();
+        List<Map<SystemFonts.Face, ScanLook.Look>> sampleLooks = new ArrayList<>();
+        List<double[]> sampleTone = new ArrayList<>();
+        List<Color[]> sampleColours = new ArrayList<>();
+        for (OcrText sample : samples) {
+            Region region = region(renderer, pageIndex, crop, sample);
+            Px core = region.core();
+            Color paper = paper(pixels(region.image(), core));
+            List<Integer> letterPixels = new ArrayList<>();
+            boolean[][] solid = new boolean[core.height()][core.width()];
+            patch(region.image(), core, new Px(0, 0, region.area().width(), region.area().height()), paper,
+                    letterPixels, false, solid);
+            ScanLook.Ink ink = ScanLook.Ink.of(solid);
+            if (ink == null) {
+                continue;
+            }
+            Color inkColour = ink(letterPixels, paper);
+            double darkness = darkness(region.image(), core, ink, paper);
+            double heavy = heavy(darkness, paper, fullInk(letterPixels, paper));
+            String text = ScanLook.spacedAsScanned(sample.text(), sample.centers(), ink, core.width());
+            Map<SystemFonts.Face, ScanLook.Look> looks = ScanLook.looks(text, ink, plain);
+            looks.forEach((face, look) -> {
+                fits.merge(face.family(), score(look, heavy), Double::sum);
+                counts.merge(face.family(), 1, Integer::sum);
+            });
+            sampleLooks.add(looks);
+            sampleTone.add(new double[] {darkness, heavy});
+            sampleColours.add(new Color[] {inkColour, paper});
+        }
+        int enough = (sampleLooks.size() + 1) / 2;
+        // The best fit - or, among faces that fit about as well, the one most often met in documents.
+        double best = fits.entrySet().stream().filter(e -> counts.get(e.getKey()) >= enough)
+                .mapToDouble(e -> e.getValue() / counts.get(e.getKey())).max().orElse(0);
+        String family = plain.stream().map(SystemFonts.Face::family).distinct()
+                .filter(f -> fits.containsKey(f) && counts.get(f) >= enough && fits.get(f) / counts.get(f) >= best - TIE)
+                .findFirst().orElse(null);
+        double weight = 0;
+        List<Double> sizes = new ArrayList<>();
+        List<Color> colours = new ArrayList<>();
+        for (int i = 0; i < sampleLooks.size(); i++) {
+            for (Map.Entry<SystemFonts.Face, ScanLook.Look> e : sampleLooks.get(i).entrySet()) {
+                if (e.getKey().family().equals(family)) {
+                    ScanLook.Look look = e.getValue();
+                    weight += sampleTone.get(i)[1] / Math.max(1e-6, look.coverage());
+                    sizes.add(look.sizePx());
+                    colours.add(toned(sampleColours.get(i)[0], sampleColours.get(i)[1], sampleTone.get(i)[0],
+                            look.coverage()));
+                }
+            }
+        }
+        colours.sort(java.util.Comparator.comparingInt(c -> lightness(c.getRGB())));
+        PageFont found = new PageFont(family, !sizes.isEmpty() && weight / sizes.size() > BOLD_ALONE, sizes,
+                colours.isEmpty() ? null : colours.get(colours.size() / 2));
+        pageFonts.put(key, found);
+        return found;
+    }
+
+    /**
+     * The ink at its darkest (the darkest tenth of the letters' pixels): what a stroke's core is, where a coarse
+     * scan's blur has not lightened it.
+     */
+    static Color fullInk(List<Integer> pixels, Color paper) {
+        List<Integer> ink = new ArrayList<>();
+        for (int rgb : pixels) {
+            if (difference(rgb, paper) > INK_DIFFERENCE) {
+                ink.add(rgb);
+            }
+        }
+        if (ink.isEmpty()) {
+            return Color.BLACK;
+        }
+        ink.sort((a, b) -> Integer.compare(lightness(a), lightness(b)));
+        return new Color(ink.get(ink.size() / 10));
+    }
+
+    /**
+     * How much of the rectangle around the letters their ink would cover if it were all of {@code ink}: how dark
+     * the letters are seen, for how dark their ink is.
+     */
+    private static double heavy(double darkness, Color paper, Color ink) {
+        double paperLight = lightness(paper.getRGB()) / 1000.0;
+        double inkDark = paperLight <= 0 ? 0 : (paperLight - lightness(ink.getRGB()) / 1000.0) / paperLight;
+        return inkDark <= 0 ? 0 : darkness / inkDark;
+    }
+
+    /**
+     * How dark the scan's letters are seen as a whole: over the rectangle around them, the mean of how much darker
+     * than the paper each pixel is (0 paper, 1 black on white).
+     */
+    static double darkness(BufferedImage image, Px core, ScanLook.Ink ink, Color paper) {
+        double paperLight = lightness(paper.getRGB()) / 1000.0;
+        if (paperLight <= 0) {
+            return 0;
+        }
+        double sum = 0;
+        int n = 0;
+        for (int y = ink.top(); y <= ink.bottom(); y++) {
+            for (int x = ink.left(); x <= ink.right(); x++) {
+                double light = lightness(image.getRGB(core.x0() + x, core.y0() + y)) / 1000.0;
+                sum += Math.max(0, (paperLight - light) / paperLight);
+                n++;
+            }
+        }
+        return n == 0 ? 0 : sum / n;
+    }
+
+    /**
+     * The ink's colour moved towards the paper's until letters covering {@code coverage} of their rectangle are
+     * as dark as {@code darkness}; never lighter than {@link #LIGHTEST_TONE} of the way.
+     */
+    static Color toned(Color ink, Color paper, double darkness, double coverage) {
+        double paperLight = lightness(paper.getRGB()) / 1000.0;
+        double inkDark = paperLight <= 0 ? 0 : (paperLight - lightness(ink.getRGB()) / 1000.0) / paperLight;
+        if (inkDark <= 0 || coverage <= 0) {
+            return ink;
+        }
+        double t = Math.max(LIGHTEST_TONE, Math.min(1, darkness / (coverage * inkDark)));
+        return new Color((int) Math.round(paper.getRed() + t * (ink.getRed() - paper.getRed())),
+                (int) Math.round(paper.getGreen() + t * (ink.getGreen() - paper.getGreen())),
+                (int) Math.round(paper.getBlue() + t * (ink.getBlue() - paper.getBlue())));
     }
 
     /** Pixel columns {@code x0} up to (not including) {@code x1}, rows {@code y0} up to {@code y1}. */
@@ -165,9 +479,10 @@ public class RecognizedLineBox {
      *
      * @param letterPixels gets the colours of the letters' pixels
      * @param vertical     the line runs down the page: a rule along it is a column, one across it a row
+     * @param solid        gets the letters' solid ink (not their soft edges), rows then columns of {@code core}
      */
     static BufferedImage patch(BufferedImage image, Px core, Px area, Color paper, List<Integer> letterPixels,
-            boolean vertical) {
+            boolean vertical, boolean[][] solid) {
         int w = core.width();
         int h = core.height();
         boolean[][] ink = new boolean[h][w];
@@ -208,7 +523,9 @@ public class RecognizedLineBox {
                     continue;
                 }
                 any = true;
-                letterPixels.add(image.getRGB(core.x0() + x, core.y0() + y) & 0xFFFFFF);
+                int rgb = image.getRGB(core.x0() + x, core.y0() + y);
+                letterPixels.add(rgb & 0xFFFFFF);
+                solid[y][x] = difference(rgb, paper) > SOLID_DIFFERENCE;
                 int px = core.x0() + x - area.x0();
                 int py = core.y0() + y - area.y0();
                 for (int dy = -SPREAD; dy <= SPREAD; dy++) {
@@ -344,8 +661,9 @@ public class RecognizedLineBox {
     }
 
     /**
-     * The ink's colour: the darker half of the pixels that clearly differ from the paper, averaged (the lighter
-     * half are the soft edges of the letters). Black when there is no ink to see.
+     * The ink's colour: the middle one (by lightness) of the pixels that clearly differ from the paper - the soft
+     * edges of the letters on one side, their darkest cores on the other, as the eye sees a scanned stroke. Black
+     * when there is no ink to see.
      */
     static Color ink(List<Integer> pixels, Color paper) {
         List<Integer> ink = new ArrayList<>();
@@ -359,21 +677,11 @@ public class RecognizedLineBox {
         if (ink.isEmpty()) {
             return Color.BLACK;
         }
-        ink.sort((a, b) -> Integer.compare(luminance(a), luminance(b)));
-        List<Integer> darker = ink.subList(0, Math.max(1, ink.size() / 2));
-        long r = 0;
-        long g = 0;
-        long b = 0;
-        for (int rgb : darker) {
-            r += rgb >> 16 & 0xFF;
-            g += rgb >> 8 & 0xFF;
-            b += rgb & 0xFF;
-        }
-        int n = darker.size();
-        return new Color((int) (r / n), (int) (g / n), (int) (b / n));
+        ink.sort((a, b) -> Integer.compare(lightness(a), lightness(b)));
+        return new Color(ink.get(ink.size() / 2));
     }
 
-    private static int luminance(int rgb) {
+    private static int lightness(int rgb) {
         return (rgb >> 16 & 0xFF) * 299 + (rgb >> 8 & 0xFF) * 587 + (rgb & 0xFF) * 114;
     }
 

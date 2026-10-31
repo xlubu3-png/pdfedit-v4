@@ -885,6 +885,7 @@ export function TextEditor({
           color: box.color,
           spans: box.spans,
           ...(box.rotation ? { rotation: box.rotation } : {}),
+          ...(box.charSpacing ? { charSpacing: box.charSpacing } : {}),
         }
       : null
   }

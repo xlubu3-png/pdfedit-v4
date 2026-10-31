@@ -20,9 +20,12 @@ import java.util.List;
  * @param rotation   degrees the text is turned about (x, y), counter-clockwise as PDF counts: -90 runs down
  *                   the page, 90 up it; 0 across, as boxes usually are (also when not given: a box made in the
  *                   browser leaves it out)
+ * @param charSpacing points added after every letter (negative: letters closer), as the PDF's character spacing;
+ *                   0 when not given. Rewritten scan lines get it so they take the line's length on the scan.
  */
 public record AddedText(String id, String text, float x, float y, String fontFamily, float fontSize,
-                        boolean bold, String color, List<RunEdit.Span> spans, Cover cover, Float rotation) {
+                        boolean bold, String color, List<RunEdit.Span> spans, Cover cover, Float rotation,
+                        Float charSpacing) {
 
     /**
      * A rectangle in PDF user space painted over: with {@code patch}, by that picture stretched over it; without,
@@ -48,26 +51,32 @@ public record AddedText(String id, String text, float x, float y, String fontFam
     public AddedText {
         spans = spans == null ? List.of() : List.copyOf(spans);
         rotation = rotation == null ? 0f : rotation;
+        charSpacing = charSpacing == null ? 0f : charSpacing;
+    }
+
+    public AddedText(String id, String text, float x, float y, String fontFamily, float fontSize,
+                     boolean bold, String color, List<RunEdit.Span> spans, Cover cover, Float rotation) {
+        this(id, text, x, y, fontFamily, fontSize, bold, color, spans, cover, rotation, 0f);
     }
 
     public AddedText(String id, String text, float x, float y, String fontFamily, float fontSize,
                      boolean bold, String color, List<RunEdit.Span> spans, Cover cover) {
-        this(id, text, x, y, fontFamily, fontSize, bold, color, spans, cover, 0f);
+        this(id, text, x, y, fontFamily, fontSize, bold, color, spans, cover, 0f, 0f);
     }
 
     public AddedText(String id, String text, float x, float y, String fontFamily, float fontSize,
                      boolean bold, String color, List<RunEdit.Span> spans) {
-        this(id, text, x, y, fontFamily, fontSize, bold, color, spans, null, 0f);
+        this(id, text, x, y, fontFamily, fontSize, bold, color, spans, null, 0f, 0f);
     }
 
     public AddedText(String id, String text, float x, float y, String fontFamily, float fontSize,
                      boolean bold, String color) {
-        this(id, text, x, y, fontFamily, fontSize, bold, color, List.of(), null, 0f);
+        this(id, text, x, y, fontFamily, fontSize, bold, color, List.of(), null, 0f, 0f);
     }
 
     /** The same box saying {@code newText}, its bold and coloured parts kept on the letters they were on. */
     public AddedText withText(String newText) {
         List<RunEdit.Span> kept = new RunEdit(text, null, null, null, null, 0f, 0f, spans).withText(newText).spans();
-        return new AddedText(id, newText, x, y, fontFamily, fontSize, bold, color, kept, cover, rotation);
+        return new AddedText(id, newText, x, y, fontFamily, fontSize, bold, color, kept, cover, rotation, charSpacing);
     }
 }

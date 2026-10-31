@@ -223,6 +223,35 @@ public class FontMatcher {
     }
 
     /**
+     * Korean families body text of documents is usually set in (Windows, Hangul Office, Nanum, Noto), each by its
+     * names. Brush and heavy headline faces (궁서, HY견고딕) are left out: a coarse scan's plain text can pass for them.
+     * In the order they are most often met in documents (Hangul Office's defaults first): a coarse scan tells
+     * similar faces apart poorly, and the earlier one is taken when they fit about as well.
+     */
+    private static final List<String[]> DOCUMENT_FAMILIES = List.of(
+            new String[] {"함초롬돋움", "HCR Dotum"}, new String[] {"함초롬바탕", "HCR Batang"},
+            new String[] {"맑은 고딕", "Malgun Gothic"}, new String[] {"돋움", "Dotum"}, new String[] {"굴림", "Gulim"},
+            new String[] {"바탕", "Batang"}, new String[] {"한컴 고딕", "Hancom Gothic"},
+            new String[] {"휴먼명조", "HumanMyeongjo"}, new String[] {"휴먼고딕", "HumanGothic"},
+            new String[] {"HY중고딕", "HYGothic-Medium"}, new String[] {"HY신명조", "HYSinMyeongJo-Medium"},
+            new String[] {"나눔고딕", "NanumGothic"}, new String[] {"나눔명조", "NanumMyeongjo"},
+            new String[] {"나눔바른고딕", "NanumBarunGothic"}, new String[] {"Noto Sans KR", "Noto Sans CJK KR"},
+            new String[] {"Noto Serif KR", "Noto Serif CJK KR"});
+
+    /**
+     * The installed fonts of the families documents are usually set in, plain and (where the family has one) bold:
+     * what a scanned line's letters are compared against to choose the font that rewrites them.
+     */
+    public List<SystemFonts.Face> documentFaces() {
+        List<SystemFonts.Face> faces = new java.util.ArrayList<>();
+        for (String[] names : DOCUMENT_FAMILIES) {
+            systemFonts.find(false, names).filter(face -> !face.bold()).ifPresent(faces::add);
+            systemFonts.find(true, names).filter(SystemFonts.Face::bold).ifPresent(faces::add);
+        }
+        return faces;
+    }
+
+    /**
      * Fails now, with a readable message, when the font has no glyph for a character of {@code text}:
      * drawing it later would silently leave a gap where the text should be.
      *

@@ -221,6 +221,8 @@ export interface AddedText {
   cover?: Cover | null
   /** Degrees the box is turned about (x, y), counter-clockwise as PDF counts: -90 runs down the page. */
   rotation?: number
+  /** Points added after every letter (negative: closer); a rewritten scan line gets it to take the line's length. */
+  charSpacing?: number
 }
 
 /**

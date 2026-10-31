@@ -277,6 +277,9 @@ public class TextEditService {
             if (!(Math.abs(box.rotation()) <= 360)) {
                 throw new InvalidEditException("텍스트 상자의 회전 각도가 올바르지 않습니다.");
             }
+            if (!(Math.abs(box.charSpacing()) <= MAX_FONT_SIZE)) {
+                throw new InvalidEditException("텍스트 상자의 자간이 올바르지 않습니다.");
+            }
             String text = box.text() == null ? "" : box.text();
             if (text.length() > MAX_ADDED_LENGTH) {
                 throw new InvalidEditException("텍스트 상자 하나에는 " + MAX_ADDED_LENGTH + "자까지 쓸 수 있습니다.");
@@ -676,8 +679,9 @@ public class TextEditService {
             }
             float cursor = box.x();
             for (Piece piece : line.pieces()) {
-                drawLine(cs, piece.styled(), piece.text(), cursor, line.baseline(), piece.size(), piece.colour());
-                float width = widthOf(piece);
+                drawLine(cs, piece.styled(), piece.text(), cursor, line.baseline(), piece.size(), piece.colour(), 1f,
+                        box.charSpacing());
+                float width = widthOf(piece) + box.charSpacing() * piece.text().length();
                 if (piece.underline()) {
                     underline(cs, cursor, cursor + width, line.baseline(), piece.size(), piece.colour());
                 }
@@ -776,7 +780,7 @@ public class TextEditService {
                         for (int c = 0; c < piece.text().length(); c++) {
                             String letter = piece.text().substring(c, c + 1);
                             Float measured = tryMeasureWidth(piece.styled().font(), letter, piece.size());
-                            float width = measured != null ? measured : piece.size() * 0.6f;
+                            float width = (measured != null ? measured : piece.size() * 0.6f) + box.charSpacing();
                             areas.add(turned(box, new TextLines.Area(cursor, lines.get(i).baseline() - 0.25f * piece.size(),
                                     width, 1.1f * piece.size())));
                             text.append(piece.text().charAt(c));
@@ -914,6 +918,12 @@ public class TextEditService {
     /** {@code hScale}: 1 is the font's natural width, 0.9 draws the letters 10% narrower. */
     private static void drawLine(PDPageContentStream cs, FontMatcher.Styled styled, String text, float x, float y,
             float fontSize, Color colour, float hScale) throws IOException {
+        drawLine(cs, styled, text, x, y, fontSize, colour, hScale, 0f);
+    }
+
+    /** {@code charSpacing}: points added after every letter, as the PDF's character spacing. */
+    private static void drawLine(PDPageContentStream cs, FontMatcher.Styled styled, String text, float x, float y,
+            float fontSize, Color colour, float hScale, float charSpacing) throws IOException {
         cs.saveGraphicsState();
         try {
             cs.setNonStrokingColor(colour);
@@ -930,6 +940,9 @@ public class TextEditService {
                 cs.setFont(styled.font(), fontSize);
                 if (hScale != 1f) {
                     cs.setHorizontalScaling(hScale * 100f);
+                }
+                if (charSpacing != 0f) {
+                    cs.setCharacterSpacing(charSpacing);
                 }
                 cs.newLineAtOffset(x, y);
                 cs.showText(text);

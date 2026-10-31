@@ -498,6 +498,8 @@ export function AddedBox({
     padding: 0,
     fontFamily: box.fontFamily ? `'${box.fontFamily}'` : "'맑은 고딕'",
     fontWeight: box.bold ? 'bold' : undefined,
+    // As the server draws it: points after every letter (a rewritten scan line takes the line's length).
+    letterSpacing: box.charSpacing ? box.charSpacing * scale : undefined,
     // A box rewriting a scanned line is typed in on the colour of the paper it lies on (a grey table cell too).
     ...boxVars(box.color ?? '#000000', box.cover?.color),
   }
@@ -511,7 +513,10 @@ export function AddedBox({
   }
 
   return (
-    <div className={`te-item added${selected ? ' selected' : ''}${dragging ? ' dragging' : ''}`} style={itemStyle}>
+    <div
+      className={`te-item added${box.cover ? ' rewritten' : ''}${selected ? ' selected' : ''}${dragging ? ' dragging' : ''}`}
+      style={itemStyle}
+    >
       <div className="te-handle" title="끌어서 이동 (방향키: 1pt, Shift+방향키: 10pt)" {...drag.handlers}>
         ✥
       </div>

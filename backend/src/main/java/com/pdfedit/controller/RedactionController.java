@@ -22,7 +22,9 @@ import org.springframework.web.bind.annotation.RestController;
 import com.pdfedit.dto.PageSpec;
 import com.pdfedit.dto.PersonalInfoMatch;
 import com.pdfedit.dto.PersonalInfoRequest;
+import com.pdfedit.ocr.OcrText;
 import com.pdfedit.redact.PersonalInfoFinder;
+import com.pdfedit.text.TextLines;
 import com.pdfedit.redact.Redaction;
 import com.pdfedit.service.InvalidEditException;
 import com.pdfedit.service.PdfDocumentStore;
@@ -87,7 +89,11 @@ public class RedactionController {
         for (Map.Entry<String, List<Integer>> document : pagesByDocument.entrySet()) {
             try (PDDocument doc = Loader.loadPDF(store.getContent(document.getKey()))) {
                 for (int pageIndex : document.getValue()) {
-                    for (PersonalInfoFinder.Match m : PersonalInfoFinder.find(doc, pageIndex, kinds, term)) {
+                    // A scanned page's words are only in what text recognition read off it.
+                    List<TextLines.Line> recognized = store.ocr(document.getKey(), pageIndex).stream()
+                            .map(OcrText::line).toList();
+                    for (PersonalInfoFinder.Match m
+                            : PersonalInfoFinder.find(doc, pageIndex, kinds, term, recognized)) {
                         if (found.size() >= MAX_MATCHES) {
                             return found;
                         }

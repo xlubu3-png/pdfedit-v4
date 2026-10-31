@@ -2,6 +2,7 @@ package com.pdfedit.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.assertj.core.api.Assumptions.assumeThat;
 
 import java.awt.Color;
@@ -29,8 +30,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.mock.web.MockMultipartFile;
 
+import com.pdfedit.compare.DocumentComparer;
+import com.pdfedit.dto.CompareResult;
 import com.pdfedit.dto.ExportRequest;
 import com.pdfedit.dto.PageSpec;
+import com.pdfedit.dto.PersonalInfoMatch;
+import com.pdfedit.dto.PersonalInfoRequest;
 import com.pdfedit.dto.UploadResponse;
 import com.pdfedit.ocr.OcrText;
 import com.pdfedit.ocr.PageOcr;
@@ -40,6 +45,8 @@ import com.pdfedit.service.PdfDocumentStore;
 import com.pdfedit.service.PdfExportService;
 import com.pdfedit.service.PdfThumbnailService;
 import com.pdfedit.service.TextEditService;
+import com.pdfedit.service.TextSearchService;
+import com.pdfedit.dto.FindMatch;
 import com.pdfedit.text.FontMatcher;
 
 /** A scanned page: recognized, kept with the document, and exported as a page that can be searched. */
@@ -57,8 +64,12 @@ class OcrControllerTest {
     private final PageOcr pageOcr = new PageOcr(textEditService);
     private final OcrController ocr = new OcrController(store, pageOcr);
 
-    /** An A4 page that is nothing but a picture of three printed lines, as a scanner makes it. */
     private static byte[] scannedPdf() throws Exception {
+        return scannedPdf(LINES);
+    }
+
+    /** An A4 page that is nothing but a picture of printed lines, as a scanner makes it. */
+    private static byte[] scannedPdf(String[] lines) throws Exception {
         File malgun = new File("C:\\Windows\\Fonts\\malgun.ttf");
         assumeThat(malgun).as("needs the Windows font Malgun Gothic").exists();
         BufferedImage scan = new BufferedImage(WIDTH, HEIGHT, BufferedImage.TYPE_INT_RGB);
@@ -68,8 +79,8 @@ class OcrControllerTest {
         g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
         g.setColor(Color.BLACK);
         g.setFont(Font.createFont(Font.TRUETYPE_FONT, malgun).deriveFont(36f));
-        for (int i = 0; i < LINES.length; i++) {
-            g.drawString(LINES[i], 200, 300 + 160 * i);
+        for (int i = 0; i < lines.length; i++) {
+            g.drawString(lines[i], 200, 300 + 160 * i);
         }
         g.dispose();
         try (PDDocument doc = new PDDocument(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
@@ -132,6 +143,70 @@ class OcrControllerTest {
         String text = exportedText(upload.documentId(), false);
 
         assertThat(text).contains("010-2345-6789").doesNotContain("1234567");
+    }
+
+    @Test
+    void personalInformationOnAScanIsFoundWhereItIsAndRedactedForGood() throws Exception {
+        UploadResponse upload = pdf.upload(file(scannedPdf()), null);
+        ocr.recognize(upload.documentId(), 0);
+        RedactionController redaction = new RedactionController(store);
+
+        List<PersonalInfoMatch> found = redaction.findPersonalInfo(new PersonalInfoRequest(
+                List.of(new PageSpec(upload.documentId(), 0, 0)), List.of("RRN", "MOBILE"), null));
+
+        assertThat(found).extracting(PersonalInfoMatch::kind, PersonalInfoMatch::text)
+                .containsExactly(tuple("RRN", "900101-1234567"), tuple("MOBILE", "010-2345-6789"));
+        // Where the number was drawn: after the label, to the end of the line.
+        Graphics2D g = new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB).createGraphics();
+        g.setFont(Font.createFont(Font.TRUETYPE_FONT, new File("C:\\Windows\\Fonts\\malgun.ttf")).deriveFont(36f));
+        float k = PDRectangle.A4.getWidth() / WIDTH;
+        float numberStart = (200 + g.getFontMetrics().stringWidth("주민등록번호 ")) * k;
+        float numberEnd = (200 + g.getFontMetrics().stringWidth(LINES[1])) * k;
+        g.dispose();
+        PersonalInfoMatch rrn = found.get(0);
+        assertThat(rrn.x()).as("starts at the number, not the label").isBetween(numberStart - 12, numberStart + 2);
+        assertThat(rrn.x() + rrn.width()).isGreaterThanOrEqualTo(numberEnd - 1);
+
+        store.setRedactions(upload.documentId(), 0,
+                List.of(new Redaction("r", rrn.x(), rrn.y(), rrn.width(), rrn.height())));
+        byte[] exported = pdf.export(new ExportRequest(List.of(new PageSpec(upload.documentId(), 0, 0)), "a.pdf",
+                false, null, null)).getBody();
+
+        // Read the exported page as a scan again: the number is gone from the picture itself. (The other lines are
+        // in the export's text layer, so they count as real text and are not read again.)
+        String seen = String.join(" ", pageOcr.recognize(exported, 0).lines().stream().map(OcrText::text).toList());
+        assertThat(seen).contains("주민등록번호").doesNotContain("1234567");
+        try (PDDocument doc = Loader.loadPDF(exported)) {
+            assertThat(new PDFTextStripper().getText(doc)).contains("010-2345-6789").doesNotContain("1234567");
+        }
+    }
+
+    @Test
+    void recognizedTextIsFoundBySearchButNotReplaced() throws Exception {
+        UploadResponse upload = pdf.upload(file(scannedPdf()), null);
+        ocr.recognize(upload.documentId(), 0);
+        TextSearchService search = new TextSearchService(store, textEditService);
+        List<PageSpec> pages = List.of(new PageSpec(upload.documentId(), 0, 0));
+
+        assertThat(search.find(pages, "6789", false))
+                .containsExactly(new FindMatch(upload.documentId(), 0, -3, "연락처 010-2345-6789", true));
+        assertThat(search.replace(pages, "6789", "9999", false).replacements()).isZero();
+    }
+
+    @Test
+    void twoScansAreComparedByTheirRecognizedText() throws Exception {
+        UploadResponse before = pdf.upload(file(scannedPdf()), null);
+        String[] changed = LINES.clone();
+        changed[2] = "연락처 010-9876-6789";
+        UploadResponse after = pdf.upload(file(scannedPdf(changed)), null);
+        ocr.recognize(before.documentId(), 0);
+        ocr.recognize(after.documentId(), 0);
+
+        CompareResult result = new CompareController(store, new PdfThumbnailService())
+                .compare(new CompareController.CompareRequest(before.documentId(), after.documentId()));
+
+        assertThat(result.removed()).extracting(DocumentComparer.Change::text).containsExactly("010-2345-6789");
+        assertThat(result.added()).extracting(DocumentComparer.Change::text).containsExactly("010-9876-6789");
     }
 
     @Test

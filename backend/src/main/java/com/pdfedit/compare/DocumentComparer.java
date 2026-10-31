@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.IntFunction;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
 
@@ -46,8 +47,17 @@ public final class DocumentComparer {
     }
 
     public static Comparison compare(PDDocument a, PDDocument b) throws IOException {
-        List<Line> linesA = lines(a);
-        List<Line> linesB = lines(b);
+        return compare(a, b, page -> List.of(), page -> List.of());
+    }
+
+    /**
+     * Like {@link #compare(PDDocument, PDDocument)}, with the lines {@code recognizedA} and {@code recognizedB} give
+     * for a page (text read off a scan) taken as part of that page's text.
+     */
+    public static Comparison compare(PDDocument a, PDDocument b, IntFunction<List<TextLines.Line>> recognizedA,
+            IntFunction<List<TextLines.Line>> recognizedB) throws IOException {
+        List<Line> linesA = lines(a, recognizedA);
+        List<Line> linesB = lines(b, recognizedB);
         List<Change> removed = new ArrayList<>();
         List<Change> added = new ArrayList<>();
         int[] counts = new int[2];
@@ -67,10 +77,12 @@ public final class DocumentComparer {
     }
 
     /** Every line of the document with its words; a line's key is its words, so spacing alone is no change. */
-    private static List<Line> lines(PDDocument doc) throws IOException {
+    private static List<Line> lines(PDDocument doc, IntFunction<List<TextLines.Line>> recognized) throws IOException {
         List<Line> lines = new ArrayList<>();
         for (int page = 0; page < doc.getNumberOfPages(); page++) {
-            for (TextLines.Line line : TextLines.of(doc, page)) {
+            List<TextLines.Line> pageLines = new ArrayList<>(TextLines.of(doc, page));
+            pageLines.addAll(recognized.apply(page));
+            for (TextLines.Line line : pageLines) {
                 List<Token> tokens = new ArrayList<>();
                 for (TextLines.Word word : line.words()) {
                     tokens.add(new Token(Normalizer.normalize(word.text(), Normalizer.Form.NFC), page, lines.size(), word));

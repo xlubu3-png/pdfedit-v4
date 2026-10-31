@@ -87,9 +87,20 @@ public final class PersonalInfoFinder {
      * looked for as plain text (ignoring case).
      */
     public static List<Match> find(PDDocument doc, int pageIndex, Set<Kind> kinds, String term) throws IOException {
+        return find(doc, pageIndex, kinds, term, List.of());
+    }
+
+    /**
+     * Like {@link #find(PDDocument, int, Set, String)}, also looking in {@code recognized}: lines read off a scanned
+     * page, which has no text of its own.
+     */
+    public static List<Match> find(PDDocument doc, int pageIndex, Set<Kind> kinds, String term,
+            List<TextLines.Line> recognized) throws IOException {
         List<Match> found = new ArrayList<>();
         String wanted = term == null ? "" : term.strip().toLowerCase(Locale.ROOT);
-        for (TextLines.Line line : TextLines.of(doc, pageIndex)) {
+        List<TextLines.Line> lines = new ArrayList<>(TextLines.of(doc, pageIndex));
+        lines.addAll(recognized);
+        for (TextLines.Line line : lines) {
             List<int[]> taken = new ArrayList<>();
             for (Rule rule : RULES) {
                 if (!kinds.contains(rule.kind())) {

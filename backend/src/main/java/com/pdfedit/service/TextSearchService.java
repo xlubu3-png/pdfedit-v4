@@ -18,6 +18,7 @@ import com.pdfedit.dto.FindMatch;
 import com.pdfedit.dto.PageSpec;
 import com.pdfedit.dto.ReplaceResult;
 import com.pdfedit.dto.TextEditItem;
+import com.pdfedit.ocr.OcrText;
 import com.pdfedit.text.FontUnavailableException;
 import com.pdfedit.text.RunEdit;
 import com.pdfedit.text.TextExtraction;
@@ -53,6 +54,13 @@ public class TextSearchService {
                         String text = currentText(runs.get(i), edits.get(i));
                         if (pattern.matcher(text).find()) {
                             found.add(new FindMatch(doc.getKey(), pageIndex, i, text));
+                        }
+                    }
+                    List<OcrText> recognized = store.ocr(doc.getKey(), pageIndex);
+                    for (int k = 0; k < recognized.size() && found.size() < MAX_MATCHES; k++) {
+                        String text = recognized.get(k).text();
+                        if (pattern.matcher(text).find()) {
+                            found.add(new FindMatch(doc.getKey(), pageIndex, -1 - k, text, true));
                         }
                     }
                 }

@@ -75,8 +75,12 @@ public class PageOcr implements DisposableBean {
             float x = crop.getLowerLeftX() + line.left() * k;
             float top = crop.getUpperRightY() - line.top() * k;
             float bottom = crop.getUpperRightY() - line.bottom() * k;
-            OcrText text = new OcrText(line.text().strip(), x, bottom, (line.right() - line.left()) * k, top - bottom,
-                    line.score());
+            List<Float> centers = new ArrayList<>(line.centers().length);
+            for (float c : line.centers()) {
+                centers.add(Math.round(c * 1000) / 1000f);
+            }
+            OcrText text = new OcrText(line.text(), x, bottom, (line.right() - line.left()) * k, top - bottom,
+                    line.score(), centers);
             if (onRealText(text, runs)) {
                 alreadyText++;
             } else {

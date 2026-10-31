@@ -30,14 +30,31 @@ public final class TextLines {
     /** One line of text; a space stands for a gap between words that has no character of its own. */
     public static final class Line {
         private final String text;
-        /** One per character of {@code text}; null for a gap between words. */
-        private final List<TextPosition> positions;
-        private final PDRectangle crop;
+        /** One per character of {@code text}: where it is; null for a gap between words. */
+        private final List<Area> boxes;
 
-        Line(String text, List<TextPosition> positions, PDRectangle crop) {
+        private Line(String text, List<Area> boxes) {
             this.text = text;
-            this.positions = positions;
-            this.crop = crop;
+            this.boxes = boxes;
+        }
+
+        /**
+         * A line whose characters are where {@code boxes} say (one per character of the text, null for a space):
+         * text recognized on a scan, for instance.
+         */
+        public static Line of(String text, List<Area> boxes) {
+            if (boxes.size() != text.length()) {
+                throw new IllegalArgumentException("One box per character is needed");
+            }
+            return new Line(text, new ArrayList<>(boxes));
+        }
+
+        /** Where a character of the page's text is: from below the baseline to above the capitals. */
+        private static Area box(TextPosition tp, PDRectangle crop) {
+            float size = tp.getYScale() > 0.01f ? tp.getYScale() : Math.max(tp.getFontSizeInPt(), 6f);
+            float left = tp.getXDirAdj() + crop.getLowerLeftX();
+            float baseline = crop.getHeight() - tp.getYDirAdj() + crop.getLowerLeftY();
+            return new Area(left, baseline - size * 0.25f, tp.getWidthDirAdj(), size * 1.1f);
         }
 
         public String text() {
@@ -45,8 +62,8 @@ public final class TextLines {
         }
 
         /**
-         * The area of characters start (inclusive) to end (exclusive), a little larger than the letters: from
-         * below the baseline to above the capitals. Null when there is no character in the range.
+         * The area of characters start (inclusive) to end (exclusive), a little larger than the letters. Null when
+         * there is no character in the range.
          */
         public Area area(int start, int end) {
             float minX = Float.MAX_VALUE;
@@ -54,17 +71,14 @@ public final class TextLines {
             float minY = Float.MAX_VALUE;
             float maxY = -Float.MAX_VALUE;
             for (int i = start; i < end; i++) {
-                TextPosition tp = positions.get(i);
-                if (tp == null) {
+                Area box = boxes.get(i);
+                if (box == null) {
                     continue;
                 }
-                float size = tp.getYScale() > 0.01f ? tp.getYScale() : Math.max(tp.getFontSizeInPt(), 6f);
-                float left = tp.getXDirAdj() + crop.getLowerLeftX();
-                float baseline = crop.getHeight() - tp.getYDirAdj() + crop.getLowerLeftY();
-                minX = Math.min(minX, left);
-                maxX = Math.max(maxX, left + tp.getWidthDirAdj());
-                minY = Math.min(minY, baseline - size * 0.25f);
-                maxY = Math.max(maxY, baseline + size * 0.85f);
+                minX = Math.min(minX, box.x());
+                maxX = Math.max(maxX, box.x() + box.width());
+                minY = Math.min(minY, box.y());
+                maxY = Math.max(maxY, box.y() + box.height());
             }
             if (minX == Float.MAX_VALUE) {
                 return null;
@@ -100,10 +114,10 @@ public final class TextLines {
         // The positions themselves are the text, one entry per character (null for a gap between words), so
         // an index into a line's string is an index into its positions.
         StringBuilder text = new StringBuilder();
-        List<TextPosition> positions = new ArrayList<>();
+        List<Area> positions = new ArrayList<>();
         Runnable endLine = () -> {
             if (!positions.isEmpty()) {
-                lines.add(new Line(text.toString(), new ArrayList<>(positions), crop));
+                lines.add(new Line(text.toString(), new ArrayList<>(positions)));
             }
             text.setLength(0);
             positions.clear();
@@ -116,9 +130,10 @@ public final class TextLines {
                     if (unicode == null || unicode.isEmpty()) {
                         continue;
                     }
+                    Area box = Line.box(tp, crop);
                     for (int i = 0; i < unicode.length(); i++) {
                         text.append(unicode.charAt(i));
-                        positions.add(tp);
+                        positions.add(box);
                     }
                 }
             }

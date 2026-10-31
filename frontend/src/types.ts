@@ -248,6 +248,8 @@ export interface FindMatch {
   pageIndex: number
   runIndex: number
   text: string
+  /** Read off a scanned page by text recognition: it can be found, not replaced. */
+  scanned?: boolean
 }
 
 export interface ReplaceResult {

@@ -3,6 +3,7 @@ package com.pdfedit.controller;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.IntFunction;
 
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -23,6 +24,7 @@ import com.pdfedit.dto.CompareResult;
 import com.pdfedit.service.InvalidEditException;
 import com.pdfedit.service.PdfDocumentStore;
 import com.pdfedit.service.PdfThumbnailService;
+import com.pdfedit.ocr.OcrText;
 import com.pdfedit.text.TextLines;
 
 /**
@@ -63,10 +65,16 @@ public class CompareController {
         }
         try (PDDocument a = Loader.loadPDF(store.getContent(request.a()));
                 PDDocument b = Loader.loadPDF(store.getContent(request.b()))) {
-            DocumentComparer.Comparison result = DocumentComparer.compare(a, b);
+            // Scanned pages compare by what text recognition read off them.
+            DocumentComparer.Comparison result = DocumentComparer.compare(a, b, recognized(request.a()),
+                    recognized(request.b()));
             return new CompareResult(request.a(), request.b(), infoA.fileName(), infoB.fileName(), sizes(a), sizes(b),
                     result.removed(), result.added(), result.removedWords(), result.addedWords());
         }
+    }
+
+    private IntFunction<List<TextLines.Line>> recognized(String documentId) {
+        return page -> store.ocr(documentId, page).stream().map(OcrText::line).toList();
     }
 
     @GetMapping("/compare/visual")

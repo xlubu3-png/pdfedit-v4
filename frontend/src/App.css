@@ -1842,6 +1842,16 @@ kbd {
   font-size: 12px;
 }
 
+/* A line read off a scan: found, but not replaced. */
+.find-scanned {
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: #0f766e;
+  color: #fff;
+  font-size: 11px;
+}
+
 .find-text mark {
   background: #ffe58f;
 }

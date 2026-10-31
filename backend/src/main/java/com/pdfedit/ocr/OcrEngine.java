@@ -103,22 +103,25 @@ public final class OcrEngine implements AutoCloseable {
             crops.add(crop.getRGB(0, 0, crop.getWidth(), crop.getHeight(), null, 0, crop.getWidth()));
             sizes.add(new int[] {crop.getWidth(), crop.getHeight()});
         }
-        String[] texts = new String[boxes.size()];
-        float[] scores = new float[boxes.size()];
-        recognize(crops, sizes, texts, scores);
+        Read[] reads = new Read[boxes.size()];
+        recognize(crops, sizes, reads);
 
         List<OcrLine> lines = new ArrayList<>();
         for (int k = 0; k < boxes.size(); k++) {
-            if (texts[k].isBlank() || scores[k] < MIN_SCORE) {
+            if (reads[k].text().isBlank() || reads[k].score() < MIN_SCORE) {
                 continue;
             }
             float[] corners = boxes.get(k).clone();
             for (int c = 0; c < corners.length; c++) {
                 corners[c] /= (float) scale;
             }
-            lines.add(new OcrLine(texts[k], scores[k], corners));
+            lines.add(new OcrLine(reads[k].text(), reads[k].score(), corners, reads[k].centers()));
         }
         return lines;
+    }
+
+    /** What the reader made of one line; {@code centers} as in {@link OcrLine#centers()}. */
+    private record Read(String text, float score, float[] centers) {
     }
 
     private List<float[]> detect(int[] rgb, int width, int height) throws OrtException {
@@ -192,7 +195,7 @@ public final class OcrEngine implements AutoCloseable {
         return out;
     }
 
-    private void recognize(List<int[]> crops, List<int[]> sizes, String[] texts, float[] scores) throws OrtException {
+    private void recognize(List<int[]> crops, List<int[]> sizes, Read[] reads) throws OrtException {
         Integer[] order = new Integer[crops.size()];
         for (int k = 0; k < order.length; k++) {
             order[k] = k;
@@ -209,11 +212,13 @@ public final class OcrEngine implements AutoCloseable {
             int n = end - begin;
             int plane = REC_HEIGHT * width;
             float[] input = new float[n * 3 * plane];
+            int[] resizedWidths = new int[n];
             for (int i = begin; i < end; i++) {
                 int[] size = sizes.get(order[i]);
                 double ratio = (double) size[0] / size[1];
-                int resized = (int) Math.min(Math.ceil(REC_HEIGHT * ratio), width);
-                putResized(crops.get(order[i]), size[0], size[1], Math.max(resized, 1), REC_HEIGHT, input,
+                int resized = Math.max((int) Math.min(Math.ceil(REC_HEIGHT * ratio), width), 1);
+                resizedWidths[i - begin] = resized;
+                putResized(crops.get(order[i]), size[0], size[1], resized, REC_HEIGHT, input,
                         (i - begin) * 3 * plane, width, plane);
             }
             try (OnnxTensor tensor = OnnxTensor.createTensor(env, FloatBuffer.wrap(input),
@@ -226,7 +231,9 @@ public final class OcrEngine implements AutoCloseable {
                 float[] probs = new float[n * steps * classes];
                 out.getFloatBuffer().get(probs);
                 for (int i = 0; i < n; i++) {
-                    decode(probs, i * steps * classes, steps, classes, order[begin + i], texts, scores);
+                    // Step t of the output covers the input's columns around (t + 0.5) * width / steps.
+                    double stepWidth = (double) width / steps / resizedWidths[i];
+                    reads[order[begin + i]] = decode(probs, i * steps * classes, steps, classes, stepWidth);
                 }
             }
         }
@@ -238,9 +245,11 @@ public final class OcrEngine implements AutoCloseable {
      * of a word are ({@link #spaceGap}). A line where the model did give spaces keeps its own: those come from
      * text set wide (justified), where gaps tell nothing.
      */
-    private void decode(float[] probs, int base, int steps, int classes, int index, String[] texts, float[] scores) {
-        StringBuilder text = new StringBuilder();
-        StringBuilder spaced = new StringBuilder();
+    private Read decode(float[] probs, int base, int steps, int classes, double stepWidth) {
+        List<String> text = new ArrayList<>();
+        List<Float> textAt = new ArrayList<>();
+        List<String> spaced = new ArrayList<>();
+        List<Float> spacedAt = new ArrayList<>();
         boolean modelSpaces = false;
         double sum = 0;
         int count = 0;
@@ -259,24 +268,57 @@ public final class OcrEngine implements AutoCloseable {
             }
             if (best != previous && best != 0 && best < characters.length) {
                 String ch = characters[best];
+                float at = (float) Math.min(1, (t + 0.5) * stepWidth);
                 if (ch.isBlank()) {
                     modelSpaces = true;
                 } else {
                     if (lastChar != null && t - lastStep > spaceGap(lastChar, ch)) {
-                        spaced.append(' ');
+                        spaced.add(" ");
+                        spacedAt.add((float) Math.min(1, (lastStep + t + 1) / 2.0 * stepWidth));
                     }
                     lastChar = ch;
                     lastStep = t;
-                    spaced.append(ch);
+                    spaced.add(ch);
+                    spacedAt.add(at);
                 }
-                text.append(ch);
+                text.add(ch);
+                textAt.add(at);
                 sum += bestProb;
                 count++;
             }
             previous = best;
         }
-        texts[index] = (modelSpaces ? text : spaced).toString().strip().replaceAll(" {2,}", " ");
-        scores[index] = count == 0 ? 0 : (float) (sum / count);
+        return tidy(modelSpaces ? text : spaced, modelSpaces ? textAt : spacedAt,
+                count == 0 ? 0 : (float) (sum / count));
+    }
+
+    /**
+     * The pieces joined, one space between words and none at the ends; every char of the result keeps the place
+     * (0 to 1 along the line) of the piece it came from.
+     */
+    private static Read tidy(List<String> pieces, List<Float> places, float score) {
+        StringBuilder out = new StringBuilder();
+        List<Float> centers = new ArrayList<>();
+        for (int k = 0; k < pieces.size(); k++) {
+            String piece = pieces.get(k).isBlank() ? " " : pieces.get(k);
+            boolean space = piece.equals(" ");
+            if (space && (out.isEmpty() || out.charAt(out.length() - 1) == ' ')) {
+                continue;
+            }
+            for (int c = 0; c < piece.length(); c++) {
+                out.append(piece.charAt(c));
+                centers.add(places.get(k));
+            }
+        }
+        while (!out.isEmpty() && out.charAt(out.length() - 1) == ' ') {
+            out.setLength(out.length() - 1);
+            centers.removeLast();
+        }
+        float[] at = new float[centers.size()];
+        for (int k = 0; k < at.length; k++) {
+            at[k] = centers.get(k);
+        }
+        return new Read(out.toString(), score, at);
     }
 
     /**

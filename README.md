@@ -16,7 +16,7 @@ v2(페이지 편집기). 이 저장소는 둘을 합친 것입니다.
 
 ## 구조
 
-- `backend/` — Spring Boot 4.0.6 + Apache PDFBox 3.0.8 (Java 25 toolchain, Gradle wrapper 포함)
+- `backend/` — Spring Boot 4.0.9 + Apache PDFBox 3.0.8 (Java 25 toolchain, Gradle wrapper 포함)
   - `com.pdfedit.text` — 텍스트 런 추출(`TextExtraction`), 덮개 영역 계산(`VerticalBounds`), 글꼴 매칭(`FontMatcher`), 설치된 글꼴 색인(`SystemFonts`)
   - `com.pdfedit.text.RunPainter` — 수정한 줄을 원본 글리프 그대로 다시 그림(부분 서식의 굵게·색·크기·밑줄 포함)
   - `com.pdfedit.service.TextEditService` — 텍스트 수정 기록·미리보기·PDF에 굽기

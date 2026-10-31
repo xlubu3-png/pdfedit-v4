@@ -33,13 +33,35 @@ public record AddedText(String id, String text, float x, float y, String fontFam
      *
      * @param y     bottom edge
      * @param color "#rrggbb", the paper's colour
-     * @param patch a PNG (base64) in the paper's colour where the scanned letters are and see-through elsewhere,
-     *              so the table rules and shading around them stay; null for a plain fill
+     * @param patch   a PNG (base64) in the paper's colour where the scanned letters are and see-through elsewhere,
+     *                so the table rules and shading around them stay; null for a plain fill
+     * @param read    what the scanned line said when the box was made (its text then), or null
+     * @param letters for every char of {@code read}, from where to where (x, PDF points) its scanned letter reaches;
+     *                null for a space, or null as a whole when not known
+     * @param ink     "#rrggbb", the scanned letters' own ink, which letters drawn among them take; null if not known
      */
-    public record Cover(float x, float y, float width, float height, String color, String patch) {
+    public record Cover(float x, float y, float width, float height, String color, String patch, String read,
+            List<float[]> letters, String ink) {
+
+        public Cover(float x, float y, float width, float height, String color, String patch, String read,
+                List<float[]> letters) {
+            this(x, y, width, height, color, patch, read, letters, null);
+        }
+
+        public Cover(float x, float y, float width, float height, String color, String patch) {
+            this(x, y, width, height, color, patch, null, null, null);
+        }
 
         public Cover(float x, float y, float width, float height, String color) {
-            this(x, y, width, height, color, null);
+            this(x, y, width, height, color, null, null, null, null);
+        }
+
+        /**
+         * Whether the box can be drawn letter by letter over the scan: it knows what the scan says and where each of
+         * its letters is, so only the letters it changes need painting over and drawing anew.
+         */
+        public boolean byLetter() {
+            return read != null && letters != null && letters.size() == read.length();
         }
 
         /** Whether the point lies inside. */

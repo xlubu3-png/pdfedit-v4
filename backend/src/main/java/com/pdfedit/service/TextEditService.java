@@ -75,6 +75,17 @@ public class TextEditService {
     /** Limits of the patch over a rewritten scanned line: a long line at 3 pixels per point is far smaller. */
     private static final int MAX_PATCH_CHARS = 2_000_000;
     private static final long MAX_PATCH_PIXELS = 8_000_000L;
+    /** New letters may take this much more room than the scanned ones they replace before the line is drawn anew. */
+    private static final float ROOM_SLACK = 1.1f;
+    /** ... and may be drawn down to this much narrower to fit it. */
+    private static final float MIN_SQUEEZE = 0.75f;
+    /** How many pixels a cover's patch reaches past the scanned ink (RecognizedLineBox's spread). */
+    private static final int PATCH_MARGIN = 3;
+    /** The patch's gap between two words is at least this share of its letters' height wide. */
+    private static final double WORD_GAP = 0.2;
+    /** A redrawn word takes the scanned one's height when that is within these shares of the box's size. */
+    private static final float SIZE_FIT_RANGE_LOW = 0.7f;
+    private static final float SIZE_FIT_RANGE_HIGH = 1.3f;
 
     private final FontMatcher fontMatcher;
 
@@ -621,6 +632,299 @@ public class TextEditService {
     }
 
     /**
+     * Draws a box rewriting a scanned line by its changes alone, which looks the most like the scan: the letters it
+     * keeps stay as scanned; the ones it changes are painted over and the new ones drawn where they were. The whole
+     * text goes in as invisible text, to be searched and copied. False - the whole line is then drawn anew - when
+     * the box has a look of its own in parts or more than one line, or the new letters do not fit where the old ones
+     * were, even drawn somewhat narrower.
+     */
+    private boolean drawChanges(PDPageContentStream cs, PDDocument outDoc, AddedText box, FontCache fonts)
+            throws IOException {
+        AddedText.Cover cover = box.cover();
+        String before = cover.read();
+        String now = box.text() == null ? "" : box.text();
+        if (!box.spans().isEmpty() || box.rotation() != 0 || now.contains("\n") || now.contains("\r")) {
+            return false;
+        }
+        // The letters both have at the start and at the end are kept.
+        int keepStart = 0;
+        while (keepStart < before.length() && keepStart < now.length()
+                && before.charAt(keepStart) == now.charAt(keepStart)) {
+            keepStart++;
+        }
+        int keepEnd = 0;
+        while (keepEnd < before.length() - keepStart && keepEnd < now.length() - keepStart
+                && before.charAt(before.length() - 1 - keepEnd) == now.charAt(now.length() - 1 - keepEnd)) {
+            keepEnd++;
+        }
+        String key = "family:" + (box.fontFamily() == null ? "" : box.fontFamily()) + "|" + box.bold();
+        FontMatcher.Styled styled = fonts.styled.computeIfAbsent(key,
+                k -> fontMatcher.loadStyled(outDoc, box.fontFamily(), box.bold()));
+        if (keepStart == before.length() && keepStart == now.length()) {
+            drawInvisible(cs, styled, now, box.x(), box.y(), box.fontSize(), box.charSpacing());
+            return true;
+        }
+        // Whole words are redrawn: where one scanned letter ends and the next begins is hard to tell on a coarse
+        // scan (a Hangul letter has gaps of its own), where one word ends and the next begins is not.
+        while (keepStart > 0 && !Character.isWhitespace(before.charAt(keepStart - 1))) {
+            keepStart--;
+        }
+        while (keepEnd > 0 && !Character.isWhitespace(before.charAt(before.length() - keepEnd))) {
+            keepEnd--;
+        }
+        List<float[]> letters = cover.letters();
+        int lastKept = firstIndex(letters, keepStart - 1, -1);
+        int firstGone = firstIndex(letters, keepStart, 1);
+        int lastGone = firstIndex(letters, before.length() - keepEnd - 1, -1);
+        int nextKept = firstIndex(letters, before.length() - keepEnd, 1);
+        boolean anyGone = firstGone >= 0 && firstGone < before.length() - keepEnd && lastGone >= keepStart;
+        // The changed words are painted over between the scan's gaps that part them from the kept words around them
+        // (the widest stretch without ink between the letters either side): a kept word is never touched.
+        BufferedImage patch = patchOf(cover);
+        float[] gapBefore = lastKept < 0 || !anyGone ? null
+                : wordGap(cover, patch, (letters.get(lastKept)[1] + letters.get(firstGone)[0]) / 2);
+        float[] gapAfter = nextKept < 0 || !anyGone ? null
+                : wordGap(cover, patch, (letters.get(lastGone)[1] + letters.get(nextKept)[0]) / 2);
+        float from = lastKept < 0 ? cover.x() : anyGone ? (gapBefore[0] + gapBefore[1]) / 2 : letters.get(lastKept)[1];
+        float to = nextKept < 0 ? cover.x() + cover.width() : anyGone ? (gapAfter[0] + gapAfter[1]) / 2
+                : letters.get(nextKept)[0];
+        // The new words go where the first changed one's ink began, or right after the kept ones before them.
+        String middle = now.substring(keepStart, now.length() - keepEnd);
+        float start = anyGone ? inkFrom(cover, patch, from, to, letters.get(firstGone)[0])
+                : lastKept < 0 ? from : letters.get(lastKept)[1];
+        // ... and end where the gap before the next kept word begins, so the words stay as far apart as they were.
+        float end = nextKept < 0 ? cover.x() + cover.width() : anyGone ? gapAfter[0] : letters.get(nextKept)[0];
+        // As tall as the scanned words they replace, standing where they stood: the box's size was told from the
+        // whole line (its brackets and symbols too), which can be a little off for a word.
+        float size = box.fontSize();
+        float baseline = box.y();
+        float[] inkRows = anyGone ? inkRows(cover, patch, from, to) : null;
+        float[] glyphRows = glyphRows(styled.font(), middle);
+        if (inkRows != null && glyphRows != null && glyphRows[1] > glyphRows[0]) {
+            float fitted = (inkRows[1] - inkRows[0]) / (glyphRows[1] - glyphRows[0]);
+            if (fitted > SIZE_FIT_RANGE_LOW * size && fitted < SIZE_FIT_RANGE_HIGH * size) {
+                size = fitted;
+                baseline = inkRows[0] - glyphRows[0] * size;
+            }
+        }
+        Float measured = tryMeasureWidth(styled.font(), middle, size);
+        float width = (measured != null ? measured : middle.length() * size * 0.6f) + box.charSpacing() * middle.length();
+        // Letters a little wider than the room are drawn that much narrower; much wider, the line is drawn anew.
+        float squeeze = width > (end - start) * ROOM_SLACK + 0.5f ? (end - start) * ROOM_SLACK / width : 1f;
+        if (squeeze < MIN_SQUEEZE) {
+            return false;
+        }
+        if (anyGone && to > from) {
+            cs.saveGraphicsState();
+            cs.addRect(from, cover.y(), to - from, cover.height());
+            cs.clip();
+            drawCover(cs, outDoc, cover);
+            cs.restoreGraphicsState();
+        }
+        if (!middle.isBlank()) {
+            // Among scanned letters, in the scan's own ink (the box's colour is toned to stand for a whole line).
+            Color ink = RunEdit.colour(cover.ink() != null ? cover.ink() : box.color(), Color.BLACK);
+            drawLine(cs, styled, middle, start, baseline, size, ink, squeeze, box.charSpacing() * squeeze);
+        }
+        drawInvisible(cs, styled, now, box.x(), box.y(), box.fontSize(), box.charSpacing());
+        return true;
+    }
+
+    private static float middle(List<float[]> letters, int i) {
+        return (letters.get(i)[0] + letters.get(i)[1]) / 2;
+    }
+
+    /**
+     * From where to where (y, points: bottom and top) the scanned ink between x {@code from} and {@code to} reaches,
+     * told by the patch's paint less its margin; null when there is no patch or no paint there.
+     */
+    private static float[] inkRows(AddedText.Cover cover, BufferedImage patch, float from, float to) {
+        if (patch == null) {
+            return null;
+        }
+        double perPointX = patch.getWidth() / (double) cover.width();
+        double perPointY = patch.getHeight() / (double) cover.height();
+        int x0 = Math.max(0, (int) Math.ceil((from - cover.x()) * perPointX));
+        int x1 = Math.min(patch.getWidth() - 1, (int) Math.floor((to - cover.x()) * perPointX));
+        int top = Integer.MAX_VALUE;
+        int bottom = -1;
+        for (int y = 0; y < patch.getHeight(); y++) {
+            for (int x = x0; x <= x1; x++) {
+                if ((patch.getRGB(x, y) >>> 24) != 0) {
+                    top = Math.min(top, y);
+                    bottom = Math.max(bottom, y);
+                    break;
+                }
+            }
+        }
+        if (bottom - top <= 2 * PATCH_MARGIN) {
+            return null;
+        }
+        float coverTop = cover.y() + cover.height();
+        return new float[] {(float) (coverTop - (bottom + 1 - PATCH_MARGIN) / perPointY),
+                (float) (coverTop - (top + PATCH_MARGIN) / perPointY)};
+    }
+
+    /**
+     * From where to where (y, ems from the baseline: bottom and top) the outlines of the text's letters reach in the
+     * font; null when the font cannot tell.
+     */
+    private static float[] glyphRows(PDFont font, String text) {
+        if (!(font instanceof org.apache.pdfbox.pdmodel.font.PDVectorFont vector)) {
+            return null;
+        }
+        float low = Float.MAX_VALUE;
+        float high = -Float.MAX_VALUE;
+        try {
+            for (int i = 0; i < text.length(); ) {
+                int cp = text.codePointAt(i);
+                i += Character.charCount(cp);
+                if (Character.isWhitespace(cp)) {
+                    continue;
+                }
+                byte[] bytes = font.encode(new String(Character.toChars(cp)));
+                int code = font.readCode(new ByteArrayInputStream(bytes));
+                java.awt.geom.Rectangle2D bounds = vector.getPath(code).getBounds2D();
+                if (!bounds.isEmpty()) {
+                    low = Math.min(low, (float) bounds.getMinY() / 1000f);
+                    high = Math.max(high, (float) bounds.getMaxY() / 1000f);
+                }
+            }
+        } catch (IOException | IllegalArgumentException unknown) {
+            return null;
+        }
+        return high > low ? new float[] {low, high} : null;
+    }
+
+    /** The cover's patch as a picture; null without one, or when it cannot be read. */
+    private static BufferedImage patchOf(AddedText.Cover cover) {
+        if (cover.patch() == null) {
+            return null;
+        }
+        try {
+            return ImageIO.read(new ByteArrayInputStream(Base64.getDecoder().decode(cover.patch())));
+        } catch (IOException | IllegalArgumentException unreadable) {
+            return null;
+        }
+    }
+
+    /** The patch's columns (painted pixels in each) and the points-to-pixels ratio, for the stretch a to b. */
+    private static int[] paintedColumns(AddedText.Cover cover, BufferedImage patch, int from, int to) {
+        int[] painted = new int[Math.max(0, to - from + 1)];
+        for (int c = from; c <= to; c++) {
+            for (int y = 0; y < patch.getHeight(); y++) {
+                if ((patch.getRGB(c, y) >>> 24) != 0) {
+                    painted[c - from]++;
+                }
+            }
+        }
+        return painted;
+    }
+
+    /**
+     * Where two scanned words part near x {@code expected} (points): from where to where the stretch of the patch
+     * without paint (the letters' ink and a little around it) nearest it reaches, of those wide enough to be a
+     * space - the gaps inside a Hangul letter are narrower. Just {@code expected} when there is no patch, or no such
+     * stretch.
+     */
+    private static float[] wordGap(AddedText.Cover cover, BufferedImage patch, float expected) {
+        if (patch == null) {
+            return new float[] {expected, expected};
+        }
+        int w = patch.getWidth();
+        int[] painted = paintedColumns(cover, patch, 0, w - 1);
+        int top = Integer.MAX_VALUE;
+        int bottom = -1;
+        for (int y = 0; y < patch.getHeight(); y++) {
+            for (int x = 0; x < w; x++) {
+                if ((patch.getRGB(x, y) >>> 24) != 0) {
+                    top = Math.min(top, y);
+                    bottom = Math.max(bottom, y);
+                    break;
+                }
+            }
+        }
+        if (bottom < 0) {
+            return new float[] {expected, expected};
+        }
+        double perPoint = w / (double) cover.width();
+        double want = (expected - cover.x()) * perPoint;
+        double wide = WORD_GAP * Math.max(1, bottom - top + 1 - 2 * PATCH_MARGIN);
+        int bestFrom = -1;
+        int bestTo = -1;
+        for (int i = 0; i < w; i++) {
+            if (painted[i] == 0) {
+                int j = i;
+                while (j < w && painted[j] == 0) {
+                    j++;
+                }
+                // A stretch at either end of the patch is outside the line, not between its words.
+                if (i > 0 && j < w && j - i >= wide && (bestFrom < 0
+                        || Math.abs((i + j) / 2.0 - want) < Math.abs((bestFrom + bestTo) / 2.0 - want))) {
+                    bestFrom = i;
+                    bestTo = j;
+                }
+                i = j;
+            }
+        }
+        if (bestFrom < 0) {
+            return new float[] {expected, expected};
+        }
+        // The patch reaches a few pixels past the ink: the gap between the inks is that much wider.
+        return new float[] {(float) (cover.x() + (bestFrom - PATCH_MARGIN) / perPoint),
+                (float) (cover.x() + (bestTo + PATCH_MARGIN) / perPoint)};
+    }
+
+    /** Where the first painted column after {@code from} (and before {@code to}) is: the ink's start; else {@code otherwise}. */
+    private static float inkFrom(AddedText.Cover cover, BufferedImage patch, float from, float to, float otherwise) {
+        if (patch == null || to <= from) {
+            return otherwise;
+        }
+        double perPoint = patch.getWidth() / (double) cover.width();
+        int start = Math.max(0, Math.min(patch.getWidth() - 1, (int) Math.ceil((from - cover.x()) * perPoint)));
+        int end = Math.max(start, Math.min(patch.getWidth() - 1, (int) Math.floor((to - cover.x()) * perPoint)));
+        int[] painted = paintedColumns(cover, patch, start, end);
+        for (int i = 0; i < painted.length; i++) {
+            if (painted[i] > 0) {
+                // The patch reaches a few pixels past the ink on each side.
+                return (float) (cover.x() + (start + i + PATCH_MARGIN) / perPoint);
+            }
+        }
+        return otherwise;
+    }
+
+    /** The first letter from {@code at} on, going {@code step}, whose place is known; -1 if none. */
+    private static int firstIndex(List<float[]> letters, int at, int step) {
+        for (int i = at; i >= 0 && i < letters.size(); i += step) {
+            if (letters.get(i) != null) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** The text, not seen but found and copied by a reader, as a scanned page's recognized text is. */
+    private static void drawInvisible(PDPageContentStream cs, FontMatcher.Styled styled, String text, float x, float y,
+            float size, float charSpacing) throws IOException {
+        cs.saveGraphicsState();
+        cs.beginText();
+        try {
+            cs.setFont(styled.font(), size);
+            cs.setRenderingMode(RenderingMode.NEITHER);
+            if (charSpacing != 0f) {
+                cs.setCharacterSpacing(charSpacing);
+            }
+            cs.newLineAtOffset(x, y);
+            cs.showText(text);
+        } catch (IllegalArgumentException glyphError) {
+            // a character the font lacks: the text cannot be searched, the page still looks right
+        } finally {
+            cs.endText();
+            cs.restoreGraphicsState();
+        }
+    }
+
+    /**
      * Paints over the scanned letters a box rewrites: with its patch (the paper's colour on the letters only, so
      * the table rules around them stay), or for a box without one with a plain fill in the paper's colour.
      */
@@ -661,6 +965,9 @@ public class TextEditService {
 
     private void drawAdded(PDPageContentStream cs, PDDocument outDoc, AddedText box, FontCache fonts)
             throws IOException {
+        if (box.cover() != null && box.cover().byLetter() && drawChanges(cs, outDoc, box, fonts)) {
+            return;
+        }
         if (box.cover() != null) {
             drawCover(cs, outDoc, box.cover());
         }

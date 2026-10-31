@@ -29,11 +29,13 @@ final class ScanLook {
     private static final float PROBE_SIZE = 100f;
     private static final int PROBE_MARGIN = 10;
     /**
-     * Between two words the stretch without ink is this much (a share of the letters' height) wider than between
-     * the letters of a word, and at least {@link #WORD_GAP} wide.
+     * A gap this much wider (a share of the letters' height) than between the letters of a word, and at least
+     * {@link #WORD_GAP} wide, is a space between words, whatever recognition read.
      */
-    private static final double WORD_GAP_MORE = 0.22;
-    private static final double WORD_GAP = 0.3;
+    private static final double WORD_GAP_MORE = 0.3;
+    private static final double WORD_GAP = 0.4;
+    /** A space read where the gap is at most this much wider than between the letters of a word is not one. */
+    private static final double NO_GAP_MORE = 0.05;
     /** Letter spacing kept within these shares of the font size: more says the font is wrong, not spaced. */
     private static final double MIN_SPACING = -0.12;
     private static final double MAX_SPACING = 0.6;
@@ -137,9 +139,10 @@ final class ScanLook {
     }
 
     /**
-     * The text spaced as the scan is: between two letters a space where the stretch without ink between them is
-     * clearly wider than between the letters of a word, none where it is not. Recognition reads the spaces off
-     * those gaps too, but more coarsely, and a font set wide gets spaces inside its words.
+     * The text spaced as the scan is: a space put between two letters where the stretch without ink between them is
+     * clearly wider than between the letters of a word, one taken out where it is clearly no wider; elsewhere the
+     * spaces stay as recognition read them. Recognition reads spaces off those gaps too, but more coarsely: a font
+     * set wide gets spaces inside its words, a tight one loses some between them.
      *
      * @param centers where each letter was seen along the line (0 to 1), as recognition gave it
      * @param width   the line's width in pixels of {@code ink}'s picture
@@ -150,10 +153,14 @@ final class ScanLook {
         }
         List<Character> letters = new ArrayList<>();
         List<Double> places = new ArrayList<>();
+        List<Boolean> spaceAfter = new ArrayList<>();
         for (int i = 0; i < text.length(); i++) {
             if (text.charAt(i) != ' ') {
                 letters.add(text.charAt(i));
                 places.add(centers.get(i) * (double) width);
+                spaceAfter.add(false);
+            } else if (!spaceAfter.isEmpty()) {
+                spaceAfter.set(spaceAfter.size() - 1, true);
             }
         }
         if (letters.size() < 3) {
@@ -181,10 +188,11 @@ final class ScanLook {
         java.util.Arrays.sort(sorted);
         double usual = sorted[sorted.length / 2];
         double space = Math.max(usual + WORD_GAP_MORE * ink.height(), WORD_GAP * ink.height());
+        double noSpace = usual + NO_GAP_MORE * ink.height();
         StringBuilder out = new StringBuilder(text.length());
         for (int i = 0; i < letters.size(); i++) {
             out.append(letters.get(i));
-            if (i < gaps.length && gaps[i] >= space) {
+            if (i < gaps.length && (gaps[i] >= space || (spaceAfter.get(i) && gaps[i] > noSpace))) {
                 out.append(' ');
             }
         }

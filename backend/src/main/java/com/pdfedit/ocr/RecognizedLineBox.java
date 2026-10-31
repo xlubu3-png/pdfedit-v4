@@ -59,6 +59,20 @@ public class RecognizedLineBox {
     private static final int INK_DIFFERENCE = 150;
     /** The same for the solid ink of a letter (not its soft edge), which fonts are compared against. */
     private static final int SOLID_DIFFERENCE = 100;
+    /** Ink within this many pixels of the line box's edge across the line is not the line's: a rule, another row ... */
+    private static final int EDGE = 1;
+    /** ... when it is less than this share of the box tall (across the line). */
+    private static final double EDGE_SPAN = 0.5;
+    /**
+     * Thin patches (this share of the box across the line) lying all in its outer band (this share at either side)
+     * are not the line's either.
+     */
+    private static final double THIN = 0.12;
+    private static final double OUTER = 0.2;
+    /** Ink whose middle is further than this (a share of the distance between letters) from all letters was not read. */
+    private static final double UNREAD = 0.9;
+    /** Room left after ink recognition did not read, before the next letter (a share of the font size). */
+    private static final double ROOM = 0.15;
     /** Pages whose fonts were compared, remembered for their next rewrites. */
     private static final int PAGES_REMEMBERED = 32;
     /** At most this many of the page's other lines, read at least this surely and this long, judge its font. */
@@ -82,7 +96,7 @@ public class RecognizedLineBox {
     private static final float SURE_LINE = 0.85f;
     private static final int SAMPLE_LETTERS = 4;
     /** A rewritten line's ink is lightened at most this far towards the paper (1 is the scan's own ink). */
-    private static final double LIGHTEST_TONE = 0.45;
+    private static final double LIGHTEST_TONE = 0.7;
     /** Colour channels are grouped by this much to find the paper's colour in a noisy (JPEG) scan. */
     private static final int BUCKET = 24;
 
@@ -137,8 +151,11 @@ public class RecognizedLineBox {
             Color paper = paper(pixels(image, coreInImage));
             List<Integer> letterPixels = new ArrayList<>();
             boolean[][] solid = new boolean[coreInImage.height()][coreInImage.width()];
-            BufferedImage patch = patch(image, coreInImage, areaInImage, paper, letterPixels, line.vertical(), solid);
+            List<int[]> unread = new ArrayList<>();
+            BufferedImage patch = patch(image, coreInImage, areaInImage, paper, letterPixels, line.vertical(), solid,
+                    line.text(), line.centers(), unread);
             Color ink = ink(letterPixels, paper);
+            Color scannedInk = ink;
 
             String text = line.text();
             String family = null;
@@ -158,10 +175,24 @@ public class RecognizedLineBox {
                 PageFont pageFont = pageFont(pdf, renderer, pageIndex, crop, pageLines, faces);
                 double darkness = darkness(image, coreInImage, scanInk, paper);
                 look = chosenLook(text, scanInk, faces, pageFont, heavy(darkness, paper, fullInk(letterPixels, paper)));
+                if (look != null && !unread.isEmpty()) {
+                    // Room for what recognition did not read (check boxes, symbols), which stays as scanned.
+                    String roomy = withRoom(text, line.text(), line.centers(), coreInImage.width(), unread, scanInk,
+                            look);
+                    if (!roomy.equals(text)) {
+                        ScanLook.Look refitted = ScanLook.at(roomy, scanInk, look.face(), look.sizePx());
+                        if (refitted != null) {
+                            text = roomy;
+                            look = refitted;
+                        }
+                    }
+                }
                 if (look != null && look.face().family().equals(pageFont.family())) {
                     // Lines of one size on the page (rows of a table) get one size, not each its own few pixels
                     // off; and one colour.
-                    look = ScanLook.at(text, scanInk, look.face(), pageSize(pageFont.sizes(), look.sizePx()));
+                    ScanLook.Look sized = ScanLook.at(text, scanInk, look.face(),
+                            pageSize(pageFont.sizes(), look.sizePx()));
+                    look = sized != null ? sized : look;
                     ink = alike(toned(ink, paper, darkness, look.coverage()), pageFont.colour());
                 } else if (look != null) {
                     ink = toned(ink, paper, darkness, look.coverage());
@@ -201,10 +232,16 @@ public class RecognizedLineBox {
                 x = round(line.x());
                 baseline = round(line.y() + line.height() / 2f - size * MIDDLE_ABOVE_BASELINE);
             }
+            // Across the page the box keeps what the scan says and where each letter is: drawn, it changes only the
+            // letters the user changed and leaves the others as scanned.
             AddedText.Cover cover = patch == null ? null
                     : new AddedText.Cover(round(crop.getLowerLeftX() + area.x0() / SCALE),
                             round(crop.getUpperRightY() - area.y1() / SCALE), round(area.width() / SCALE),
-                            round(area.height() / SCALE), hex(paper), png(patch));
+                            round(area.height() / SCALE), hex(paper), png(patch),
+                            line.vertical() ? null : text,
+                            line.vertical() ? null : letterPlaces(text, line, scanInk,
+                                    crop.getLowerLeftX() + (area.x0() + coreInImage.x0()) / SCALE),
+                            hex(scannedInk));
             return new AddedText(null, text, x, baseline, family, size, bold, hex(ink), List.of(), cover, rotation,
                     spacing);
         }
@@ -294,6 +331,122 @@ public class RecognizedLineBox {
         return look.likeness() * Math.max(0.5, 1 - WEIGHT_MISFIT * Math.abs(Math.log(Math.max(1e-6, weight))));
     }
 
+    /**
+     * The text with spaces put in front of each letter that comes after ink recognition did not read (a check box,
+     * a symbol, which stays as scanned), so that the new letters, set in the look's font from the scan's first
+     * letter on, leave it room as the scanned ones did.
+     *
+     * @param read    what recognition read off the line, and {@code centers} where each of its letters was seen
+     * @param unread  where the unread ink lies (first and last pixel of the line's box)
+     */
+    static String withRoom(String text, String read, List<Float> centers, int width, List<int[]> unread,
+            ScanLook.Ink ink, ScanLook.Look look) {
+        if (centers == null || centers.size() != read.length()) {
+            return text;
+        }
+        java.awt.Font font = ScanLook.awtFont(look.face()).map(f -> f.deriveFont((float) look.sizePx())).orElse(null);
+        if (font == null) {
+            return text;
+        }
+        List<Double> places = new ArrayList<>();
+        for (int i = 0; i < read.length(); i++) {
+            if (!Character.isWhitespace(read.charAt(i))) {
+                places.add(centers.get(i) * (double) width);
+            }
+        }
+        java.awt.font.FontRenderContext context = new java.awt.font.FontRenderContext(null, true, true);
+        double space = font.getStringBounds(" ", context).getWidth();
+        if (space <= 0) {
+            return text;
+        }
+        StringBuilder out = new StringBuilder(text);
+        List<int[]> spans = unread.stream().sorted(java.util.Comparator.comparingInt(s -> s[0])).toList();
+        for (int[] span : spans) {
+            // The first letter the scan has after the unread ink, and where it is in the text.
+            int letter = 0;
+            while (letter < places.size() && places.get(letter) <= span[1]) {
+                letter++;
+            }
+            if (letter == 0 || letter >= places.size()) {
+                continue; // before the first letter or after the last: nothing to make room in
+            }
+            int at = -1;
+            for (int i = 0, seen = 0; i < out.length(); i++) {
+                if (!Character.isWhitespace(out.charAt(i)) && seen++ == letter) {
+                    at = i;
+                    break;
+                }
+            }
+            if (at < 0) {
+                continue;
+            }
+            double left = ink.left() + font.getStringBounds(out.substring(0, at), context).getWidth();
+            double need = span[1] + ROOM * look.sizePx() - left;
+            if (need > 0) {
+                out.insert(at, " ".repeat((int) Math.ceil(need / space)));
+            }
+        }
+        return out.toString();
+    }
+
+    /**
+     * For every char of {@code text} (the line's text, maybe spaced anew), from where to where its scanned letter
+     * reaches along the page (PDF points); null for a space, null as a whole when the text does not have the
+     * recognized letters. Recognition sees each letter a little early or late, the same along a line: its places are
+     * stretched so that the first letter starts and the last ends where the scan's ink does. A letter is as wide as
+     * the ink is tall for Hangul (and other square letters), about half that for others.
+     *
+     * @param ink       the line's own ink, in pixels of the picture whose pixel (0, 0) is page point
+     *                  ({@code left}, top) at {@link #SCALE} pixels a point
+     */
+    static List<float[]> letterPlaces(String text, OcrText line, ScanLook.Ink ink, float left) {
+        List<Character> letters = new ArrayList<>();
+        List<Float> seen = new ArrayList<>();
+        for (int i = 0; i < line.text().length(); i++) {
+            if (!Character.isWhitespace(line.text().charAt(i))) {
+                letters.add(line.text().charAt(i));
+                seen.add(line.x() + line.letterPlaces()[i] * line.width());
+            }
+        }
+        if (letters.isEmpty() || ink == null) {
+            return null;
+        }
+        float height = ink.height() / SCALE;
+        float inkLeft = left + ink.left() / SCALE;
+        float inkRight = left + (ink.right() + 1) / SCALE;
+        float firstMiddle = inkLeft + halfWidth(letters.getFirst(), height);
+        float lastMiddle = inkRight - halfWidth(letters.getLast(), height);
+        float seenFirst = seen.getFirst();
+        float seenLast = seen.getLast();
+        List<float[]> scanned = new ArrayList<>();
+        for (int k = 0; k < letters.size(); k++) {
+            float middle = seenLast > seenFirst
+                    ? firstMiddle + (seen.get(k) - seenFirst) / (seenLast - seenFirst) * (lastMiddle - firstMiddle)
+                    : (firstMiddle + lastMiddle) / 2;
+            float half = halfWidth(letters.get(k), height);
+            scanned.add(new float[] {round(middle - half), round(middle + half)});
+        }
+        List<float[]> out = new ArrayList<>(text.length());
+        int k = 0;
+        for (int i = 0; i < text.length(); i++) {
+            if (Character.isWhitespace(text.charAt(i))) {
+                out.add(null);
+            } else if (k < scanned.size()) {
+                out.add(scanned.get(k++));
+            } else {
+                return null;
+            }
+        }
+        return k == scanned.size() ? out : null;
+    }
+
+    /** Half a letter's width, for letters whose ink is {@code height} tall: square Hangul and Hanja, narrower others. */
+    private static float halfWidth(char letter, float height) {
+        Character.UnicodeScript script = Character.UnicodeScript.of(letter);
+        boolean square = script == Character.UnicodeScript.HANGUL || script == Character.UnicodeScript.HAN;
+        return height * (square ? 0.5f : 0.28f);
+    }
+
     /** Whether the face is of the serif style (명조, 바탕), told by its name. */
     static boolean serif(SystemFonts.Face face) {
         String name = (face.family() + " " + face.label()).toLowerCase(java.util.Locale.ROOT);
@@ -349,7 +502,7 @@ public class RecognizedLineBox {
             List<Integer> letterPixels = new ArrayList<>();
             boolean[][] solid = new boolean[core.height()][core.width()];
             patch(region.image(), core, new Px(0, 0, region.area().width(), region.area().height()), paper,
-                    letterPixels, false, solid);
+                    letterPixels, false, solid, sample.text(), sample.centers(), null);
             ScanLook.Ink ink = ScanLook.Ink.of(solid);
             if (ink == null) {
                 continue;
@@ -475,14 +628,21 @@ public class RecognizedLineBox {
     /**
      * The patch over {@code area}: the paper's colour on the letters of the line (and a few pixels around them),
      * see-through everywhere else. Ink that runs as a long unbroken stretch across the line - a table rule, the
-     * edge of a shaded band - is not letters and is not painted over. Null when there are no letters.
+     * edge of a shaded band - is not letters and is not painted over; nor is ink reaching the line box's edge
+     * across the line (a rule slanting through a tilted scan, the row above or below) or, given the letters'
+     * places, ink far from all of them (a symbol recognition did not read, such as a check box). Null when there
+     * are no letters.
      *
      * @param letterPixels gets the colours of the letters' pixels
      * @param vertical     the line runs down the page: a rule along it is a column, one across it a row
      * @param solid        gets the letters' solid ink (not their soft edges), rows then columns of {@code core}
+     * @param text         what was read off the line, or null
+     * @param centers      where each of its letters was seen along the line (0 to 1), or null
+     * @param unread       gets where the ink recognition did not read lies along the line (first and last pixel
+     *                     of {@code core}), or null
      */
     static BufferedImage patch(BufferedImage image, Px core, Px area, Color paper, List<Integer> letterPixels,
-            boolean vertical, boolean[][] solid) {
+            boolean vertical, boolean[][] solid, String text, List<Float> centers, List<int[]> unread) {
         int w = core.width();
         int h = core.height();
         boolean[][] ink = new boolean[h][w];
@@ -512,14 +672,19 @@ public class RecognizedLineBox {
             ruleColumn[x] = longest >= (vertical ? RULE_ROW : RULE_COLUMN) * h;
         }
 
+        boolean[][] letter = new boolean[h][w];
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                letter[y][x] = ink[y][x] && !ruleRow[y] && !ruleColumn[x];
+            }
+        }
+        letter = ownLetters(letter, vertical, text, centers, unread);
+
         boolean[][] paint = new boolean[area.height()][area.width()];
         boolean any = false;
         for (int y = 0; y < h; y++) {
-            if (ruleRow[y]) {
-                continue;
-            }
             for (int x = 0; x < w; x++) {
-                if (!ink[y][x] || ruleColumn[x]) {
+                if (!letter[y][x]) {
                     continue;
                 }
                 any = true;
@@ -557,6 +722,101 @@ public class RecognizedLineBox {
             }
         }
         return patch;
+    }
+
+    /**
+     * The line's own letters among the ink: patches of ink (touching corners counting as joined) that reach the
+     * box's edge across the line - top or bottom, or the sides of a vertical line - are left out, and so, given
+     * the letters' places, are patches whose middle is far from every letter's.
+     */
+    static boolean[][] ownLetters(boolean[][] ink, boolean vertical, String text, List<Float> centers,
+            List<int[]> unread) {
+        int h = ink.length;
+        int w = h == 0 ? 0 : ink[0].length;
+        double[] places = null;
+        double pitch = 0;
+        if (!vertical && text != null && centers != null && centers.size() == text.length()) {
+            List<Double> letters = new ArrayList<>();
+            for (int i = 0; i < text.length(); i++) {
+                if (!Character.isWhitespace(text.charAt(i))) {
+                    letters.add(centers.get(i) * (double) w);
+                }
+            }
+            if (letters.size() >= 2) {
+                places = letters.stream().mapToDouble(Double::doubleValue).sorted().toArray();
+                double[] steps = new double[places.length - 1];
+                for (int i = 0; i < steps.length; i++) {
+                    steps[i] = places[i + 1] - places[i];
+                }
+                java.util.Arrays.sort(steps);
+                pitch = steps[steps.length / 2];
+            }
+        }
+        boolean[][] out = new boolean[h][w];
+        boolean[][] seen = new boolean[h][w];
+        int[] stack = new int[w * h];
+        List<Integer> patch = new ArrayList<>();
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                if (!ink[y][x] || seen[y][x]) {
+                    continue;
+                }
+                patch.clear();
+                int top = 0;
+                stack[top++] = y * w + x;
+                seen[y][x] = true;
+                int minX = x;
+                int maxX = x;
+                int minY = y;
+                int maxY = y;
+                while (top > 0) {
+                    int at = stack[--top];
+                    patch.add(at);
+                    int py = at / w;
+                    int px = at % w;
+                    minX = Math.min(minX, px);
+                    maxX = Math.max(maxX, px);
+                    minY = Math.min(minY, py);
+                    maxY = Math.max(maxY, py);
+                    for (int dy = -1; dy <= 1; dy++) {
+                        for (int dx = -1; dx <= 1; dx++) {
+                            int ny = py + dy;
+                            int nx = px + dx;
+                            if (ny >= 0 && ny < h && nx >= 0 && nx < w && ink[ny][nx] && !seen[ny][nx]) {
+                                seen[ny][nx] = true;
+                                stack[top++] = ny * w + nx;
+                            }
+                        }
+                    }
+                }
+                int across = vertical ? w : h;
+                int low = vertical ? minX : minY;
+                int high = vertical ? maxX : maxY;
+                // Reaching the box's edge and less than half as tall as the box: a rule slanting past, a piece of the
+                // row above or below. (A letter's tall stroke can reach the edge too, but it is the letter's height.)
+                boolean atEdge = (low <= EDGE || high >= across - 1 - EDGE) && high - low + 1 < EDGE_SPAN * across;
+                // A thin patch lying all in the box's outer band across the line: a rule slanting past, not a letter.
+                boolean thin = high - low + 1 <= THIN * across;
+                atEdge |= thin && (high < OUTER * across || low > (1 - OUTER) * across);
+                boolean far = false;
+                if (places != null) {
+                    double middle = (minX + maxX) / 2.0;
+                    double nearest = Double.MAX_VALUE;
+                    for (double place : places) {
+                        nearest = Math.min(nearest, Math.abs(place - middle));
+                    }
+                    far = nearest > UNREAD * pitch;
+                }
+                if (!atEdge && !far) {
+                    for (int at : patch) {
+                        out[at / w][at % w] = true;
+                    }
+                } else if (far && !atEdge && unread != null) {
+                    unread.add(new int[] {minX, maxX});
+                }
+            }
+        }
+        return out;
     }
 
     /** Whether the page pixel is on a rule or band found inside the line (never painted over). */

@@ -411,6 +411,55 @@ class OcrControllerTest {
         assertThat(seen).noneMatch(l -> l.text().contains("2345"));
     }
 
+    /** Rewriting changes the words the user changed and leaves the others exactly as scanned. */
+    @Test
+    void aRewrittenLineKeepsTheScanOfTheWordsLeftAlone() throws Exception {
+        UploadResponse upload = pdf.upload(file(scannedPdf()), null);
+        List<OcrText> lines = ocr.recognize(upload.documentId(), 0).lines();
+        AddedText box = ocr.textBox(upload.documentId(), 0, 2);
+        assertThat(plain(box.text())).isEqualTo("연락처010-2345-6789");
+        byte[] content = store.getContent(upload.documentId());
+        java.awt.image.BufferedImage scan = render(content);
+
+        // Left as it was: the page looks exactly as scanned.
+        java.awt.image.BufferedImage same = render(textEditService.buildSinglePage(content, 0,
+                new com.pdfedit.service.PageEdits(java.util.Map.of(), List.of(box))));
+        assertThat(differing(scan, same, 0, WIDTH)).as("pixels changed with nothing changed").isZero();
+
+        // The number changed: the label before it stays as scanned, the number is new.
+        AddedText changed = new AddedText("c", box.text().replace("2345", "9999"), box.x(), box.y(), box.fontFamily(),
+                box.fontSize(), box.bold(), box.color(), List.of(), box.cover(), box.rotation(), box.charSpacing());
+        java.awt.image.BufferedImage edited = render(textEditService.buildSinglePage(content, 0,
+                new com.pdfedit.service.PageEdits(java.util.Map.of(), List.of(changed))));
+        Graphics2D g = new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB).createGraphics();
+        g.setFont(Font.createFont(Font.TRUETYPE_FONT, new File("C:/Windows/Fonts/malgun.ttf")).deriveFont(36f));
+        int labelEnd = 200 + g.getFontMetrics().stringWidth("연락처");
+        g.dispose();
+        assertThat(differing(scan, edited, 0, labelEnd)).as("the label is left as scanned").isZero();
+        assertThat(differing(scan, edited, labelEnd + 10, WIDTH)).as("the number is redrawn").isPositive();
+    }
+
+    private static java.awt.image.BufferedImage render(byte[] pdf) throws IOException {
+        try (PDDocument doc = Loader.loadPDF(pdf)) {
+            return new org.apache.pdfbox.rendering.PDFRenderer(doc).renderImageWithDPI(0, 200);
+        }
+    }
+
+    /** How many pixels of rows 560 to 640 (the third line) between columns from and to differ clearly. */
+    private static int differing(java.awt.image.BufferedImage a, java.awt.image.BufferedImage b, int from, int to) {
+        int count = 0;
+        for (int y = 560; y < 640; y++) {
+            for (int x = from; x < Math.min(to, Math.min(a.getWidth(), b.getWidth())); x++) {
+                int p = a.getRGB(x, y);
+                int q = b.getRGB(x, y);
+                if (Math.abs((p >> 8 & 0xFF) - (q >> 8 & 0xFF)) > 40) {
+                    count++;
+                }
+            }
+        }
+        return count;
+    }
+
     @Test
     void aLineThatWasNotRecognizedCannotBeRewritten() throws Exception {
         UploadResponse upload = pdf.upload(file(scannedPdf()), null);

@@ -216,3 +216,25 @@ test('a line running down the page is rewritten as a box turned the same way', a
   expect(text).toContain('010-9999-0000')
   expect(text).not.toContain('2345')
 })
+
+test('a recognized line opened with a double click and left unchanged goes back to the scan', async ({ page }) => {
+  await page.goto('/')
+  await page.locator('input[type=file]').setInputFiles({ name: 'scan.pdf', mimeType: 'application/pdf', buffer: await scan(page) })
+  await page.getByRole('button', { name: '나중에' }).click()
+  await page.locator('button[title="텍스트 편집"]').first().click()
+  await page.getByRole('dialog', { name: '텍스트 편집' }).getByRole('button', { name: '글자 인식(OCR)' }).click()
+  const phone = page.locator('.te-ocr-line[data-ocr="1"]')
+  await expect(phone).toBeVisible({ timeout: 60_000 })
+
+  await phone.dblclick()
+  await expect(page.locator('.te-box[data-added]')).toBeFocused()
+  await page.locator('.te-layer').click({ position: { x: 5, y: 5 } })
+
+  await expect(page.locator('.te-box[data-added]')).toHaveCount(0)
+  await expect(page.locator('.te-ocr-line')).toHaveCount(2)
+  const src = await page.locator('.te-canvas img').first().getAttribute('src')
+  const id = /documents\/([^/]+)\//.exec(src ?? '')![1]
+  await expect
+    .poll(async () => (await (await page.request.get(`/api/v1/pdf/documents/${id}/pages/0/text-runs`)).json()).added.length)
+    .toBe(0)
+})

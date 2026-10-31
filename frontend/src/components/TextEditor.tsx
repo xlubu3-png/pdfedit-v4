@@ -649,8 +649,12 @@ export function TextEditor({
 
   const moveRun = useCallback((run: TextRun, dx: number, dy: number) => updateRun(run, { dx, dy }), [updateRun])
 
+  /** Rewritten scanned lines not changed since they were opened (text, look or place): leaving one undoes it. */
+  const untouchedRewrites = useRef(new Set<string>())
+
   const updateAdded = useCallback(
     (id: string, patch: Partial<AddedText>) => {
+      untouchedRewrites.current.delete(id)
       checkpoint(`added:${id}:${Object.keys(patch).join('+')}`)
       const boxes = addedRef.current.map((b) => (b.id === id ? { ...b, ...patch } : b))
       putAdded(boxes)
@@ -686,6 +690,16 @@ export function TextEditor({
 
   const commitAddedText = useCallback(
     (box: AddedText, text: string, next: Element | null) => {
+      // A scanned line opened to be rewritten and left as it was goes back to the scan, as if never opened.
+      if (untouchedRewrites.current.has(box.id) && text === box.text && !next?.closest('.te-stylebar')) {
+        untouchedRewrites.current.delete(box.id)
+        putAdded(addedRef.current.filter((b) => b.id !== box.id))
+        setSelected((s) => (s?.kind === 'added' && s.id === box.id ? null : s))
+        setEditing((s) => (s?.kind === 'added' && s.id === box.id ? null : s))
+        addedDirty.current = true
+        scheduleSave()
+        return
+      }
       if (text.trim() === '') {
         // An empty box is dropped - unless focus only went to the style bar to pick its font first.
         if (!next?.closest('.te-stylebar')) removeAdded(box.id)
@@ -695,7 +709,7 @@ export function TextEditor({
       // The formatted parts stay on the letters they were put on.
       if (text !== box.text) updateAdded(box.id, { text, spans: remapSpans(box.spans, box.text, text) })
     },
-    [removeAdded, updateAdded],
+    [removeAdded, updateAdded, putAdded, scheduleSave],
   )
 
   const updateImage = useCallback(
@@ -1090,6 +1104,7 @@ export function TextEditor({
       checkpoint(`rewrite:${index}:${Date.now()}`)
       const box: AddedText = { ...look, id: newId(), spans: look.spans ?? [] }
       putAdded([...addedRef.current, box])
+      untouchedRewrites.current.add(box.id)
       addedDirty.current = true
       setSelected({ kind: 'added', id: box.id })
       setEditing({ kind: 'added', id: box.id })

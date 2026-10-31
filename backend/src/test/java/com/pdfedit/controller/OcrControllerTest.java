@@ -152,7 +152,7 @@ class OcrControllerTest {
     void personalInformationOnAScanIsFoundWhereItIsAndRedactedForGood() throws Exception {
         UploadResponse upload = pdf.upload(file(scannedPdf()), null);
         ocr.recognize(upload.documentId(), 0);
-        RedactionController redaction = new RedactionController(store);
+        RedactionController redaction = new RedactionController(store, new TextEditService(new FontMatcher()));
 
         List<PersonalInfoMatch> found = redaction.findPersonalInfo(new PersonalInfoRequest(
                 List.of(new PageSpec(upload.documentId(), 0, 0)), List.of("RRN", "MOBILE"), null));
@@ -288,11 +288,127 @@ class OcrControllerTest {
         assertThat(text).contains(plain(lines[0]), "010-9999-0000").doesNotContain("2345");
         assertThat(new TextSearchService(store, textEditService).find(List.of(new PageSpec(upload.documentId(), 0, 0)),
                 "2345", false)).as("the rewritten line is not found by what was recognized").isEmpty();
+        // Personal information is looked for in what the box says now, not in what the scan said.
+        List<PersonalInfoMatch> phones = new RedactionController(store, new TextEditService(new FontMatcher())).findPersonalInfo(new PersonalInfoRequest(
+                List.of(new PageSpec(upload.documentId(), 0, 0)), List.of("MOBILE"), null));
+        assertThat(phones).extracting(PersonalInfoMatch::text).containsExactly("010-9999-0000");
         byte[] picture = pdf.export(new ExportRequest(List.of(new PageSpec(upload.documentId(), 0, 0)), "a.pdf", true,
                 null, null)).getBody();
         String seen = String.join(" ", pageOcr.recognize(picture, 0).lines().stream().map(OcrText::text).toList());
         assertThat(seen).as("the scanned number is covered on the page itself").contains("9999-0000")
                 .doesNotContain("2345");
+    }
+
+    /** A table's label written down the page, letters one under the other, as forms often have. */
+    @Test
+    void aVerticalLabelIsRecognizedExportedAndRewrittenLetterUnderLetter() throws Exception {
+        File malgun = new File("C:\\Windows\\Fonts\\malgun.ttf");
+        assumeThat(malgun).as("needs the Windows font Malgun Gothic").exists();
+        BufferedImage scan = new BufferedImage(WIDTH, HEIGHT, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = scan.createGraphics();
+        g.setColor(Color.WHITE);
+        g.fillRect(0, 0, WIDTH, HEIGHT);
+        g.setColor(Color.BLACK);
+        g.fillRect(150, 260, 1300, 3);
+        g.fillRect(150, 470, 1300, 3);
+        g.fillRect(150, 260, 3, 213);
+        g.fillRect(260, 260, 3, 213);
+        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        g.setFont(Font.createFont(Font.TRUETYPE_FONT, malgun).deriveFont(36f));
+        String label = "대표자";
+        for (int i = 0; i < label.length(); i++) {
+            g.drawString(label.substring(i, i + 1), 187, 330 + 52 * i);
+        }
+        g.drawString("성명 박장환", 300, 380);
+        g.dispose();
+        UploadResponse upload;
+        try (PDDocument doc = new PDDocument(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            PDPage page = new PDPage(PDRectangle.A4);
+            doc.addPage(page);
+            try (PDPageContentStream cs = new PDPageContentStream(doc, page)) {
+                cs.drawImage(LosslessFactory.createFromImage(doc, scan), 0, 0, PDRectangle.A4.getWidth(),
+                        PDRectangle.A4.getHeight());
+            }
+            doc.save(out);
+            upload = pdf.upload(file(out.toByteArray()), null);
+        }
+
+        List<OcrText> lines = ocr.recognize(upload.documentId(), 0).lines();
+
+        assertThat(lines).extracting(l -> plain(l.text())).containsExactlyInAnyOrder("대표자", "성명박장환");
+        int index = lines.indexOf(lines.stream().filter(OcrText::vertical).findFirst().orElseThrow());
+        assertThat(lines.get(index).text()).isEqualTo("대표자");
+        assertThat(exportedText(upload.documentId(), false)).contains("대표자", "성명박장환");
+
+        AddedText box = ocr.textBox(upload.documentId(), 0, index);
+        assertThat(box.text()).as("one letter under the other").isEqualTo("대\n표\n자");
+        assertThat(box.cover().patch()).isNotNull();
+        AddedText rewritten = new AddedText("v1", "대\n리\n인", box.x(), box.y(), null, box.fontSize(), false,
+                box.color(), List.of(), box.cover());
+        store.setAddedTexts(upload.documentId(), 0,
+                textEditService.checkAdded(store.getContent(upload.documentId()), 0, List.of(rewritten)));
+
+        assertThat(exportedText(upload.documentId(), false)).contains("대리인", "성명박장환").doesNotContain("대표자");
+        byte[] picture = pdf.export(new ExportRequest(List.of(new PageSpec(upload.documentId(), 0, 0)), "a.pdf", true,
+                null, null)).getBody();
+        String seen = String.join(" ", pageOcr.recognize(picture, 0).lines().stream().map(OcrText::text).toList());
+        assertThat(plain(seen)).as("the scanned label is gone from the page, the new one is read in its place")
+                .contains("대리인").doesNotContain("표자");
+    }
+
+    /** A line turned a quarter to run down the page, as a table's side labels often are. */
+    @Test
+    void aLineRunningDownThePageIsRewrittenTurnedTheSameWay() throws Exception {
+        File malgun = new File("C:/Windows/Fonts/malgun.ttf");
+        assumeThat(malgun).as("needs the Windows font Malgun Gothic").exists();
+        BufferedImage scan = new BufferedImage(WIDTH, HEIGHT, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = scan.createGraphics();
+        g.setColor(Color.WHITE);
+        g.fillRect(0, 0, WIDTH, HEIGHT);
+        g.setColor(Color.BLACK);
+        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        g.setFont(Font.createFont(Font.TRUETYPE_FONT, malgun).deriveFont(36f));
+        g.drawString("성명 박장환", 400, 300);
+        g.rotate(Math.toRadians(90), 250, 400);
+        g.drawString("연락처 010-2345-6789", 250, 400);
+        g.dispose();
+        UploadResponse upload;
+        try (PDDocument doc = new PDDocument(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            PDPage page = new PDPage(PDRectangle.A4);
+            doc.addPage(page);
+            try (PDPageContentStream cs = new PDPageContentStream(doc, page)) {
+                cs.drawImage(LosslessFactory.createFromImage(doc, scan), 0, 0, PDRectangle.A4.getWidth(),
+                        PDRectangle.A4.getHeight());
+            }
+            doc.save(out);
+            upload = pdf.upload(file(out.toByteArray()), null);
+        }
+
+        List<OcrText> lines = ocr.recognize(upload.documentId(), 0).lines();
+        int index = lines.indexOf(lines.stream().filter(OcrText::turned).findFirst().orElseThrow());
+        assertThat(plain(lines.get(index).text())).isEqualTo("연락처010-2345-6789");
+        assertThat(lines.get(index).upwards()).isFalse();
+
+        AddedText box = ocr.textBox(upload.documentId(), 0, index);
+        assertThat(box.rotation()).as("turned to run down the page").isEqualTo(-90f);
+        assertThat(plain(box.text())).isEqualTo("연락처010-2345-6789");
+        AddedText rewritten = new AddedText("r1", "연락처 010-9999-0000", box.x(), box.y(), null, box.fontSize(), false,
+                box.color(), List.of(), box.cover(), box.rotation());
+        store.setAddedTexts(upload.documentId(), 0,
+                textEditService.checkAdded(store.getContent(upload.documentId()), 0, List.of(rewritten)));
+
+        assertThat(exportedText(upload.documentId(), false)).contains("010-9999-0000", "성명박장환")
+                .doesNotContain("2345");
+        byte[] picture = pdf.export(new ExportRequest(List.of(new PageSpec(upload.documentId(), 0, 0)), "a.pdf", true,
+                null, null)).getBody();
+        List<OcrText> seen = pageOcr.recognize(picture, 0).lines();
+        assertThat(seen).as("the new line is drawn turned, where the old one was, and reads downwards like it")
+                .anySatisfy(l -> {
+                    assertThat(plain(l.text())).contains("9999-0000");
+                    assertThat(l.turned()).isTrue();
+                    assertThat(l.upwards()).isFalse();
+                });
+        assertThat(seen).noneMatch(l -> l.text().contains("2345"));
     }
 
     @Test

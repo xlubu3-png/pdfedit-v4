@@ -2,9 +2,11 @@ package com.pdfedit.service;
 
 import java.awt.Color;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -22,9 +24,11 @@ import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDFont;
 import org.apache.pdfbox.pdmodel.font.PDType3Font;
+import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory;
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 import org.apache.pdfbox.pdmodel.graphics.state.RenderingMode;
 import org.apache.pdfbox.rendering.PDFRenderer;
+import org.apache.pdfbox.util.Matrix;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -41,6 +45,7 @@ import com.pdfedit.text.PageExtraction;
 import com.pdfedit.text.RunEdit;
 import com.pdfedit.text.RunPainter;
 import com.pdfedit.text.TextExtraction;
+import com.pdfedit.text.TextLines;
 import com.pdfedit.text.TextRun;
 import com.pdfedit.text.VerticalBounds;
 
@@ -67,6 +72,9 @@ public class TextEditService {
     private static final int MAX_ADDED_LENGTH = 5_000;
     private static final float LINE_SPACING = 1.2f;
     private static final String COLOUR_PATTERN = "#[0-9a-fA-F]{6}";
+    /** Limits of the patch over a rewritten scanned line: a long line at 3 pixels per point is far smaller. */
+    private static final int MAX_PATCH_CHARS = 2_000_000;
+    private static final long MAX_PATCH_PIXELS = 8_000_000L;
 
     private final FontMatcher fontMatcher;
 
@@ -262,6 +270,12 @@ public class TextEditService {
                     && cover.width() > 0 && cover.width() <= MAX_OFFSET
                     && cover.height() > 0 && cover.height() <= MAX_OFFSET)) {
                 throw new InvalidEditException("고쳐 쓴 글자의 바탕 영역이 올바르지 않습니다.");
+            }
+            if (cover != null && cover.patch() != null) {
+                checkPatch(cover.patch());
+            }
+            if (!(Math.abs(box.rotation()) <= 360)) {
+                throw new InvalidEditException("텍스트 상자의 회전 각도가 올바르지 않습니다.");
             }
             String text = box.text() == null ? "" : box.text();
             if (text.length() > MAX_ADDED_LENGTH) {
@@ -603,29 +617,93 @@ public class TextEditService {
         return new FontMatcher.Styled(font, false);
     }
 
+    /**
+     * Paints over the scanned letters a box rewrites: with its patch (the paper's colour on the letters only, so
+     * the table rules around them stay), or for a box without one with a plain fill in the paper's colour.
+     */
+    private static void drawCover(PDPageContentStream cs, PDDocument outDoc, AddedText.Cover cover) throws IOException {
+        if (cover.patch() != null) {
+            try {
+                BufferedImage patch = ImageIO.read(new ByteArrayInputStream(Base64.getDecoder().decode(cover.patch())));
+                if (patch != null) {
+                    cs.drawImage(LosslessFactory.createFromImage(outDoc, patch), cover.x(), cover.y(), cover.width(),
+                            cover.height());
+                    return;
+                }
+            } catch (IOException | IllegalArgumentException unreadable) {
+                log.warn("The cover of a rewritten line could not be read, filling it instead: {}", unreadable.toString());
+            }
+        }
+        cs.saveGraphicsState();
+        cs.setNonStrokingColor(RunEdit.colour(cover.color(), Color.WHITE));
+        cs.addRect(cover.x(), cover.y(), cover.width(), cover.height());
+        cs.fill();
+        cs.restoreGraphicsState();
+    }
+
+    /** A cover's patch must be a PNG of a sensible size (it is decoded for every preview and export). */
+    private static void checkPatch(String patch) {
+        if (patch.length() > MAX_PATCH_CHARS) {
+            throw new InvalidEditException("고쳐 쓴 글자의 바탕 그림이 너무 큽니다.");
+        }
+        try {
+            long pixels = ImageDrawing.headerPixels(Base64.getDecoder().decode(patch));
+            if (pixels <= 0 || pixels > MAX_PATCH_PIXELS) {
+                throw new InvalidEditException("고쳐 쓴 글자의 바탕 그림이 올바르지 않습니다.");
+            }
+        } catch (IOException | IllegalArgumentException unreadable) {
+            throw new InvalidEditException("고쳐 쓴 글자의 바탕 그림이 올바르지 않습니다.");
+        }
+    }
+
     private void drawAdded(PDPageContentStream cs, PDDocument outDoc, AddedText box, FontCache fonts)
             throws IOException {
         if (box.cover() != null) {
-            // The scanned letters the box rewrites, painted over in the colour of the paper around them.
-            AddedText.Cover cover = box.cover();
-            cs.saveGraphicsState();
-            cs.setNonStrokingColor(RunEdit.colour(cover.color(), Color.WHITE));
-            cs.addRect(cover.x(), cover.y(), cover.width(), cover.height());
-            cs.fill();
-            cs.restoreGraphicsState();
+            drawCover(cs, outDoc, box.cover());
         }
         if (box.text() == null || box.text().isBlank()) {
             return;
         }
+        List<BoxLine> lines = layout(outDoc, box, fonts);
+        boolean turned = box.rotation() != 0;
+        if (turned) {
+            cs.saveGraphicsState();
+            cs.transform(turn(box));
+        }
+        for (BoxLine line : lines) {
+            if (line.text().isBlank()) {
+                continue;
+            }
+            float cursor = box.x();
+            for (Piece piece : line.pieces()) {
+                drawLine(cs, piece.styled(), piece.text(), cursor, line.baseline(), piece.size(), piece.colour());
+                float width = widthOf(piece);
+                if (piece.underline()) {
+                    underline(cs, cursor, cursor + width, line.baseline(), piece.size(), piece.colour());
+                }
+                cursor += width;
+            }
+        }
+        if (turned) {
+            cs.restoreGraphicsState();
+        }
+    }
+
+    /** A line of a text box: its text, its pieces in their looks, and its baseline (before the box is turned). */
+    private record BoxLine(String text, List<Piece> pieces, float baseline) {
+    }
+
+    /** The lines of a text box, each cut where the look changes into pieces in the weight, colour and size asked for. */
+    private List<BoxLine> layout(PDDocument outDoc, AddedText box, FontCache fonts) {
         Color boxColour = RunEdit.colour(box.color(), Color.BLACK);
         List<RunEdit.Segment> segments = new RunEdit(box.text(), null, null, null, null, 0f, 0f, box.spans()).segments();
         String[] lines = box.text().split("\\R", -1);
+        List<BoxLine> out = new ArrayList<>(lines.length);
         float baseline = box.y();
         int lineStart = 0;
         for (int i = 0; i < lines.length; i++) {
             String line = lines[i];
             int lineEnd = lineStart + line.length();
-            // The line's pieces: where the look changes, in the weight, colour and size each asks for.
             float tallest = box.fontSize();
             List<Piece> pieces = new ArrayList<>();
             for (RunEdit.Segment segment : segments) {
@@ -647,19 +725,92 @@ public class TextEditService {
             if (i > 0) {
                 baseline -= tallest * LINE_SPACING;
             }
-            if (!line.isBlank()) {
-                float cursor = box.x();
-                for (Piece piece : pieces) {
-                    drawLine(cs, piece.styled(), piece.text(), cursor, baseline, piece.size(), piece.colour());
-                    float width = widthOf(piece);
-                    if (piece.underline()) {
-                        underline(cs, cursor, cursor + width, baseline, piece.size(), piece.colour());
-                    }
-                    cursor += width;
-                }
-            }
+            out.add(new BoxLine(line, pieces, baseline));
             lineStart = lineEnd + lineBreakLength(box.text(), lineEnd);
         }
+        return out;
+    }
+
+    /** The turn of a box about its first baseline's start, (x, y). */
+    private static Matrix turn(AddedText box) {
+        double a = Math.toRadians(box.rotation());
+        float cos = (float) Math.cos(a);
+        float sin = (float) Math.sin(a);
+        return new Matrix(cos, sin, -sin, cos, box.x() - cos * box.x() + sin * box.y(),
+                box.y() - sin * box.x() - cos * box.y());
+    }
+
+    /**
+     * Where the letters of the text boxes are, so they can be looked through like the page's own text (for
+     * personal information): a line per box, its lines joined by a space - or by nothing for a box holding a
+     * letter a line, a label rewritten letter under letter. Measured in the fonts the boxes are drawn in.
+     */
+    public List<TextLines.Line> addedLines(List<AddedText> boxes) {
+        List<TextLines.Line> out = new ArrayList<>();
+        if (boxes.stream().allMatch(b -> b.text() == null || b.text().isBlank())) {
+            return out;
+        }
+        try (PDDocument scratch = new PDDocument()) {
+            FontCache fonts = newFontCache();
+            for (AddedText box : boxes) {
+                if (box.text() == null || box.text().isBlank()) {
+                    continue;
+                }
+                List<BoxLine> lines;
+                try {
+                    lines = layout(scratch, box, fonts);
+                } catch (RuntimeException noFont) {
+                    continue; // a box whose font is gone cannot be drawn either
+                }
+                boolean letterALine = lines.size() > 1
+                        && lines.stream().allMatch(l -> l.text().codePointCount(0, l.text().length()) <= 1);
+                StringBuilder text = new StringBuilder();
+                List<TextLines.Area> areas = new ArrayList<>();
+                for (int i = 0; i < lines.size(); i++) {
+                    if (i > 0 && !letterALine) {
+                        text.append(' ');
+                        areas.add(null);
+                    }
+                    float cursor = box.x();
+                    for (Piece piece : lines.get(i).pieces()) {
+                        for (int c = 0; c < piece.text().length(); c++) {
+                            String letter = piece.text().substring(c, c + 1);
+                            Float measured = tryMeasureWidth(piece.styled().font(), letter, piece.size());
+                            float width = measured != null ? measured : piece.size() * 0.6f;
+                            areas.add(turned(box, new TextLines.Area(cursor, lines.get(i).baseline() - 0.25f * piece.size(),
+                                    width, 1.1f * piece.size())));
+                            text.append(piece.text().charAt(c));
+                            cursor += width;
+                        }
+                    }
+                }
+                out.add(TextLines.Line.of(text.toString(), areas));
+            }
+        } catch (IOException e) {
+            log.warn("The text boxes could not be measured: {}", e.toString());
+        }
+        return out;
+    }
+
+    /** The area as it lies on the page once the box is turned: the rectangle around the turned one. */
+    private static TextLines.Area turned(AddedText box, TextLines.Area area) {
+        if (box.rotation() == 0) {
+            return area;
+        }
+        Matrix m = turn(box);
+        float minX = Float.MAX_VALUE;
+        float minY = Float.MAX_VALUE;
+        float maxX = -Float.MAX_VALUE;
+        float maxY = -Float.MAX_VALUE;
+        for (float[] corner : new float[][] {{area.x(), area.y()}, {area.x() + area.width(), area.y()},
+                {area.x(), area.y() + area.height()}, {area.x() + area.width(), area.y() + area.height()}}) {
+            java.awt.geom.Point2D.Float p = m.transformPoint(corner[0], corner[1]);
+            minX = Math.min(minX, p.x);
+            minY = Math.min(minY, p.y);
+            maxX = Math.max(maxX, p.x);
+            maxY = Math.max(maxY, p.y);
+        }
+        return new TextLines.Area(minX, minY, maxX - minX, maxY - minY);
     }
 
     /** How many characters the line break at {@code at} takes: 2 for \r\n, 1 for any other, 0 at the end of the text. */

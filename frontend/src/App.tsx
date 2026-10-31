@@ -252,10 +252,12 @@ function App() {
   /**
    * Recognizes the text of scanned pages, one after another: the given ones, else the selected ones, else all.
    * The result is kept by the server and goes into exports as invisible text.
+   *
+   * @returns what was done, as told to the user; null when nothing ran or it failed (the error is shown)
    */
-  async function handleOcr(target?: PageItem[]) {
+  async function handleOcr(target?: PageItem[]): Promise<string | null> {
     const chosen = target ?? (selectedKeys.size > 0 ? pages.filter((p) => selectedKeys.has(p.key)) : pages)
-    if (chosen.length === 0 || busy) return
+    if (chosen.length === 0 || busy) return null
     setBusy(true)
     setError(null)
     setScanSuggest(null)
@@ -270,9 +272,12 @@ function App() {
       setPages((prev) =>
         prev.map((p) => (p.key in summary.linesByKey ? { ...p, ocrLines: summary.linesByKey[p.key] } : p)),
       )
-      setNotice(ocrMessage(summary))
+      const message = ocrMessage(summary)
+      setNotice(message)
+      return message
     } catch (e) {
       setError(e instanceof Error ? e.message : '글자를 인식하지 못했습니다')
+      return null
     } finally {
       setOcrProgress(null)
       setBusy(false)
@@ -983,6 +988,9 @@ function App() {
           unreadableFonts={info?.unreadableFonts ?? []}
           onFontsReloaded={handleFontsReloaded}
           onRecognized={(key, lines) => setPages((prev) => prev.map((p) => (p.key === key ? { ...p, ocrLines: lines } : p)))}
+          onRecognizeAll={() => handleOcr(pages)}
+          ocrProgress={ocrProgress}
+          onStopRecognize={() => (ocrStop.current = true)}
           busy={busy}
         />
       )}

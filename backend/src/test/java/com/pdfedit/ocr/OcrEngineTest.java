@@ -107,6 +107,79 @@ class OcrEngineTest {
         assertThat(engine.read(blank)).isEmpty();
     }
 
+    /** Lines running down the page: letters standing one under the other, and lines turned a quarter either way. */
+    @Test
+    void verticalLinesAreReadWhicheverWayTheyRun() throws Exception {
+        File malgun = new File("C:\\Windows\\Fonts\\malgun.ttf");
+        assumeThat(malgun).as("needs the Windows font Malgun Gothic").exists();
+        BufferedImage image = new BufferedImage(1400, 1200, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = image.createGraphics();
+        g.setColor(Color.WHITE);
+        g.fillRect(0, 0, 1400, 1200);
+        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        g.setColor(Color.BLACK);
+        g.setFont(Font.createFont(Font.TRUETYPE_FONT, malgun).deriveFont(34f));
+        String[] stacked = {"대표자", "업체현황", "생산제품현황"};
+        for (int s = 0; s < stacked.length; s++) {
+            for (int i = 0; i < stacked[s].length(); i++) {
+                g.drawString(stacked[s].substring(i, i + 1), 80 + 120 * s, 200 + 42 * i);
+            }
+        }
+        java.awt.geom.AffineTransform upright = g.getTransform();
+        g.rotate(Math.toRadians(90), 700, 300);
+        g.drawString("시계방향 세로 010-2345", 700, 300);
+        g.setTransform(upright);
+        g.rotate(Math.toRadians(-90), 900, 900);
+        g.drawString("반시계방향 세로 글자", 900, 900);
+        g.dispose();
+
+        List<OcrLine> lines = engine.read(image);
+
+        assertThat(lines).extracting(l -> l.text().replace(" ", "")).containsExactlyInAnyOrder("대표자", "업체현황",
+                "생산제품현황", "시계방향세로010-2345", "반시계방향세로글자");
+        OcrLine down = lines.stream().filter(l -> l.text().equals("생산제품현황")).findFirst().orElseThrow();
+        assertThat(down.text()).as("letters one under the other have no spaces between them").isEqualTo("생산제품현황");
+        float[] at = down.centers();
+        for (int i = 1; i < at.length; i++) {
+            assertThat(at[i]).as("read from the top down").isGreaterThan(at[i - 1]);
+        }
+        // The letters' places, from the top: the n-th letter was drawn 42 pixels under the one before.
+        float top = Math.min(down.corners()[1], down.corners()[3]);
+        float bottom = Math.max(down.corners()[5], down.corners()[7]);
+        assertThat(top + at[3] * (bottom - top)).isCloseTo(200 + 42 * 3 - 12, Offset.offset(14f));
+        OcrLine up = lines.stream().filter(l -> l.text().startsWith("반시계")).findFirst().orElseThrow();
+        assertThat(up.centers()[0]).as("a line turned to the left starts at the bottom")
+                .isGreaterThan(up.centers()[up.centers().length - 1]);
+    }
+
+    @Test
+    void lettersOfOneColumnFoundApartAreJoinedButWordsWrittenAcrossAreNot() {
+        // 대 / 표자: a letter and two letters of a label written down the page, 8 pixels apart.
+        float[] one = {180, 290, 230, 290, 230, 350, 180, 350};
+        float[] two = {178, 358, 232, 358, 232, 450, 178, 450};
+        // 업체 / 현황: two words written across, one line under the other.
+        float[] across = {400, 290, 500, 290, 500, 340, 400, 340};
+        float[] under = {400, 345, 500, 345, 500, 395, 400, 395};
+
+        int width = 600;
+        int[] white = new int[width * 600];
+        java.util.Arrays.fill(white, 0xFFFFFF);
+
+        List<float[]> boxes = OcrEngine.joinColumns(List.of(one, two, across, under), white, width);
+
+        assertThat(boxes).hasSize(3);
+        assertThat(boxes.get(0)).containsExactly(178, 290, 232, 290, 232, 450, 178, 450);
+        assertThat(boxes.get(1)).isSameAs(across);
+        assertThat(boxes.get(2)).isSameAs(under);
+
+        // The same two boxes as cells of a table: a rule runs between them, they stay apart.
+        int[] ruled = white.clone();
+        for (int x = 150; x < 260; x++) {
+            ruled[354 * width + x] = 0;
+        }
+        assertThat(OcrEngine.joinColumns(List.of(one, two), ruled, width)).hasSize(2);
+    }
+
     @Test
     void theSmallestRectangleAroundATurnedBoxIsFound() {
         // The corners of a 100 x 20 box turned by 30 degrees.

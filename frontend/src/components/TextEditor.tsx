@@ -47,6 +47,7 @@ import {
   CopyPlus,
   PenLine,
   Eye,
+  Files,
   FileDown,
   FileImage,
   FileSearch,
@@ -96,6 +97,11 @@ interface TextEditorProps {
   onFontsReloaded: (info: AppInfo) => void
   /** Called after the text of this page was recognized, with how many lines were found. */
   onRecognized: (pageKey: string, lines: number) => void
+  /** Recognizes every page of the list; resolves to what was done, or null when nothing ran. */
+  onRecognizeAll: () => Promise<string | null>
+  /** How far recognizing every page has got, while it runs. */
+  ocrProgress: { done: number; total: number } | null
+  onStopRecognize: () => void
   busy: boolean
 }
 
@@ -108,6 +114,9 @@ const EDITOR_TABS: RibbonTab[] = [
   { id: 'format', label: '서식' },
   { id: 'tools', label: '도구' },
 ]
+
+/** Recognized lines read less surely than this are marked (orange) for the user to check. */
+const UNSURE = 0.9
 
 /** What the server draws an added box in when no font is chosen. */
 const DEFAULT_ADDED_FAMILY = '맑은 고딕'
@@ -206,6 +215,9 @@ export function TextEditor({
   unreadableFonts,
   onFontsReloaded,
   onRecognized,
+  onRecognizeAll,
+  ocrProgress,
+  onStopRecognize,
   busy,
 }: TextEditorProps) {
   const { documentId, pageIndex, key: pageKey } = page
@@ -345,6 +357,8 @@ export function TextEditor({
     }
   }, [documentId, pageIndex, reloadToken, putStates, putAdded, putImages])
 
+  /** Bumped after every page was recognized: this page's lines are fetched again. */
+  const [ocrToken, setOcrToken] = useState(0)
   useEffect(() => {
     let cancelled = false
     fetchPageOcr(documentId, pageIndex)
@@ -356,7 +370,7 @@ export function TextEditor({
     return () => {
       cancelled = true
     }
-  }, [documentId, pageIndex])
+  }, [documentId, pageIndex, ocrToken])
 
   /**
    * After a save: which edited lines have their original letters cut out of the page and which are only
@@ -870,6 +884,7 @@ export function TextEditor({
           bold: box.bold,
           color: box.color,
           spans: box.spans,
+          ...(box.rotation ? { rotation: box.rotation } : {}),
         }
       : null
   }
@@ -1085,6 +1100,17 @@ export function TextEditor({
     }
   }
 
+  /** Recognizes every page of the list (this one too), then shows what this page has. */
+  async function recognizeEveryPage() {
+    await flush()
+    setOcrNote(null)
+    const message = await onRecognizeAll()
+    setOcrPicked(null)
+    setShowOcr(true)
+    setOcrToken((n) => n + 1)
+    if (message) setOcrNote(message)
+  }
+
   /** Recognizes the text of this page (a second or two), outlines what was found and tells the page list. */
   async function recognizeThisPage() {
     setOcrBusy(true)
@@ -1105,9 +1131,11 @@ export function TextEditor({
       setOcrLines(found)
       setOcrPicked(null)
       setShowOcr(true)
+      const unsure = found.filter((l) => l.score < UNSURE).length
       setOcrNote(
         ocrMessage(summary) +
-          (found.length > 0 ? ' 점선 줄을 클릭해 Ctrl+C로 복사하거나, 두 번 클릭해 고쳐 쓸 수 있습니다.' : ''),
+          (found.length > 0 ? ' 점선 줄을 클릭해 Ctrl+C로 복사하거나, 두 번 클릭해 고쳐 쓸 수 있습니다.' : '') +
+          (unsure > 0 ? ` 주황색 ${unsure}줄은 인식이 불확실하니 확인하세요.` : ''),
       )
       onRecognized(pageKey, found.length)
     } catch (e) {
@@ -1759,6 +1787,13 @@ export function TextEditor({
                 disabled={ocrBusy || busy}
               />
               <RibbonButton
+                icon={<Files />}
+                label={ocrProgress ? `${ocrProgress.done}/${ocrProgress.total}쪽…` : '모든 쪽 인식'}
+                title="페이지 목록의 모든 쪽을 차례로 인식합니다 (쪽당 2초쯤). 글자가 이미 있는 자리는 건너뜁니다."
+                onClick={() => void recognizeEveryPage()}
+                disabled={ocrBusy || busy}
+              />
+              <RibbonButton
                 icon={<Eye />}
                 label="인식 표시"
                 title="인식한 글자 줄을 페이지 위에 점선으로 표시합니다"
@@ -1911,7 +1946,18 @@ export function TextEditor({
         </div>
       )}
 
-      {ocrNote && (
+      {ocrProgress && (
+        <div className="te-tip te-ocr-note" role="status">
+          <span>
+            모든 쪽 글자 인식 중… {ocrProgress.done}/{ocrProgress.total}쪽
+          </span>
+          <button type="button" onClick={onStopRecognize}>
+            중지
+          </button>
+        </div>
+      )}
+
+      {ocrNote && !ocrProgress && (
         <div className="te-tip te-ocr-note" role="status">
           <span>{ocrNote}</span>
           <button type="button" onClick={() => setOcrNote(null)} aria-label="닫기">
@@ -2000,30 +2046,34 @@ export function TextEditor({
                 onPointerDown={handleLayerPointerDown}
               >
                 {/* Until the new preview arrives, the patch a rewritten line puts over the scan is shown here. */}
-                {added.map(
-                  (box) =>
-                    box.cover && (
-                      <div
-                        key={`cover${box.id}`}
-                        className="te-cover"
-                        style={{
-                          left: (box.cover.x - data.originX) * scale,
-                          top: (data.pageHeight - (box.cover.y + box.cover.height - data.originY)) * scale,
-                          width: box.cover.width * scale,
-                          height: box.cover.height * scale,
-                          background: box.cover.color,
-                        }}
-                      />
-                    ),
-                )}
+                {added.map((box) => {
+                  if (!box.cover) return null
+                  const place = {
+                    left: (box.cover.x - data.originX) * scale,
+                    top: (data.pageHeight - (box.cover.y + box.cover.height - data.originY)) * scale,
+                    width: box.cover.width * scale,
+                    height: box.cover.height * scale,
+                  }
+                  return box.cover.patch ? (
+                    <img
+                      key={`cover${box.id}`}
+                      className="te-cover"
+                      alt=""
+                      src={`data:image/png;base64,${box.cover.patch}`}
+                      style={place}
+                    />
+                  ) : (
+                    <div key={`cover${box.id}`} className="te-cover" style={{ ...place, background: box.cover.color }} />
+                  )
+                })}
                 {showOcr &&
                   ocrLines.map((line, i) =>
                     rewritten.has(i) ? null : (
                       <div
                         key={`ocr${i}`}
-                        className={`te-ocr-line${ocrPicked === i ? ' picked' : ''}`}
+                        className={`te-ocr-line${ocrPicked === i ? ' picked' : ''}${line.score < UNSURE ? ' unsure' : ''}`}
                         data-ocr={i}
-                        title={`${line.text}\n클릭: 고르기 (Ctrl+C 복사) · 두 번 클릭: 고쳐 쓰기`}
+                        title={`${line.text}${line.score < UNSURE ? ` (인식이 불확실합니다: 확신도 ${Math.round(line.score * 100)}%)` : ''}\n클릭: 고르기 (Ctrl+C 복사) · 두 번 클릭: 고쳐 쓰기`}
                         style={{
                           left: (line.x - data.originX) * scale,
                           top: (data.pageHeight - (line.y + line.height - data.originY)) * scale,

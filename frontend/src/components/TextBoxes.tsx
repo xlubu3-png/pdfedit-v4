@@ -25,8 +25,8 @@ function isLight(hex: string): boolean {
   return luminance > 0.75
 }
 
-function boxVars(color: string): CSSProperties {
-  return { '--box-color': color, '--box-bg': isLight(color) ? '#555' : '#fff' } as CSSProperties
+function boxVars(color: string, background?: string): CSSProperties {
+  return { '--box-color': color, '--box-bg': background ?? (isLight(color) ? '#555' : '#fff') } as CSSProperties
 }
 
 /** Where the dragged box was pulled onto another line, in PDF points, for the guide lines. */
@@ -478,19 +478,28 @@ export function AddedBox({
     onGuides(dragging ? { x: guideX, y: guideY } : null)
   }, [dragging, guideX, guideY, onGuides])
 
-  const itemStyle = {
+  const turned = box.rotation ?? 0
+  const itemStyle: CSSProperties = {
     left: (x - data.originX) * scale,
     top: (data.pageHeight - (y + box.fontSize * ADDED_ASCENT - data.originY)) * scale,
+    // A box turned like the line it rewrites: about the start of its first baseline, as the server draws it
+    // (PDF counts turns the other way round from CSS).
+    ...(turned !== 0
+      ? { transform: `rotate(${-turned}deg)`, transformOrigin: `0 ${box.fontSize * ADDED_ASCENT * scale}px` }
+      : {}),
   }
   const boxStyle: CSSProperties = {
-    minWidth: Math.max(box.fontSize * scale * 4, 40),
+    // Room to click into while the box is still empty; once it has text, as wide as its text (a label rewritten
+    // letter under letter would otherwise reach over the next cell and catch its clicks).
+    minWidth: box.text.trim() === '' ? Math.max(box.fontSize * scale * 4, 40) : Math.max(box.fontSize * scale, 12),
     minHeight: box.fontSize * scale * LINE_SPACING,
     fontSize: box.fontSize * scale,
     lineHeight: LINE_SPACING,
     padding: 0,
     fontFamily: box.fontFamily ? `'${box.fontFamily}'` : "'맑은 고딕'",
     fontWeight: box.bold ? 'bold' : undefined,
-    ...boxVars(box.color ?? '#000000'),
+    // A box rewriting a scanned line is typed in on the colour of the paper it lies on (a grey table cell too).
+    ...boxVars(box.color ?? '#000000', box.cover?.color),
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLDivElement>) {

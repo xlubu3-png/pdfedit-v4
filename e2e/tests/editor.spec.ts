@@ -312,3 +312,28 @@ test('a picture copied on one page is pasted onto another page of the same docum
   // the same document keeps one copy of the picture and both pages point at it
   expect((await secondPage())[0].imageId).toBe(onFirst[0].imageId)
 })
+
+test('text typed into an added box is found by find-and-replace, marked as a box, and replaced', async ({ page }) => {
+  await openEditor(page, ['Hello World'])
+  await page.keyboard.press('t')
+  await page.locator('.te-layer').click({ position: { x: 150, y: 300 } })
+  await page.keyboard.type('담당 김철수')
+  await page.locator('.te-layer').click({ position: { x: 5, y: 5 } })
+  await waitSaved(page)
+  await page.locator('.rb-back').click()
+
+  await page.keyboard.press('Control+f')
+  const find = page.getByRole('dialog', { name: '찾아 바꾸기' })
+  await find.getByLabel('찾을 글자').fill('김철수')
+  await find.getByRole('button', { name: '찾기', exact: true }).click()
+  await expect(find.locator('.find-results li')).toHaveCount(1)
+  await expect(find.locator('.find-box')).toHaveText('상자')
+  await find.getByLabel('바꿀 글자').fill('이영희')
+  page.once('dialog', (d) => void d.accept())
+  await find.getByRole('button', { name: '모두 바꾸기' }).click()
+  await expect(find.locator('.find-message')).toContainText('1')
+
+  await find.getByRole('button', { name: '닫기' }).click()
+  await page.locator('button[title="텍스트 편집"]').first().click()
+  await expect(page.locator('.te-box[data-added]')).toHaveText('담당 이영희')
+})

@@ -149,7 +149,7 @@ export function FindReplaceDialog({ pages, initialQuery = '', onClose, onOpenPag
             {results.map((m) => {
               const page = pages.find((p) => p.documentId === m.documentId && p.pageIndex === m.pageIndex)
               return (
-                <li key={`${m.documentId}-${m.pageIndex}-${m.runIndex}-${m.scanned ? 's' : 't'}`}>
+                <li key={`${m.documentId}-${m.pageIndex}-${m.runIndex}-${m.scanned ? 's' : 't'}-${m.boxId ?? ''}`}>
                   <button
                     type="button"
                     disabled={!page}
@@ -168,6 +168,11 @@ export function FindReplaceDialog({ pages, initialQuery = '', onClose, onOpenPag
                           title="스캔한 쪽에서 글자 인식(OCR)으로 읽은 줄입니다. 그림이라 바꾸기는 되지 않습니다."
                         >
                           스캔
+                        </span>
+                      )}
+                      {m.boxId && (
+                        <span className="find-scanned find-box" title="페이지에 추가한 텍스트 상자의 글자입니다. 바꾸기도 됩니다.">
+                          상자
                         </span>
                       )}
                     </span>

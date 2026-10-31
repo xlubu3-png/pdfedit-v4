@@ -1163,6 +1163,17 @@ button.primary:disabled {
   background: rgba(42, 157, 111, 0.2);
 }
 
+/* Read with little confidence: worth checking against the scan. */
+.te-ocr-line.unsure {
+  border-color: #d97706;
+  background: rgba(217, 119, 6, 0.1);
+}
+
+.te-ocr-line.unsure.picked {
+  border-color: #d97706;
+  background: rgba(217, 119, 6, 0.22);
+}
+
 /* While placing a new text box a click means "put it here", even on a recognized line. */
 .te-layer.adding .te-ocr-line {
   pointer-events: none;
@@ -1905,6 +1916,10 @@ kbd {
   background: #0f766e;
   color: #fff;
   font-size: 11px;
+}
+
+.find-scanned.find-box {
+  background: #4b5563;
 }
 
 .find-text mark {

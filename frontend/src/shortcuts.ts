@@ -16,6 +16,7 @@ export const HELP_BASICS: string[] = [
   '상자나 왼쪽의 ✥ 손잡이를 끌면 줄을 옮길 수 있고, 다른 줄의 왼쪽 끝·기준선에 정렬선이 붙습니다.',
   '‘＋ 텍스트 추가’를 누른 뒤 페이지의 원하는 곳을 클릭하면 새 글자를 넣을 수 있습니다.',
   '수정한 부분은 원래 배경색으로 덮은 뒤 다시 그리는 방식이라, 원본 글꼴이 완벽히 재현되지 않을 수 있습니다.',
+  '스캔한 쪽은 ‘편집 → 글자 인식(OCR)’ 뒤에 초록 점선 줄을 클릭해 복사하거나, 두 번 클릭해 고쳐 쓸 수 있습니다.',
 ]
 
 export const SHORTCUT_GROUPS: ShortcutGroup[] = [
@@ -53,6 +54,15 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: ['Ctrl', 'C'], label: '선택한 줄 복사' },
       { keys: ['Ctrl', 'V'], label: '붙여넣기 (다른 페이지에도 가능)' },
       { keys: ['Ctrl', 'D'], label: '선택한 줄 복제' },
+    ],
+  },
+  {
+    title: '스캔 글자 (글자 인식 뒤)',
+    items: [
+      { keys: ['클릭'], label: '점선 줄 고르기' },
+      { keys: ['Ctrl', 'C'], label: '고른 줄 복사 (고른 줄이 없으면 ‘글자 복사’로 쪽 전체)' },
+      { keys: ['Enter'], label: '고른 줄 고쳐 쓰기 (두 번 클릭도 같음)' },
+      { keys: ['Esc'], label: '고르기 풀기' },
     ],
   },
   {

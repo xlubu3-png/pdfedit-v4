@@ -29,6 +29,7 @@ import com.pdfedit.service.PdfDocumentStore;
 import com.pdfedit.service.PdfExportService;
 import com.pdfedit.service.PdfThumbnailService;
 import com.pdfedit.service.TextEditService;
+import com.pdfedit.text.AddedText;
 import com.pdfedit.text.FontMatcher;
 
 class RedactionControllerTest {
@@ -37,7 +38,7 @@ class RedactionControllerTest {
     private final TextEditService textEditService = new TextEditService(new FontMatcher());
     private final PdfController pdfController = new PdfController(
             store, new PdfThumbnailService(), new PdfExportService(store, textEditService), textEditService);
-    private final RedactionController controller = new RedactionController(store);
+    private final RedactionController controller = new RedactionController(store, new TextEditService(new FontMatcher()));
 
     private static byte[] pdfWith(String text) throws IOException {
         try (PDDocument doc = new PDDocument(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
@@ -52,6 +53,34 @@ class RedactionControllerTest {
             }
             doc.save(out);
             return out.toByteArray();
+        }
+    }
+
+    @Test
+    void personalInfoTypedIntoATextBoxIsFoundWhereItIsAndRedactedForGood() throws IOException {
+        String id = store.store("a.pdf", pdfWith("Nothing here"), 1);
+        store.setAddedTexts(id, 0, List.of(
+                new AddedText("b1", "담당자 연락처 010-2345-6789", 100, 500, null, 12, false, null),
+                // Turned to run down the page from (400, 600).
+                new AddedText("b2", "010-9876-5432", 400, 600, null, 12, false, null, List.of(), null, -90f)));
+
+        List<PersonalInfoMatch> found = controller.findPersonalInfo(
+                new PersonalInfoRequest(List.of(new PageSpec(id, 0, 0)), List.of("MOBILE"), null));
+
+        assertThat(found).extracting(PersonalInfoMatch::text).containsExactly("010-2345-6789", "010-9876-5432");
+        PersonalInfoMatch across = found.get(0);
+        assertThat(across.x()).as("after the label").isGreaterThan(140);
+        assertThat(across.y()).isBetween(494f, 500f);
+        PersonalInfoMatch down = found.get(1);
+        assertThat(down.height()).as("runs down the page").isGreaterThan(5 * down.width());
+        assertThat(down.y() + down.height()).isCloseTo(600, org.assertj.core.data.Offset.offset(2f));
+
+        controller.saveRedactions(id, 0, found.stream()
+                .map(m -> new Redaction(m.text(), m.x(), m.y(), m.width(), m.height())).toList());
+        var response = pdfController.export(new ExportRequest(List.of(new PageSpec(id, 0, 0)), "out.pdf"));
+        try (PDDocument exported = Loader.loadPDF(response.getBody())) {
+            String text = new PDFTextStripper().getText(exported);
+            assertThat(text).contains("담당자").doesNotContain("2345").doesNotContain("9876");
         }
     }
 

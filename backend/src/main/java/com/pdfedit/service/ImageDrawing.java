@@ -86,7 +86,7 @@ public final class ImageDrawing {
     }
 
     /** The pixels the first picture in the file says it has, without decoding it; 0 when no reader knows the file. */
-    private static long headerPixels(byte[] data) throws IOException {
+    static long headerPixels(byte[] data) throws IOException {
         try (ImageInputStream stream = ImageIO.createImageInputStream(new ByteArrayInputStream(data))) {
             Iterator<ImageReader> readers = stream == null ? null : ImageIO.getImageReaders(stream);
             if (readers == null || !readers.hasNext()) {

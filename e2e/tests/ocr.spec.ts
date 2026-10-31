@@ -148,3 +148,71 @@ test('a recognized line is copied with Ctrl+C, and a double click rewrites it so
   expect(text).toContain('스캔문서글자인식시험')
   expect(text).not.toContain('2345')
 })
+
+test('the text editor recognizes every page at once and shows each page what was found on it', async ({ page }) => {
+  await page.goto('/')
+  await page.locator('input[type=file]').setInputFiles([
+    { name: 'scan.pdf', mimeType: 'application/pdf', buffer: await scan(page) },
+    { name: 'typed.pdf', mimeType: 'application/pdf', buffer: simplePdf(['Real text line']) },
+  ])
+  await expect(page.locator('.page-card')).toHaveCount(2)
+  await page.getByRole('button', { name: '나중에' }).click()
+  await page.locator('button[title="텍스트 편집"]').nth(1).click()
+  const editor = page.getByRole('dialog', { name: '텍스트 편집' })
+
+  await editor.getByRole('button', { name: '모든 쪽 인식' }).click()
+
+  await expect(page.locator('.te-ocr-note')).toContainText('2쪽에서 글자 2줄을 인식했습니다', { timeout: 60_000 })
+  await expect(page.locator('.te-ocr-note')).toContainText('1쪽은 이미 글자가 들어 있는 PDF입니다')
+  await page.getByRole('group', { name: '쪽 이동' }).getByRole('button', { name: '이전 쪽' }).click()
+  await expect(page.locator('.te-ocr-line')).toHaveCount(2)
+  await page.locator('.rb-back').click()
+  await expect(page.locator('.page-card .page-ocr')).toHaveCount(1)
+})
+
+test('a line running down the page is rewritten as a box turned the same way', async ({ page }) => {
+  await page.goto('/')
+  const dataUrl = await page.evaluate(() => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 1654
+    canvas.height = 2339
+    const g = canvas.getContext('2d')!
+    g.fillStyle = '#fff'
+    g.fillRect(0, 0, canvas.width, canvas.height)
+    g.fillStyle = '#000'
+    g.font = '40px "Malgun Gothic"'
+    g.fillText('성명 박장환', 400, 300)
+    g.translate(250, 400)
+    g.rotate(Math.PI / 2)
+    g.fillText('연락처 010-2345-6789', 0, 0)
+    return canvas.toDataURL('image/jpeg', 0.9)
+  })
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'turned.pdf',
+    mimeType: 'application/pdf',
+    buffer: scannedPdf(Buffer.from(dataUrl.split(',')[1], 'base64'), 1654, 2339),
+  })
+  await page.getByRole('button', { name: '나중에' }).click()
+  await page.locator('button[title="텍스트 편집"]').first().click()
+  await page.getByRole('dialog', { name: '텍스트 편집' }).getByRole('button', { name: '글자 인식(OCR)' }).click()
+  const turned = page.locator('.te-ocr-line[title*="2345"]')
+  await expect(turned).toBeVisible({ timeout: 60_000 })
+
+  await turned.dblclick()
+
+  const box = page.locator('.te-box[data-added]')
+  await expect(box).toBeFocused()
+  await expect(page.locator('.te-item.added')).toHaveCSS('transform', /matrix\(0, 1, -1, 0/)
+  await page.keyboard.press('Control+a')
+  await page.keyboard.type('연락처 010-9999-0000')
+  await page.locator('.te-layer').click({ position: { x: 3, y: 3 } })
+  await expect(page.locator('.te-status')).toContainText('반영됨')
+
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('dialog', { name: '텍스트 편집' }).getByRole('button', { name: 'PDF로 내보내기' }).click(),
+  ])
+  const text = await textOf(page, readFileSync(await download.path()))
+  expect(text).toContain('010-9999-0000')
+  expect(text).not.toContain('2345')
+})

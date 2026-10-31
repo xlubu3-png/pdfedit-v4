@@ -49,16 +49,28 @@ public final class OcrTextLayer {
                 if (text.isBlank() || line.width() <= 0 || line.height() <= 0) {
                     continue;
                 }
-                float size = line.height() * SIZE_OF_HEIGHT;
+                // A vertical line is written turned, running down (or up) the page as it does on the scan.
+                boolean vertical = line.vertical();
+                float across = vertical ? line.width() : line.height();
+                float along = vertical ? line.height() : line.width();
+                float size = across * SIZE_OF_HEIGHT;
                 float natural = font.getStringWidth(text) / 1000f * size;
                 if (natural <= 0) {
                     continue;
                 }
-                // Stretched or squeezed to the width the line has on the scan, so a selection matches the words.
-                float scaling = Math.max(10f, Math.min(1000f, 100f * line.width() / natural));
+                // Stretched or squeezed to the length the line has on the scan, so a selection matches the words.
+                float scaling = Math.max(10f, Math.min(1000f, 100f * along / natural));
                 cs.setFont(font, size);
                 cs.setHorizontalScaling(scaling);
-                cs.setTextMatrix(Matrix.getTranslateInstance(line.x(), line.y() + line.height() * BASELINE_OF_HEIGHT));
+                if (!vertical) {
+                    cs.setTextMatrix(Matrix.getTranslateInstance(line.x(), line.y() + across * BASELINE_OF_HEIGHT));
+                } else if (line.upwards()) {
+                    cs.setTextMatrix(Matrix.getRotateInstance(Math.PI / 2,
+                            line.x() + across * (1 - BASELINE_OF_HEIGHT), line.y()));
+                } else {
+                    cs.setTextMatrix(Matrix.getRotateInstance(-Math.PI / 2, line.x() + across * BASELINE_OF_HEIGHT,
+                            line.y() + line.height()));
+                }
                 cs.showText(text);
                 written++;
             }

@@ -19,6 +19,7 @@ import com.pdfedit.dto.PageSpec;
 import com.pdfedit.dto.ReplaceResult;
 import com.pdfedit.dto.TextEditItem;
 import com.pdfedit.ocr.OcrText;
+import com.pdfedit.text.AddedText;
 import com.pdfedit.text.FontUnavailableException;
 import com.pdfedit.text.RunEdit;
 import com.pdfedit.text.TextExtraction;
@@ -56,10 +57,16 @@ public class TextSearchService {
                             found.add(new FindMatch(doc.getKey(), pageIndex, i, text));
                         }
                     }
+                    List<AddedText> boxes = store.pageEditsSnapshot(doc.getKey(), pageIndex).added();
+                    for (AddedText box : boxes) {
+                        String text = box.text() == null ? "" : box.text().replaceAll("\\R", " ");
+                        if (found.size() < MAX_MATCHES && pattern.matcher(text).find()) {
+                            found.add(new FindMatch(doc.getKey(), pageIndex, -1, text, false, box.id()));
+                        }
+                    }
                     List<OcrText> recognized = store.ocr(doc.getKey(), pageIndex);
-                    // A line rewritten as a text box no longer says what was recognized.
-                    List<OcrText> shown = OcrText.notRewritten(recognized,
-                            store.pageEditsSnapshot(doc.getKey(), pageIndex).added());
+                    // A line rewritten as a text box no longer says what was recognized (the box does).
+                    List<OcrText> shown = OcrText.notRewritten(recognized, boxes);
                     for (int k = 0; k < recognized.size() && found.size() < MAX_MATCHES; k++) {
                         if (!shown.contains(recognized.get(k))) {
                             continue;
@@ -113,13 +120,39 @@ public class TextSearchService {
                                 before == null ? null : before.withText(replaced).spans()));
                     }
                 }
-                if (items.isEmpty()) {
+                // The text boxes put on the page: the same replacement inside each, line breaks staying.
+                List<AddedText> boxes = store.pageEditsSnapshot(doc.getKey(), pageIndex).added();
+                List<AddedText> newBoxes = new ArrayList<>(boxes.size());
+                int boxReplacements = 0;
+                int boxesChanged = 0;
+                for (AddedText box : boxes) {
+                    String text = box.text() == null ? "" : box.text();
+                    Matcher matcher = pattern.matcher(text);
+                    int count = 0;
+                    while (matcher.find()) {
+                        count++;
+                    }
+                    if (count == 0) {
+                        newBoxes.add(box);
+                        continue;
+                    }
+                    boxReplacements += count;
+                    boxesChanged++;
+                    newBoxes.add(box.withText(pattern.matcher(text).replaceAll(replacement)));
+                }
+                if (items.isEmpty() && boxesChanged == 0) {
                     continue;
                 }
                 try {
-                    textEditService.recordEdits(content, pageIndex, store.pageEdits(doc.getKey(), pageIndex), items);
-                    replacements += pageReplacements;
-                    runsChanged += items.size();
+                    if (!items.isEmpty()) {
+                        textEditService.recordEdits(content, pageIndex, store.pageEdits(doc.getKey(), pageIndex), items);
+                    }
+                    if (boxesChanged > 0) {
+                        store.setAddedTexts(doc.getKey(), pageIndex, textEditService.checkAdded(content, pageIndex,
+                                newBoxes.stream().filter(b -> b.text() != null && !b.text().isBlank()).toList()));
+                    }
+                    replacements += pageReplacements + boxReplacements;
+                    runsChanged += items.size() + boxesChanged;
                     changedPages.add(new PageSpec(doc.getKey(), pageIndex, 0));
                 } catch (FontUnavailableException unusable) {
                     skipped = skipped == null ? (pageIndex + 1) + "쪽을 건너뜀: " + unusable.getMessage() : skipped;

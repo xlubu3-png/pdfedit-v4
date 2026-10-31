@@ -12,6 +12,7 @@ import com.pdfedit.dto.FindMatch;
 import com.pdfedit.dto.PageSpec;
 import com.pdfedit.dto.ReplaceResult;
 import com.pdfedit.dto.TextRunDto;
+import com.pdfedit.text.AddedText;
 import com.pdfedit.text.FontMatcher;
 import com.pdfedit.text.RunEdit;
 
@@ -104,6 +105,29 @@ class TextSearchServiceTest {
         search.replace(pages, "Howdy", "Hello", true);
 
         assertThat(store.pageEditsSnapshot(id, 0).runs()).isEmpty();
+    }
+
+    @Test
+    void textBoxesPutOnThePageAreFoundAndReplacedTheirLooksStayingOnTheirLetters() throws IOException {
+        upload();
+        // "김철수" (letters 21 to 24 of the box, the line break counted) is bold.
+        AddedText box = new AddedText("b1", "연락처 010-1111-2222\n담당 김철수", 100, 500, null, 12, false, "#000000",
+                List.of(new RunEdit.Span(21, 24, true, null)));
+        store.setAddedTexts(id, 0, List.of(box));
+
+        List<FindMatch> found = search.find(pages, "김철수", false);
+
+        assertThat(found).containsExactly(new FindMatch(id, 0, -1, "연락처 010-1111-2222 담당 김철수", false, "b1"));
+
+        ReplaceResult result = search.replace(pages, "김철수", "이영희", false);
+
+        assertThat(result.replacements()).isEqualTo(1);
+        assertThat(result.pages()).containsExactly(new PageSpec(id, 0, 0));
+        AddedText after = store.pageEditsSnapshot(id, 0).added().get(0);
+        assertThat(after.text()).isEqualTo("연락처 010-1111-2222\n담당 이영희");
+        assertThat(after.spans()).containsExactly(new RunEdit.Span(21, 24, true, null));
+        assertThat(after.x()).isEqualTo(100);
+        assertThat(search.find(pages, "김철수", false)).isEmpty();
     }
 
     @Test

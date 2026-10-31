@@ -28,6 +28,8 @@ import com.pdfedit.text.TextLines;
 import com.pdfedit.redact.Redaction;
 import com.pdfedit.service.InvalidEditException;
 import com.pdfedit.service.PdfDocumentStore;
+import com.pdfedit.service.TextEditService;
+import com.pdfedit.text.AddedText;
 
 /** The areas of a page that are redacted on export, and the search for personal information to redact. */
 @RestController
@@ -39,9 +41,11 @@ public class RedactionController {
     private static final float MAX_COORDINATE = 20_000f;
 
     private final PdfDocumentStore store;
+    private final TextEditService textEditService;
 
-    public RedactionController(PdfDocumentStore store) {
+    public RedactionController(PdfDocumentStore store, TextEditService textEditService) {
         this.store = store;
+        this.textEditService = textEditService;
     }
 
     @GetMapping("/documents/{documentId}/pages/{pageIndex}/redactions")
@@ -89,9 +93,12 @@ public class RedactionController {
         for (Map.Entry<String, List<Integer>> document : pagesByDocument.entrySet()) {
             try (PDDocument doc = Loader.loadPDF(store.getContent(document.getKey()))) {
                 for (int pageIndex : document.getValue()) {
-                    // A scanned page's words are only in what text recognition read off it.
-                    List<TextLines.Line> recognized = store.ocr(document.getKey(), pageIndex).stream()
-                            .map(OcrText::line).toList();
+                    // Besides the page's own text: what text recognition read off a scan (but not the lines
+                    // rewritten as text boxes) and what the text boxes put on the page say.
+                    List<AddedText> boxes = store.pageEditsSnapshot(document.getKey(), pageIndex).added();
+                    List<TextLines.Line> recognized = new ArrayList<>(OcrText.notRewritten(
+                            store.ocr(document.getKey(), pageIndex), boxes).stream().map(OcrText::line).toList());
+                    recognized.addAll(textEditService.addedLines(boxes));
                     for (PersonalInfoFinder.Match m
                             : PersonalInfoFinder.find(doc, pageIndex, kinds, term, recognized)) {
                         if (found.size() >= MAX_MATCHES) {

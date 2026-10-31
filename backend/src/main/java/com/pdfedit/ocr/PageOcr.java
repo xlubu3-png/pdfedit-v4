@@ -80,7 +80,7 @@ public class PageOcr implements DisposableBean {
                 centers.add(Math.round(c * 1000) / 1000f);
             }
             OcrText text = new OcrText(line.text(), x, bottom, (line.right() - line.left()) * k, top - bottom,
-                    line.score(), centers);
+                    line.score(), centers, line.orientation());
             if (onRealText(text, runs)) {
                 alreadyText++;
             } else {

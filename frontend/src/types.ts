@@ -219,15 +219,21 @@ export interface AddedText {
    * bottom edge. It stays where it is when the box moves.
    */
   cover?: Cover | null
+  /** Degrees the box is turned about (x, y), counter-clockwise as PDF counts: -90 runs down the page. */
+  rotation?: number
 }
 
-/** A rectangle in PDF user space filled with one colour ("#rrggbb"). */
+/**
+ * A rectangle in PDF user space painted over: with `patch` (a base64 PNG in the paper's colour on the scanned
+ * letters only, see-through elsewhere, so table rules and shading stay) stretched over it, else filled with `color`.
+ */
 export interface Cover {
   x: number
   y: number
   width: number
   height: number
   color: string
+  patch?: string | null
 }
 
 /** A picture (stamp, signature, logo) the user put on the page; coordinates are PDF user space, `y` is the bottom edge. */
@@ -264,6 +270,8 @@ export interface FindMatch {
   text: string
   /** Read off a scanned page by text recognition: it can be found, not replaced. */
   scanned?: boolean
+  /** In a text box put on the page (its lines joined by spaces), not in a line of the PDF. */
+  boxId?: string | null
 }
 
 export interface ReplaceResult {

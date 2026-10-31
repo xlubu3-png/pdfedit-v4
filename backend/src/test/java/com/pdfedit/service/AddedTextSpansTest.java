@@ -126,6 +126,19 @@ class AddedTextSpansTest {
         assertThat(old.spans()).isEmpty();
     }
 
+    /** The browser sends what it knows of a box: no turn and no cover for one typed in. */
+    @Test
+    void aBoxSentWithoutATurnOrCoverIsReadAsUpright() {
+        String sent = "{\"id\":\"a\",\"text\":\"x\",\"x\":1,\"y\":2,\"fontFamily\":null,\"fontSize\":12,\"bold\":false,"
+                + "\"color\":null,\"spans\":[]}";
+
+        AddedText box = tools.jackson.databind.json.JsonMapper.builder().build().readValue(sent, AddedText.class);
+
+        assertThat(box.rotation()).isZero();
+        assertThat(box.cover()).isNull();
+        assertThat(box.y()).isEqualTo(2f);
+    }
+
     @Test
     void nonsenseInSpansIsRefused() throws IOException {
         byte[] blank = TestPdfs.blankPage();

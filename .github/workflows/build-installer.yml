@@ -1,0 +1,88 @@
+name: 설치 파일 빌드
+
+# Windows 설치 파일(WINTECH_PDF_Setup_<버전>.exe)을 GitHub의 Windows 서버에서 만듭니다. PC에 JDK·WiX가 없어도 됩니다.
+#  - master에 올라올 때마다: 만들어서 이 실행의 Artifacts에 올려 둡니다(14일 보관, 내려받아 시험 설치할 수 있음).
+#  - Actions → 설치 파일 빌드 → Run workflow에서 '릴리스로 올리기'를 켜고 실행하면: 만든 설치 파일을 v<버전> 릴리스로
+#    올립니다(installer/release-notes/<버전>.md의 한글 설명과 함께). 설치된 앱은 이것을 업데이트로 받습니다.
+on:
+  push:
+    branches: [master, claude/admiring-brown-xdsv02]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: '만든 설치 파일을 GitHub 릴리스로 올리기 (설치된 앱이 업데이트로 받음)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: installer-${{ github.ref }}
+  # A newer push replaces a build still running; a release being published is never cut off.
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+jobs:
+  build:
+    name: Windows 설치 파일
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: 소스 받기
+        uses: actions/checkout@v4
+
+      - name: Java 25 준비
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Node 준비
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Gradle 준비
+        uses: gradle/actions/setup-gradle@v4
+
+      # jpackage (Java 25) makes the .exe with WiX: v4 or later as a .NET tool, with the extensions for its dialogs.
+      - name: WiX 준비
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          $tools = Join-Path $env:USERPROFILE '.dotnet\tools'
+          $tools | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & (Join-Path $tools 'wix.exe') extension add -g WixToolset.Util.wixext/5.0.2
+          & (Join-Path $tools 'wix.exe') extension add -g WixToolset.UI.wixext/5.0.2
+          & (Join-Path $tools 'wix.exe') --version
+
+      - name: 버전 읽기
+        id: version
+        shell: pwsh
+        run: |
+          $yml = Get-Content backend/src/main/resources/application.yml -Raw
+          $version = [regex]::Match($yml, '(?m)^\s*version:\s*"?([0-9.]+)').Groups[1].Value
+          if (-not $version) { throw 'application.yml에서 app.version을 찾지 못했습니다.' }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Host "버전 $version"
+
+      - name: 설치 파일 만들기
+        shell: pwsh
+        run: .\installer\build-installer.ps1
+
+      - name: 설치 파일 올려 두기 (Artifacts)
+        uses: actions/upload-artifact@v4
+        with:
+          name: WINTECH_PDF_Setup_${{ steps.version.outputs.version }}
+          path: installer/dist/WINTECH_PDF_Setup_*.exe
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: 릴리스로 올리기
+        if: github.event_name == 'workflow_dispatch' && inputs.publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .\installer\publish-release.ps1

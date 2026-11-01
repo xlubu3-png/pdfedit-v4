@@ -95,6 +95,8 @@ public class RecognizedLineBox implements DisposableBean {
     private static final double ROOM = 0.15;
     /** Pages whose fonts were compared, remembered for their next rewrites. */
     private static final int PAGES_REMEMBERED = 32;
+    /** At most this many pages wait to have their font told in the background. */
+    private static final int PAGES_WAITING = 3;
     /** At most this many of the page's other lines, read at least this surely and this long, judge its font. */
     private static final int PAGE_SAMPLES = 8;
     /** A line keeps a face of the other style only when it is this much more like it (0-1) than the page's font. */
@@ -148,6 +150,15 @@ public class RecognizedLineBox implements DisposableBean {
         }
     };
 
+    /**
+     * Pages waiting to have their font told, the latest first; at most {@link #PAGES_WAITING}, the oldest dropped
+     * (recognizing a long document page after page would otherwise line up every page behind it).
+     */
+    private final java.util.Deque<Waiting> waiting = new java.util.ArrayDeque<>();
+
+    private record Waiting(byte[] pdf, int pageIndex, List<OcrText> lines, String key) {
+    }
+
     /** Tells pages' fonts in the background, one page at a time. */
     private final ExecutorService preparing = Executors.newSingleThreadExecutor(work -> {
         Thread thread = new Thread(work, "page-font");
@@ -161,20 +172,73 @@ public class RecognizedLineBox implements DisposableBean {
      * it compares a dozen faces over several of its lines, which takes a few seconds.
      */
     public void prepare(byte[] pdf, int pageIndex, List<OcrText> pageLines) {
-        if (pageLines.isEmpty()) {
+        List<OcrText> samples = samples(pageLines);
+        if (samples.isEmpty()) {
             return;
         }
-        preparing.execute(() -> {
-            try (PDDocument doc = Loader.loadPDF(pdf)) {
-                PDPage page = doc.getPage(pageIndex);
-                if (page.getRotation() % 360 == 0) {
-                    pageFont(pdf, new PDFRenderer(doc), pageIndex, page.getCropBox(), pageLines,
-                            fontMatcher.documentFaces());
-                }
-            } catch (IOException | RuntimeException failed) {
-                log.debug("The font of page {} could not be told ahead: {}", pageIndex, failed.toString());
+        String key = pageKey(pdf, pageIndex, samples);
+        synchronized (pageFonts) {
+            if (pageFonts.containsKey(key)) {
+                return;
             }
-        });
+        }
+        // The page just recognized or opened is the one most likely rewritten next: it goes first.
+        synchronized (waiting) {
+            waiting.removeIf(page -> page.key().equals(key));
+            waiting.addFirst(new Waiting(pdf, pageIndex, pageLines, key));
+            while (waiting.size() > PAGES_WAITING) {
+                waiting.removeLast();
+            }
+        }
+        preparing.execute(this::prepareNext);
+    }
+
+    private void prepareNext() {
+        Waiting next;
+        synchronized (waiting) {
+            next = waiting.pollFirst();
+        }
+        if (next == null) {
+            return;
+        }
+        try (PDDocument doc = Loader.loadPDF(next.pdf())) {
+            PDPage page = doc.getPage(next.pageIndex());
+            if (page.getRotation() % 360 == 0) {
+                pageFont(next.pdf(), new PDFRenderer(doc), next.pageIndex(), page.getCropBox(), next.lines(),
+                        fontMatcher.documentFaces());
+            }
+        } catch (IOException | RuntimeException failed) {
+            log.debug("The font of page {} could not be told ahead: {}", next.pageIndex(), failed.toString());
+        }
+    }
+
+    /** The page's longest lines read surely, which tell its font. */
+    private static List<OcrText> samples(List<OcrText> pageLines) {
+        return pageLines.stream()
+                .filter(l -> !l.vertical() && l.score() >= SURE_LINE
+                        && l.text().replace(" ", "").length() >= SAMPLE_LETTERS)
+                .sorted(java.util.Comparator.comparingInt((OcrText l) -> -l.text().length()))
+                .limit(PAGE_SAMPLES).toList();
+    }
+
+    /** What a page's font is remembered by: the document (roughly), the page and the lines that tell it. */
+    private static String pageKey(byte[] pdf, int pageIndex, List<OcrText> samples) {
+        return pageIndex + ":" + pdf.length + ":" + java.util.Arrays.hashCode(
+                java.util.Arrays.copyOf(pdf, Math.min(pdf.length, 4096))) + ":" + samples.hashCode();
+    }
+
+    /** Whether page {@code pageIndex}'s font is told or being told (for tests). */
+    boolean prepared(byte[] pdf, int pageIndex, List<OcrText> pageLines) {
+        synchronized (pageFonts) {
+            return pageFonts.containsKey(pageKey(pdf, pageIndex, samples(pageLines)));
+        }
+    }
+
+    /** How many pages wait to have their font told (for tests). */
+    int waitingPages() {
+        synchronized (waiting) {
+            return waiting.size();
+        }
     }
 
     @Override
@@ -545,16 +609,11 @@ public class RecognizedLineBox implements DisposableBean {
      */
     private PageFont pageFont(byte[] pdf, PDFRenderer renderer, int pageIndex, PDRectangle crop,
             List<OcrText> pageLines, List<SystemFonts.Face> faces) throws IOException {
-        List<OcrText> samples = pageLines.stream()
-                .filter(l -> !l.vertical() && l.score() >= SURE_LINE
-                        && l.text().replace(" ", "").length() >= SAMPLE_LETTERS)
-                .sorted(java.util.Comparator.comparingInt((OcrText l) -> -l.text().length()))
-                .limit(PAGE_SAMPLES).toList();
+        List<OcrText> samples = samples(pageLines);
         if (samples.isEmpty()) {
             return new PageFont(null, false, List.of(), null);
         }
-        String key = pageIndex + ":" + pdf.length + ":" + java.util.Arrays.hashCode(
-                java.util.Arrays.copyOf(pdf, Math.min(pdf.length, 4096))) + ":" + samples.hashCode();
+        String key = pageKey(pdf, pageIndex, samples);
         CompletableFuture<PageFont> known;
         CompletableFuture<PageFont> mine = new CompletableFuture<>();
         synchronized (pageFonts) {

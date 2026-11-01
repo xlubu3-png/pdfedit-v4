@@ -170,4 +170,25 @@ class RecognizedLineBoxTest {
             assertThat(letters[y][15]).as("a letter, y=" + y).isTrue();
         }
     }
+
+    @Test
+    void onlyTheLatestFewPagesWaitToHaveTheirFontTold() throws Exception {
+        byte[] pdf;
+        try (PDDocument doc = new PDDocument(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            doc.addPage(new PDPage(PDRectangle.A4));
+            doc.save(out);
+            pdf = out.toByteArray();
+        }
+        RecognizedLineBox boxes = new RecognizedLineBox(fontMatcher);
+        try {
+            for (int page = 0; page < 20; page++) {
+                boxes.prepare(pdf, page, List.of(new OcrText("반응시설 반응기 " + page, 50, 700, 200, 14, 0.99f,
+                        null)));
+            }
+
+            assertThat(boxes.waitingPages()).as("a long document recognized page after page").isLessThanOrEqualTo(3);
+        } finally {
+            boxes.destroy();
+        }
+    }
 }

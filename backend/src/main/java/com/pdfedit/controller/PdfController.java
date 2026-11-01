@@ -49,6 +49,8 @@ import com.pdfedit.service.TextEditService;
 public class PdfController {
 
     static final String REDACTION_HEADER = "X-Redaction-Report";
+    /** "pictures=12;before=24000000;after=3100000": what storing the pictures smaller saved (용량 줄이기). */
+    static final String SHRINK_HEADER = "X-Shrink-Report";
     private static final int MIN_THUMBNAIL_WIDTH = 16;
     private static final int MAX_THUMBNAIL_WIDTH = 2000;
     /** Pages looked at to tell a scan; enough, and quick even for a long document. */
@@ -218,7 +220,7 @@ public class PdfController {
             throw new InvalidEditException("내보낼 페이지가 없습니다.");
         }
         PdfExportService.Exported result = exportService.exportWithReport(request.pages(),
-                Boolean.TRUE.equals(request.flatten()));
+                Boolean.TRUE.equals(request.flatten()), Boolean.TRUE.equals(request.compress()));
         // Quotes, backslashes and control characters would break out of the header's quoted file name.
         String requested = request.fileName() == null ? "" : request.fileName().replaceAll("[\\p{Cntrl}\"\\\\]", "_").trim();
         String fileName = requested.isEmpty() ? "edited.pdf" : requested;
@@ -234,6 +236,8 @@ public class PdfController {
                 .header(REDACTION_HEADER, "areas=" + redaction.areas() + ";removed=" + redaction.glyphsRemoved()
                         + ";pictures=" + redaction.picturePages().stream().map(String::valueOf)
                                 .collect(Collectors.joining(",")))
+                .header(SHRINK_HEADER, "pictures=" + result.shrink().pictures() + ";before=" + result.shrink().before()
+                        + ";after=" + result.shrink().after())
                 .contentType(MediaType.APPLICATION_PDF)
                 .body(pdf);
     }

@@ -29,23 +29,23 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: 소스 받기
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Java 25 준비
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '25'
 
       - name: Node 준비
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       - name: Gradle 준비
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v5
 
       # jpackage (Java 25) makes the .exe with WiX: v4 or later as a .NET tool, with the extensions for its dialogs.
       - name: WiX 준비
@@ -73,7 +73,7 @@ jobs:
         run: .\installer\build-installer.ps1
 
       - name: 설치 파일 올려 두기 (Artifacts)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: WINTECH_PDF_Setup_${{ steps.version.outputs.version }}
           path: installer/dist/WINTECH_PDF_Setup_*.exe

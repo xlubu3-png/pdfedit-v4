@@ -35,6 +35,10 @@ import com.pdfedit.redact.Redactor;
 public class PdfExportService {
 
     private static final float FLATTEN_DPI = 200f;
+    /** Pictures of the pages when the file is also to be small: as sharp as the pictures of a shrunk export. */
+    private static final float SMALL_FLATTEN_DPI = ImageShrinker.DPI;
+    private static final float FLATTEN_QUALITY = 0.9f;
+    private static final float SMALL_FLATTEN_QUALITY = 0.75f;
 
     private final PdfDocumentStore store;
     private final TextEditService textEditService;
@@ -55,8 +59,8 @@ public class PdfExportService {
         static final RedactionReport NONE = new RedactionReport(0, 0, List.of());
     }
 
-    /** The exported PDF and how its redaction went. */
-    public record Exported(byte[] pdf, RedactionReport redaction) {
+    /** The exported PDF, how its redaction went and what storing its pictures smaller saved (NONE when not asked). */
+    public record Exported(byte[] pdf, RedactionReport redaction, ImageShrinker.Report shrink) {
     }
 
     public byte[] export(List<PageSpec> pages) throws IOException {
@@ -72,6 +76,14 @@ public class PdfExportService {
     }
 
     public Exported exportWithReport(List<PageSpec> pages, boolean flatten) throws IOException {
+        return exportWithReport(pages, flatten, false);
+    }
+
+    /**
+     * @param compress store the pictures again, smaller (ImageShrinker); with {@code flatten}, the pictures of the
+     *                 pages are made at a lower resolution and quality instead
+     */
+    public Exported exportWithReport(List<PageSpec> pages, boolean flatten, boolean compress) throws IOException {
         Map<String, PDDocument> sources = new HashMap<>();
         TextEditService.FontCache fonts = textEditService.newFontCache();
         int areas = 0;
@@ -119,30 +131,32 @@ public class PdfExportService {
             RedactionReport report = areas == 0 ? RedactionReport.NONE
                     : new RedactionReport(areas, removed, List.copyOf(picturePages));
             if (flatten) {
-                return new Exported(rasterize(output, copies), report);
+                return new Exported(rasterize(output, copies, compress), report, ImageShrinker.Report.NONE);
             }
             // The title, bookmarks, form fields and links go along; nothing of the pages left out does.
             copies.finish(output, true, true);
+            ImageShrinker.Report shrink = compress ? ImageShrinker.shrink(output) : ImageShrinker.Report.NONE;
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             output.save(out);
-            return new Exported(out.toByteArray(), report);
+            return new Exported(out.toByteArray(), report, shrink);
         } finally {
             sources.values().forEach(PdfExportService::closeQuietly);
         }
     }
 
     /** A document of one picture per page, each as big as the page it shows, with the title and bookmarks. */
-    private static byte[] rasterize(PDDocument document, PageCopies copies) throws IOException {
+    private static byte[] rasterize(PDDocument document, PageCopies copies, boolean small) throws IOException {
         PDFRenderer renderer = new PDFRenderer(document);
+        float dpi = small ? SMALL_FLATTEN_DPI : FLATTEN_DPI;
+        float quality = small ? SMALL_FLATTEN_QUALITY : FLATTEN_QUALITY;
         try (PDDocument flat = new PDDocument()) {
             for (int i = 0; i < document.getNumberOfPages(); i++) {
-                BufferedImage image = renderer.renderImageWithDPI(i, FLATTEN_DPI, ImageType.RGB);
-                PDRectangle size = new PDRectangle(image.getWidth() * 72f / FLATTEN_DPI,
-                        image.getHeight() * 72f / FLATTEN_DPI);
+                BufferedImage image = renderer.renderImageWithDPI(i, dpi, ImageType.RGB);
+                PDRectangle size = new PDRectangle(image.getWidth() * 72f / dpi, image.getHeight() * 72f / dpi);
                 PDPage page = new PDPage(size);
                 flat.addPage(page);
                 try (PDPageContentStream cs = new PDPageContentStream(flat, page)) {
-                    cs.drawImage(JPEGFactory.createFromImage(flat, image, 0.9f), 0, 0, size.getWidth(), size.getHeight());
+                    cs.drawImage(JPEGFactory.createFromImage(flat, image, quality), 0, 0, size.getWidth(), size.getHeight());
                 }
             }
             copies.finish(flat, true, false);

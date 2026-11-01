@@ -8,6 +8,8 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -25,6 +27,9 @@ import com.pdfedit.text.AddedText;
 @RestController
 @RequestMapping("/api/v1/pdf/documents/{documentId}/pages/{pageIndex}/ocr")
 public class OcrController {
+
+    /** A corrected line holds at most this many characters. */
+    private static final int MAX_LINE = 1000;
 
     private final PdfDocumentStore store;
     private final PageOcr pageOcr;
@@ -80,6 +85,37 @@ public class OcrController {
             throw new InvalidEditException("인식한 글자 줄을 찾지 못했습니다. 글자 인식을 다시 해 주세요.");
         }
         return lineBox.of(store.getContent(documentId), pageIndex, lines.get(line), lines);
+    }
+
+    /** What a recognized line should say instead of what recognition read off it. */
+    public record Correction(String text) {
+    }
+
+    /**
+     * Corrects what recognition read off line {@code line}: the scan stays as it is, and the line says the corrected
+     * text in search, copying and the export's invisible text. A corrected line is sure (no longer marked to check).
+     */
+    @PutMapping("/{line}")
+    public OcrText correct(@PathVariable String documentId, @PathVariable int pageIndex, @PathVariable int line,
+            @RequestBody Correction correction) {
+        checkPage(documentId, pageIndex);
+        List<OcrText> lines = store.ocr(documentId, pageIndex);
+        if (line < 0 || line >= lines.size()) {
+            throw new InvalidEditException("인식한 글자 줄을 찾지 못했습니다. 글자 인식을 다시 해 주세요.");
+        }
+        String text = correction == null || correction.text() == null ? "" : correction.text().strip();
+        if (text.isEmpty() || text.contains("\n") || text.length() > MAX_LINE) {
+            throw new InvalidEditException("고칠 글자는 한 줄로, " + MAX_LINE + "자까지 써 주세요.");
+        }
+        OcrText old = lines.get(line);
+        // The letters' places still hold for as many letters; for another count they are spread evenly.
+        List<Float> centers = old.centers() != null && old.centers().size() == text.length() ? old.centers() : null;
+        OcrText corrected = new OcrText(text, old.x(), old.y(), old.width(), old.height(), 1f, centers,
+                old.orientation(), old.tilt());
+        List<OcrText> next = new java.util.ArrayList<>(lines);
+        next.set(line, corrected);
+        store.setOcr(documentId, pageIndex, next);
+        return corrected;
     }
 
     /** Drops what was recognized: the page is exported as a plain picture again. */

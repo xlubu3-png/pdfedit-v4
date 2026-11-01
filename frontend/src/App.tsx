@@ -126,6 +126,8 @@ function App() {
   /** Export every page as a picture, so nothing of the original (covered-up) text stays in the file. */
   const [flatten, setFlatten] = useState(false)
   const [findOpen, setFindOpen] = useState(false)
+  /** What find and replace opens looking for (a word picked in the editor), or nothing. */
+  const [findQuery, setFindQuery] = useState('')
   /** Whether the pages of the last visit have been looked up yet; nothing is saved before that. */
   const [restored, setRestored] = useState(() => loadSession().length === 0)
   const [restoredNote, setRestoredNote] = useState<string | null>(null)
@@ -983,7 +985,10 @@ function App() {
           onPrint={() => handlePrint(pages)}
           flatten={flatten}
           onFlattenChange={setFlatten}
-          onOpenFind={() => setFindOpen(true)}
+          onOpenFind={(query) => {
+            setFindQuery(query ?? '')
+            setFindOpen(true)
+          }}
           installedFonts={info?.installedFonts}
           unreadableFonts={info?.unreadableFonts ?? []}
           onFontsReloaded={handleFontsReloaded}
@@ -998,6 +1003,7 @@ function App() {
       {findOpen && (
         <FindReplaceDialog
           pages={pages}
+          initialQuery={findQuery}
           onClose={() => setFindOpen(false)}
           onOpenPage={setEditingKey}
           onReplaced={handleReplaced}

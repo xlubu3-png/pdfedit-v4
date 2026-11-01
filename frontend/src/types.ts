@@ -238,7 +238,12 @@ export interface Cover {
   patch?: string | null
   /** For a rewritten scan line: what was read off it (spaced as the scan is), which the redraw compares against. */
   read?: string | null
+  /** How it was fitted to the scan (`FITTING`); absent for a line rewritten by an earlier version. */
+  fitting?: number | null
 }
+
+/** How a rewritten scan line is fitted to the scan now: a box fitted otherwise can be fitted again ("다시 맞추기"). */
+export const FITTING = 1
 
 /** A picture (stamp, signature, logo) the user put on the page; coordinates are PDF user space, `y` is the bottom edge. */
 export interface AddedImage {

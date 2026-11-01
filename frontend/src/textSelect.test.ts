@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readingOrder, selectableLines } from './textSelect'
+import { asLines, asTable, readingOrder, selectableLines } from './textSelect'
 import type { SelectableLine } from './textSelect'
 import type { AddedText, OcrText, PageText, RunState, TextRun } from './types'
 
@@ -17,6 +17,20 @@ describe('readingOrder', () => {
   it('reads top to bottom, and the cells of one row left to right', () => {
     const lines = [line('아래', 10, 100), line('오른쪽 칸', 300, 41), line('제목', 10, 0), line('왼쪽 칸', 10, 40)]
     expect(readingOrder(lines).map((l) => l.key)).toEqual(['제목', '왼쪽 칸', '오른쪽 칸', '아래'])
+  })
+})
+
+describe('asTable', () => {
+  it('parts the cells of one row with tabs and the rows with line breaks, for a spreadsheet', () => {
+    const cells = [
+      { text: '26.09.14부터 ', left: 300, top: 41, height: 20 },
+      { text: '진료기간', left: 10, top: 40, height: 20 },
+      { text: '26.09.14까지', left: 500, top: 42, height: 20 },
+      { text: '환자성명', left: 10, top: 0, height: 20 },
+      { text: '  ', left: 200, top: 0, height: 20 },
+    ]
+    expect(asTable(cells)).toBe('환자성명\n진료기간\t26.09.14부터\t26.09.14까지')
+    expect(asLines(cells)).toBe('환자성명\n진료기간\n26.09.14부터\n26.09.14까지')
   })
 })
 

@@ -53,3 +53,11 @@ export function ocrMessage(summary: OcrSummary): string {
   if (summary.stopped) parts.push('나머지 쪽은 중지했습니다.')
   return parts.join(' ')
 }
+
+/** The next line from `from` on (going `step`) read with less confidence than `unsure`; null when there is none. */
+export function nextUnsure(lines: { score: number }[], from: number, step: 1 | -1, unsure: number): number | null {
+  for (let i = from + step; i >= 0 && i < lines.length; i += step) {
+    if (lines[i].score < unsure) return i
+  }
+  return null
+}

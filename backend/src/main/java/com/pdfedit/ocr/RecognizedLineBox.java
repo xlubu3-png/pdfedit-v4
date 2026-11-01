@@ -400,7 +400,7 @@ public class RecognizedLineBox implements DisposableBean {
                             line.vertical() ? null : text,
                             line.vertical() ? null : letterPlaces(text, line, scanInk,
                                     crop.getLowerLeftX() + (area.x0() + coreInImage.x0()) / SCALE),
-                            hex(scannedInk));
+                            hex(scannedInk), AddedText.Cover.FITTING);
             return new AddedText(null, text, x, baseline, family, size, bold, hex(ink), List.of(), cover, rotation,
                     spacing);
         }

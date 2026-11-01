@@ -99,13 +99,44 @@ export function selectableLines(
  * Lines whose middles are within half a line of each other's height are side by side.
  */
 export function readingOrder(lines: SelectableLine[]): SelectableLine[] {
-  const middle = (l: SelectableLine) => l.top + l.height / 2
-  const rows: SelectableLine[][] = []
+  return rows(lines).flat()
+}
+
+/** The lines in rows as they are read (see {@link readingOrder}), each row left to right. */
+export function rows<T extends Pick<SelectableLine, 'left' | 'top' | 'height'>>(lines: T[]): T[][] {
+  const middle = (l: T) => l.top + l.height / 2
+  const out: T[][] = []
   for (const line of [...lines].sort((a, b) => middle(a) - middle(b))) {
-    const row = rows[rows.length - 1]
+    const row = out[out.length - 1]
     const last = row?.[row.length - 1]
     if (last && Math.abs(middle(line) - middle(last)) <= Math.min(line.height, last.height) / 2) row.push(line)
-    else rows.push([line])
+    else out.push([line])
   }
-  return rows.flatMap((row) => row.sort((a, b) => a.left - b.left))
+  return out.map((row) => row.sort((a, b) => a.left - b.left))
+}
+
+/** Text placed on the page, to copy: what it says and where it is (pixels, or points measured down the page). */
+export interface PlacedText {
+  text: string
+  left: number
+  top: number
+  height: number
+}
+
+/**
+ * The text as a table, to paste into a spreadsheet: one row per line of the page, the cells side by side on it
+ * (a table's row) parted by tabs.
+ */
+export function asTable(cells: PlacedText[]): string {
+  return rows(cells.filter((c) => c.text.trim() !== ''))
+    .map((row) => row.map((c) => c.text.trim()).join('\t'))
+    .join('\n')
+}
+
+/** The text as lines, to paste as it reads: one line of the page per line, top to bottom, left to right. */
+export function asLines(cells: PlacedText[]): string {
+  return rows(cells.filter((c) => c.text.trim() !== ''))
+    .flat()
+    .map((c) => c.text.trim())
+    .join('\n')
 }

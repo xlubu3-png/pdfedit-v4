@@ -387,3 +387,33 @@ test('in text selection the lines are picked with a drag across them and copied 
   await page.locator('.te-box[data-index="0"]').click()
   await expect(page.locator('.te-item.selected .te-box[data-index="0"]')).toHaveCount(1)
 })
+
+test('the right-click menu adds text where the page was clicked, makes a line bold and deletes a box', async ({ page }) => {
+  const documentId = await openEditor(page, ['Hello World', 'Second line'])
+
+  await page.locator('.te-box[data-index="1"]').click({ button: 'right' })
+  await expect(page.getByRole('menu', { name: '글자 줄' })).toBeVisible()
+  await page.getByRole('menuitem', { name: /굵게/ }).click()
+  await expect.poll(async () => (await serverPage(page, documentId)).runs[1].editBold).toBe(true)
+
+  await page.locator('.te-layer').click({ button: 'right', position: { x: 300, y: 500 } })
+  await page.getByRole('menuitem', { name: /여기에 텍스트 추가/ }).click()
+  const box = page.locator('.te-box[data-added]')
+  await expect(box).toHaveClass(/typing/)
+  await page.keyboard.type('메뉴로 넣은 글자')
+  await page.locator('.te-layer').click({ position: { x: 5, y: 5 } })
+  await expect.poll(async () => (await serverPage(page, documentId)).added.map((b: { text: string }) => b.text)).toEqual([
+    '메뉴로 넣은 글자',
+  ])
+
+  await box.click({ button: 'right' })
+  await page.getByRole('menuitem', { name: /삭제/ }).click()
+  await expect.poll(async () => (await serverPage(page, documentId)).added.length).toBe(0)
+
+  // The menu key opens the menu of what is picked; Esc closes it.
+  await page.locator('.te-box[data-index="0"]').click()
+  await page.keyboard.press('Shift+F10')
+  await expect(page.getByRole('menu', { name: '글자 줄' })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('menu')).toHaveCount(0)
+})

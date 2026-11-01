@@ -1201,6 +1201,89 @@ button.primary:disabled {
   background: rgba(42, 157, 111, 0.16);
 }
 
+/* The right-click menu. */
+.context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 200px;
+  padding: 4px;
+  background: #fff;
+  border: 1px solid #c3c8cf;
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  font-size: 13px;
+}
+
+.context-menu button {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: #1f2328;
+  text-align: left;
+  cursor: pointer;
+}
+
+.context-menu button:hover:not(:disabled),
+.context-menu button:focus-visible {
+  background: #e8f0fe;
+  outline: none;
+}
+
+.context-menu button:disabled {
+  color: #a0a6ae;
+  cursor: default;
+}
+
+.context-menu kbd {
+  color: #6a7380;
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.context-menu-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: #e1e4e8;
+}
+
+/* Correcting a recognized line's text, docked above the status bar. */
+.te-fixbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid #d0d5db;
+  background: #fffbea;
+  font-size: 13px;
+}
+
+.te-fixbar input {
+  flex: 1 1 280px;
+  min-width: 200px;
+  padding: 4px 8px;
+  font-size: 14px;
+}
+
+.te-fixbar-where,
+.te-fixbar-note {
+  color: #6a7380;
+}
+
+.te-fixbar-note {
+  flex-basis: 100%;
+  font-size: 12px;
+}
+
+.te-old-note button {
+  margin-left: 8px;
+}
+
 /* The line's text, see-through, so a drag over the lines picks it to copy. */
 .te-ocr-text {
   position: absolute;

@@ -41,19 +41,30 @@ public record AddedText(String id, String text, float x, float y, String fontFam
      * @param ink     "#rrggbb", the scanned letters' own ink, which letters drawn among them take; null if not known
      */
     public record Cover(float x, float y, float width, float height, String color, String patch, String read,
-            List<float[]> letters, String ink) {
+            List<float[]> letters, String ink, Integer fitting) {
+
+        /**
+         * How a rewritten scan line is fitted to the scan now (its face, size, colour and tilt told word by word):
+         * a box with an older {@code fitting}, or none, was rewritten by an earlier version and can be fitted again.
+         */
+        public static final int FITTING = 1;
+
+        public Cover(float x, float y, float width, float height, String color, String patch, String read,
+                List<float[]> letters, String ink) {
+            this(x, y, width, height, color, patch, read, letters, ink, null);
+        }
 
         public Cover(float x, float y, float width, float height, String color, String patch, String read,
                 List<float[]> letters) {
-            this(x, y, width, height, color, patch, read, letters, null);
+            this(x, y, width, height, color, patch, read, letters, null, null);
         }
 
         public Cover(float x, float y, float width, float height, String color, String patch) {
-            this(x, y, width, height, color, patch, null, null, null);
+            this(x, y, width, height, color, patch, null, null, null, null);
         }
 
         public Cover(float x, float y, float width, float height, String color) {
-            this(x, y, width, height, color, null, null, null, null);
+            this(x, y, width, height, color, null, null, null, null, null);
         }
 
         /**

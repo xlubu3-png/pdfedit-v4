@@ -329,3 +329,73 @@ test('recognized lines shown on the page are picked with a drag and copied, and 
   await phone.dblclick()
   await expect(page.locator('.te-box[data-added]')).toBeFocused()
 })
+
+test('the right-click menu corrects a misread line, copies and redacts what is picked, and fits old boxes again', async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.goto('/')
+  await page.locator('input[type=file]').setInputFiles({ name: 'scan.pdf', mimeType: 'application/pdf', buffer: await scan(page) })
+  await page.getByRole('button', { name: '나중에' }).click()
+  await page.locator('button[title="텍스트 편집"]').first().click()
+  const editor = page.getByRole('dialog', { name: '텍스트 편집' })
+  await editor.getByRole('button', { name: '글자 인식(OCR)' }).click()
+  const title = page.locator('.te-ocr-line[data-ocr="0"]')
+  const phone = page.locator('.te-ocr-line[data-ocr="1"]')
+  await expect(phone).toBeVisible({ timeout: 60_000 })
+  const src = await page.locator('.te-canvas img').first().getAttribute('src')
+  const id = /documents\/([^/]+)\//.exec(src ?? '')![1]
+  const api = `/api/v1/pdf/documents/${id}/pages/0`
+
+  // Correct what recognition read, the scan left alone.
+  await phone.click({ button: 'right' })
+  await page.getByRole('menuitem', { name: '인식 글자 고치기…' }).click()
+  const fix = page.getByRole('textbox', { name: '이 줄의 글자' })
+  await fix.fill('연락처 010-1111-2222')
+  await fix.press('Enter')
+  await expect
+    .poll(async () => (await (await page.request.get(`${api}/ocr`)).json()).lines[1].text)
+    .toBe('연락처 010-1111-2222')
+
+  // Pick both lines with a drag; copy them as a table and black them out from the menu.
+  const from = (await title.boundingBox())!
+  const to = (await phone.boundingBox())!
+  await page.mouse.move(from.x + 2, from.y + from.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(to.x + to.width - 2, to.y + to.height / 2, { steps: 10 })
+  await page.mouse.up()
+  await phone.click({ button: 'right', position: { x: 10, y: to.height / 2 } })
+  await page.getByRole('menuitem', { name: '표 모양으로 복사 (엑셀)' }).click()
+  const copied = (await page.evaluate(() => navigator.clipboard.readText())).split('\n').map((l) => l.replace(/\s+/g, ''))
+  expect(copied).toEqual(['스캔문서글자인식시험', '연락처010-1111-2222'])
+
+  await page.mouse.move(from.x + 2, from.y + from.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(to.x + to.width - 2, to.y + to.height / 2, { steps: 10 })
+  await page.mouse.up()
+  await phone.click({ button: 'right', position: { x: 10, y: to.height / 2 } })
+  await page.getByRole('menuitem', { name: '이 부분 가리기 (개인정보)' }).click()
+  await expect.poll(async () => (await (await page.request.get(`${api}/redactions`)).json()).length).toBe(2)
+
+  // A box rewritten by an earlier version is offered fitting again, and is fitted from the note.
+  await phone.dblclick()
+  await expect(page.locator('.te-box[data-added]')).toBeFocused()
+  await page.keyboard.press('End')
+  await page.keyboard.type('!')
+  await page.locator('.te-layer').click({ position: { x: 5, y: 5 } })
+  await expect(page.locator('.te-status')).toContainText('반영됨')
+  const box = (await (await page.request.get(`${api}/text-runs`)).json()).added[0]
+  expect(box.cover.fitting).toBe(1)
+  // Changed while the editor is closed, so nothing it still holds is saved over it.
+  await editor.getByRole('button', { name: '페이지 목록' }).click()
+  await expect(editor).toHaveCount(0)
+  const old = { ...box, cover: { ...box.cover, fitting: null }, fontSize: box.fontSize * 1.5 }
+  expect((await page.request.put(`${api}/added-texts`, { data: [old] })).ok()).toBeTruthy()
+  await page.locator('button[title="텍스트 편집"]').first().click()
+  const note = page.locator('.te-old-note')
+  await expect(note).toContainText('이전 버전에서 고쳐 쓴 줄이 1개')
+  await note.getByRole('button', { name: '다시 맞추기' }).click()
+  await expect(note).toHaveCount(0)
+  await expect.poll(async () => (await (await page.request.get(`${api}/text-runs`)).json()).added[0].fontSize).toBeCloseTo(box.fontSize, 1)
+})

@@ -7,6 +7,7 @@ import type {
   FindMatch,
   FontChoice,
   OcrResult,
+  OcrText,
   PageItem,
   PageText,
   PersonalInfoKind,
@@ -179,6 +180,22 @@ export async function ocrTextBox(documentId: string, pageIndex: number, line: nu
   })
   if (!response.ok) {
     throw await failure(response, '인식한 글자를 고쳐 쓸 수 있게 바꾸지 못했습니다')
+  }
+  return response.json()
+}
+
+/**
+ * Corrects what recognition read off recognized line `line`: the scan stays as it is, the corrected text is what
+ * search, copying and the export say. Gives back the line as it is now.
+ */
+export async function correctOcrLine(documentId: string, pageIndex: number, line: number, text: string): Promise<OcrText> {
+  const response = await fetch(`${BASE}/documents/${documentId}/pages/${pageIndex}/ocr/${line}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  })
+  if (!response.ok) {
+    throw await failure(response, '인식한 글자를 고치지 못했습니다')
   }
   return response.json()
 }

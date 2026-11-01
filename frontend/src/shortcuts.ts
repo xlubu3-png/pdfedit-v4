@@ -75,6 +75,13 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     ],
   },
   {
+    title: '메뉴',
+    items: [
+      { keys: ['오른쪽 클릭'], label: '누른 곳(고른 글자·줄·상자·그림·쪽)에 맞는 메뉴' },
+      { keys: ['Shift', 'F10'], label: '고른 항목의 메뉴 (메뉴 키도 같음)' },
+    ],
+  },
+  {
     title: '보기와 이동',
     items: [
       { keys: ['Ctrl', '+'], label: '확대' },

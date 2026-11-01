@@ -8,6 +8,9 @@ import {
   imageUrl,
   previewUrl,
   ocrTextBox,
+  correctOcrLine,
+  fetchRedactions,
+  saveRedactions,
   recognizePage,
   reloadFonts,
   resetTextEdits,
@@ -25,7 +28,12 @@ import { keyCode } from '../keys'
 import { copyText } from '../clipboard'
 import { ocrMessage, recognizeAll } from '../ocr'
 import { lineOfCover, refitted } from '../refit'
-import { selectableLines } from '../textSelect'
+import { asLines, asTable, selectableLines } from '../textSelect'
+import type { PlacedText } from '../textSelect'
+import { FITTING } from '../types'
+import { ContextMenu } from './ContextMenu'
+import type { MenuEntry } from './ContextMenu'
+import { OcrFixBar } from './OcrFixBar'
 import type { SnapTargets } from '../snap'
 import { clearField, formatRange, lookAt, remapSpans, toggleFor } from '../spans'
 import type { LookPatch } from '../spans'
@@ -63,6 +71,7 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
+  SpellCheck,
   TextSelect,
   Trash,
   Type,
@@ -92,7 +101,8 @@ interface TextEditorProps {
   flatten: boolean
   onFlattenChange: (flatten: boolean) => void
   /** Opens the find-and-replace dialog. */
-  onOpenFind: () => void
+  /** Opens find and replace over every page, with `query` to look for when given. */
+  onOpenFind: (query?: string) => void
   /** How many fonts the app read last time, to tell what a reload found. */
   installedFonts: number | undefined
   /** Families installed only as .otf files: the PC has them but the app cannot read them. */
@@ -279,6 +289,17 @@ export function TextEditor({
   const [runStates, setRunStates] = useState(new Map<number, RunState>())
   /** Text selection: the page's text is picked with the mouse and copied, as in a PDF viewer; nothing is edited. */
   const [selecting, setSelecting] = useState(false)
+  /** The right-click menu, where it was opened and what it offers. */
+  const [menu, setMenu] = useState<{ x: number; y: number; label: string; entries: MenuEntry[] } | null>(null)
+  /** The recognized line whose text is being corrected (the scan left as it is). */
+  const [fixing, setFixing] = useState<number | null>(null)
+  /** Pages whose note about boxes rewritten by an earlier version was closed. */
+  const [oldNoteClosed, setOldNoteClosed] = useState<Set<string>>(() => new Set())
+  /**
+   * What a menu item asked of a line, box or picture it first picks: done once the editor has drawn it picked, by
+   * the same code as the keyboard shortcut.
+   */
+  const queuedAction = useRef<{ action: 'copy' | 'duplicate' | 'bold' | 'underline' | 'reset'; key: string } | null>(null)
   const [added, setAdded] = useState<AddedText[]>([])
   const [images, setImages] = useState<AddedImage[]>([])
   const statesRef = useRef(runStates)
@@ -318,6 +339,18 @@ export function TextEditor({
   const [slow, setSlow] = useState(false)
   /** Set after render so a save that fails for a refused edit can take the edit back. */
   const rollbackRef = useRef<() => void>(() => {})
+
+  // A menu item's action on the line, box or picture it picked, once the editor shows it picked.
+  useEffect(() => {
+    const queued = queuedAction.current
+    if (!queued || selectionKey(selected) !== queued.key) return
+    queuedAction.current = null
+    if (queued.action === 'copy') copySelection()
+    else if (queued.action === 'duplicate') duplicateSelection()
+    else if (queued.action === 'bold') patchSelected({ bold: !(view?.bold ?? false) })
+    else if (queued.action === 'underline') patchSelected({ underline: true })
+    else resetSelectedRun()
+  })
 
   useEffect(() => {
     if (data || error) return
@@ -1146,9 +1179,10 @@ export function TextEditor({
    * the box picked, or with none picked every rewritten box of the page. Boxes rewritten by an earlier version
    * take today's look; the text the user wrote stays. One Ctrl+Z takes it all back.
    */
-  async function refitRewritten() {
+  async function refitRewritten(which: 'picked' | 'all' | string = 'picked') {
     if (!editable) return
-    const picked = selected?.kind === 'added' ? addedRef.current.find((b) => b.id === selected.id && b.cover) : undefined
+    const pickedId = which === 'picked' ? (selected?.kind === 'added' ? selected.id : null) : which === 'all' ? null : which
+    const picked = pickedId ? addedRef.current.find((b) => b.id === pickedId && b.cover) : undefined
     const targets = picked ? [picked] : addedRef.current.filter((b) => b.cover)
     if (targets.length === 0) return
     setStatus('다시 맞추는 중…')
@@ -1192,6 +1226,289 @@ export function TextEditor({
       window.getSelection()?.removeAllRanges()
     }
     setSelecting(on)
+  }
+
+  /** A key a selection is known by, to tell when a menu item's line, box or picture is the one picked. */
+  function selectionKey(s: Selection): string {
+    return s ? `${s.kind}:${s.kind === 'run' ? s.index : s.id}` : ''
+  }
+
+  /** Picks the line, box or picture and then does to it what its keyboard shortcut does. */
+  function actOn(target: NonNullable<Selection>, action: 'copy' | 'duplicate' | 'bold' | 'underline' | 'reset') {
+    queuedAction.current = { action, key: selectionKey(target) }
+    select(target)
+  }
+
+  async function copyPlain(text: string, what: string) {
+    const copied = text.trim() !== '' && (await copyText(text))
+    setStatus(copied ? `${what}을(를) 복사했습니다` : '복사하지 못했습니다')
+  }
+
+  /** The page's text with where it is (points down the page), to copy as lines or as a table. */
+  function pageText(): PlacedText[] {
+    if (!data) return []
+    return selectableLines(data, runStates, ocrLines, rewritten, added, 1).map((l) => ({
+      text: l.text,
+      left: l.left,
+      top: l.top,
+      height: l.height,
+    }))
+  }
+
+  /** The text dragged over (on the recognized lines, or in text selection), each line's part with where it is. */
+  function pickedText(selection: globalThis.Selection): PlacedText[] {
+    if (selection.rangeCount === 0) return []
+    const picked = selection.getRangeAt(0)
+    return Array.from(document.querySelectorAll<HTMLElement>('.te-ocr-text, .te-textlayer span[data-line]'))
+      .filter((span) => selection.containsNode(span, true))
+      .map((span) => {
+        const part = document.createRange()
+        part.selectNodeContents(span)
+        if (picked.compareBoundaryPoints(Range.START_TO_START, part) > 0) part.setStart(picked.startContainer, picked.startOffset)
+        if (picked.compareBoundaryPoints(Range.END_TO_END, part) < 0) part.setEnd(picked.endContainer, picked.endOffset)
+        const rect = span.getBoundingClientRect()
+        return { text: part.toString(), left: rect.left, top: rect.top, height: rect.height }
+      })
+  }
+
+  /** The rectangles on screen the text dragged over takes, one per line. */
+  function pickedRects(selection: globalThis.Selection): DOMRect[] {
+    const rects: DOMRect[] = []
+    for (let i = 0; i < selection.rangeCount; i++) {
+      for (const r of Array.from(selection.getRangeAt(i).getClientRects())) {
+        if (r.width < 1 || r.height < 1) continue
+        const at = rects.findIndex(
+          (o) => Math.abs(o.top + o.height / 2 - (r.top + r.height / 2)) < Math.min(o.height, r.height) / 2,
+        )
+        if (at >= 0) {
+          const o = rects[at]
+          const left = Math.min(o.left, r.left)
+          const top = Math.min(o.top, r.top)
+          rects[at] = new DOMRect(left, top, Math.max(o.right, r.right) - left, Math.max(o.bottom, r.bottom) - top)
+        } else {
+          rects.push(r)
+        }
+      }
+    }
+    return rects
+  }
+
+  /**
+   * Adds areas to the page's redactions (blacked out and taken out of the file when it is exported), from where
+   * they are on screen.
+   */
+  async function redactOnScreen(rects: DOMRect[]) {
+    const layer = layerRef.current
+    if (!data || !layer || rects.length === 0) return
+    const page = layer.getBoundingClientRect()
+    const margin = 1
+    const areas = rects.map((r) => ({
+      id: newId(),
+      x: round(data.originX + (r.left - page.left) / scale - margin),
+      y: round(data.originY + data.pageHeight - (r.bottom - page.top) / scale - margin),
+      width: round(r.width / scale + 2 * margin),
+      height: round(r.height / scale + 2 * margin),
+    }))
+    try {
+      const existing = await fetchRedactions(documentId, pageIndex)
+      await saveRedactions(documentId, pageIndex, [...existing, ...areas])
+      window.getSelection()?.removeAllRanges()
+      onEdited(pageKey)
+      setStatus(`${areas.length}곳을 가렸습니다. 내보낼 때 검게 지워집니다 (가리기 화면에서 확인·해제)`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '가리지 못했습니다')
+    }
+  }
+
+  /** A text box where the page was right-clicked, to type into. */
+  function addTextAt(clientX: number, clientY: number) {
+    const current = dataRef.current
+    const layer = layerRef.current
+    if (!current || !layer || scale <= 0 || !editable) return
+    const rect = layer.getBoundingClientRect()
+    const look = lastAddedLook.current
+    const box: AddedText = {
+      id: newId(),
+      text: '',
+      x: round(current.originX + (clientX - rect.left) / scale),
+      y: round(current.originY + current.pageHeight - (clientY - rect.top) / scale - look.fontSize),
+      fontFamily: look.fontFamily,
+      fontSize: look.fontSize,
+      bold: look.bold,
+      color: look.color,
+      spans: [],
+    }
+    putAdded([...addedRef.current, box])
+    setSelected({ kind: 'added', id: box.id })
+    setEditing({ kind: 'added', id: box.id })
+    setAdding(false)
+  }
+
+  /** Opens correcting the recognized lines' text at line `index` (or the one picked, or the first one to check). */
+  function startFixing(index?: number) {
+    if (ocrLines.length === 0) return
+    const first = ocrLines.findIndex((l) => l.score < UNSURE)
+    const at = index ?? (ocrPicked !== null ? ocrPicked : first >= 0 ? first : 0)
+    setShowOcr(true)
+    setSelecting(false)
+    setFixing(at)
+    setOcrPicked(at)
+  }
+
+  async function saveFix(index: number, text: string) {
+    try {
+      const line = await correctOcrLine(documentId, pageIndex, index, text)
+      setOcrLines((lines) => lines.map((l, i) => (i === index ? line : l)))
+      setStatus('인식한 글자를 고쳤습니다 (검색·복사·내보낸 PDF에 반영)')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '인식한 글자를 고치지 못했습니다')
+      throw e
+    }
+  }
+
+  /** What the page offers where it was right-clicked: the text picked, a recognized line, a box, a picture or the page. */
+  function menuFor(target: HTMLElement, clientX: number, clientY: number): { label: string; entries: MenuEntry[] } {
+    const pickedSelection = window.getSelection()
+    const onText = target.closest('.te-ocr-line, .te-textlayer') !== null
+    const cells = pickedSelection && !pickedSelection.isCollapsed && onText ? pickedText(pickedSelection) : []
+    if (pickedSelection && cells.length > 0) {
+      const first = asLines(cells).split('\n')[0] ?? ''
+      return {
+        label: '고른 글자',
+        entries: [
+          { label: '복사', shortcut: 'Ctrl+C', onSelect: () => void copyPlain(asLines(cells), '고른 글자') },
+          { label: '표 모양으로 복사 (엑셀)', onSelect: () => void copyPlain(asTable(cells), '고른 글자를 표 모양으로') },
+          { label: `‘${first.length > 12 ? first.slice(0, 12) + '…' : first}’ 찾기`, onSelect: () => onOpenFind(first.trim()) },
+          { label: '이 부분 가리기 (개인정보)', onSelect: () => void redactOnScreen(pickedRects(pickedSelection)) },
+          'separator',
+          { label: '고르기 풀기', shortcut: 'Esc', onSelect: () => window.getSelection()?.removeAllRanges() },
+        ],
+      }
+    }
+    const ocrLine = target.closest<HTMLElement>('.te-ocr-line')
+    if (ocrLine) {
+      const i = Number(ocrLine.dataset.ocr)
+      const line = ocrLines[i]
+      return {
+        label: '인식한 줄',
+        entries: [
+          { label: '이 줄 복사', shortcut: 'Ctrl+C', onSelect: () => void copyPlain(line?.text ?? '', '이 줄') },
+          { label: '고쳐 쓰기', shortcut: 'Enter', disabled: !editable, onSelect: () => void rewriteLine(i) },
+          { label: '인식 글자 고치기…', onSelect: () => startFixing(i) },
+          { label: '이 줄 가리기 (개인정보)', onSelect: () => void redactOnScreen([ocrLine.getBoundingClientRect()]) },
+          'separator',
+          { label: '이 쪽 글자 모두 복사', onSelect: () => void copyPlain(asLines(pageText()), '이 쪽 글자') },
+          { label: '표 모양으로 모두 복사 (엑셀)', onSelect: () => void copyPlain(asTable(pageText()), '이 쪽 글자를 표 모양으로') },
+        ],
+      }
+    }
+    const boxEl = target.closest<HTMLElement>('[data-added]')
+    const box = boxEl ? addedRef.current.find((b) => b.id === boxEl.dataset.added) : undefined
+    if (box) {
+      const picked: NonNullable<Selection> = { kind: 'added', id: box.id }
+      const own: MenuEntry[] = box.cover
+        ? [
+            { label: '다시 맞추기 (스캔에 맞춤)', disabled: !editable || ocrLines.length === 0, onSelect: () => void refitRewritten(box.id) },
+            { label: '원래 스캔으로 되돌리기', disabled: !editable, onSelect: () => removeAdded(box.id) },
+          ]
+        : [{ label: '삭제', shortcut: 'Delete', disabled: !editable, onSelect: () => removeAdded(box.id) }]
+      return {
+        label: box.cover ? '고쳐 쓴 줄' : '추가한 텍스트',
+        entries: [
+          { label: '글자 수정', shortcut: 'Enter', disabled: !editable, onSelect: () => { select(picked); setEditing(picked) } },
+          ...own,
+          'separator',
+          { label: '글자 복사 (메모장 등)', onSelect: () => void copyPlain(box.text, '상자의 글자') },
+          { label: '복사', shortcut: 'Ctrl+C', onSelect: () => actOn(picked, 'copy') },
+          { label: '복제', shortcut: 'Ctrl+D', disabled: !editable, onSelect: () => actOn(picked, 'duplicate') },
+          { label: '굵게', shortcut: 'Ctrl+B', disabled: !editable, onSelect: () => actOn(picked, 'bold') },
+        ],
+      }
+    }
+    const runEl = target.closest<HTMLElement>('[data-index]')
+    const run = runEl && data ? data.runs[Number(runEl.dataset.index)] : undefined
+    if (run) {
+      const picked: NonNullable<Selection> = { kind: 'run', index: run.index }
+      const text = runStates.get(run.index)?.text ?? run.currentText
+      return {
+        label: '글자 줄',
+        entries: [
+          { label: '글자 수정', shortcut: 'Enter', disabled: !editable, onSelect: () => { select(picked); setEditing(picked) } },
+          { label: '글자 복사 (메모장 등)', onSelect: () => void copyPlain(text, '이 줄의 글자') },
+          { label: '복사', shortcut: 'Ctrl+C', onSelect: () => actOn(picked, 'copy') },
+          { label: '복제', shortcut: 'Ctrl+D', disabled: !editable, onSelect: () => actOn(picked, 'duplicate') },
+          'separator',
+          { label: '굵게', shortcut: 'Ctrl+B', disabled: !editable, onSelect: () => actOn(picked, 'bold') },
+          { label: '밑줄', shortcut: 'Ctrl+U', disabled: !editable, onSelect: () => actOn(picked, 'underline') },
+          { label: '수정 전으로 되돌리기', disabled: !editable || !runStates.has(run.index), onSelect: () => actOn(picked, 'reset') },
+        ],
+      }
+    }
+    const imageEl = target.closest<HTMLElement>('[data-image]')
+    const picture = imageEl ? imagesRef.current.find((b) => b.id === imageEl.dataset.image) : undefined
+    if (picture) {
+      const picked: NonNullable<Selection> = { kind: 'image', id: picture.id }
+      return {
+        label: '그림',
+        entries: [
+          { label: '복사', shortcut: 'Ctrl+C', onSelect: () => actOn(picked, 'copy') },
+          { label: '복제', shortcut: 'Ctrl+D', disabled: !editable, onSelect: () => actOn(picked, 'duplicate') },
+          { label: '삭제', shortcut: 'Delete', disabled: !editable, onSelect: () => removeImage(picture.id) },
+          'separator',
+          {
+            label: picture.keyOutWhite ? '흰 바탕 다시 보이기' : '흰 바탕 투명하게',
+            disabled: !editable,
+            onSelect: () => updateImage(picture.id, { keyOutWhite: !picture.keyOutWhite }),
+          },
+        ],
+      }
+    }
+    const first = ocrLines.findIndex((l) => l.score < UNSURE)
+    const fix: MenuEntry[] =
+      ocrLines.length > 0
+        ? [{ label: first >= 0 ? '인식 글자 고치기 (확인할 줄부터)…' : '인식 글자 고치기…', onSelect: () => startFixing() }]
+        : []
+    return {
+      label: '쪽',
+      entries: [
+        { label: '여기에 텍스트 추가', shortcut: 'T', disabled: !editable || selecting, onSelect: () => addTextAt(clientX, clientY) },
+        { label: '붙여넣기', shortcut: 'Ctrl+V', disabled: !editable || clipboard === null, onSelect: () => pasteClipboard() },
+        { label: '그림 추가…', disabled: !editable, onSelect: () => imageInput.current?.click() },
+        'separator',
+        { label: selecting ? '글자 선택 끝내기' : '글자 선택', shortcut: 'S', onSelect: () => toggleSelecting() },
+        { label: '이 쪽 글자 모두 복사', onSelect: () => void copyPlain(asLines(pageText()), '이 쪽 글자') },
+        { label: '표 모양으로 모두 복사 (엑셀)', onSelect: () => void copyPlain(asTable(pageText()), '이 쪽 글자를 표 모양으로') },
+        ...fix,
+        'separator',
+        { label: '실행 취소', shortcut: 'Ctrl+Z', disabled: history.undo === 0, onSelect: () => undo() },
+        { label: '다시 실행', shortcut: 'Ctrl+Y', disabled: history.redo === 0, onSelect: () => redo() },
+      ],
+    }
+  }
+
+  function openMenu(target: HTMLElement, clientX: number, clientY: number) {
+    setMenu({ x: clientX, y: clientY, ...menuFor(target, clientX, clientY) })
+  }
+
+  /** The menu key (or Shift+F10): the menu of what is picked, or of the page. */
+  function openMenuByKey() {
+    const pickedEl = selected
+      ? document.querySelector<HTMLElement>(
+          selected.kind === 'run'
+            ? `[data-index="${selected.index}"]`
+            : selected.kind === 'added'
+              ? `[data-added="${selected.id}"]`
+              : `[data-image="${selected.id}"]`,
+        )
+      : ocrPicked !== null
+        ? document.querySelector<HTMLElement>(`.te-ocr-line[data-ocr="${ocrPicked}"]`)
+        : null
+    const target = pickedEl ?? layerRef.current
+    if (!target) return
+    const rect = target.getBoundingClientRect()
+    const x = pickedEl ? rect.left + Math.min(16, rect.width / 2) : rect.left + Math.min(rect.width / 2, 200)
+    const y = pickedEl ? rect.top + Math.min(16, rect.height / 2) : rect.top + Math.min(rect.height / 2, 200)
+    openMenu(target, x, y)
   }
 
   /** Recognizes every page of the list (this one too), then shows what this page has. */
@@ -1311,6 +1628,8 @@ export function TextEditor({
   }
 
   const scale = data ? zoom * PX_PER_PT_AT_100 : 0
+  /** Lines rewritten by an earlier version, which "다시 맞추기" fits to the scan as lines are rewritten now. */
+  const oldRewrites = added.filter((b) => b.cover?.patch && (b.cover.fitting ?? 0) < FITTING).length
   /** The page's text for text selection (only while it is on). */
   const selectable = useMemo(
     () => (selecting && data && scale > 0 ? selectableLines(data, runStates, ocrLines, rewritten, added, scale) : []),
@@ -1629,6 +1948,11 @@ export function TextEditor({
         toggleSelecting()
         return
       }
+      if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+        e.preventDefault()
+        openMenuByKey()
+        return
+      }
       if (!ctrl && !e.altKey && !e.shiftKey && code === 'KeyT' && editable) {
         e.preventDefault()
         setAdding((a) => !a)
@@ -1916,7 +2240,7 @@ export function TextEditor({
               />
             </RibbonGroup>
             <RibbonGroup label="찾기">
-              <RibbonButton icon={<Search />} label="찾아 바꾸기" title="모든 페이지에서 글자를 찾아 바꿉니다 (Ctrl+F)" onClick={onOpenFind} />
+              <RibbonButton icon={<Search />} label="찾아 바꾸기" title="모든 페이지에서 글자를 찾아 바꿉니다 (Ctrl+F)" onClick={() => onOpenFind()} />
             </RibbonGroup>
             <RibbonGroup label="글자 인식">
               <RibbonButton
@@ -1945,6 +2269,13 @@ export function TextEditor({
                 pressed={showOcr && ocrLines.length > 0}
               />
               <RibbonButton
+                icon={<SpellCheck />}
+                label="인식 글자 고치기"
+                title="잘못 인식한 글자를 고칩니다. 스캔 그림은 그대로 두고 검색·복사·내보낸 PDF의 글자만 바뀝니다. 확인할 줄(주황 점선)을 차례로 넘겨 봅니다."
+                onClick={() => startFixing()}
+                disabled={ocrLines.length === 0}
+              />
+              <RibbonButton
                 icon={<TextSelect />}
                 label="글자 선택"
                 title="인식한 글자를 마우스로 끌어 여러 줄을 골라 Ctrl+C로 복사합니다 (S, 끝내려면 Esc)"
@@ -1969,7 +2300,7 @@ export function TextEditor({
                 icon={<RefreshCw />}
                 label="다시 맞추기"
                 title="고쳐 쓴 상자의 글꼴·크기·색을 스캔에 다시 맞춥니다: 고른 상자, 고르지 않았으면 이 쪽의 고쳐 쓴 상자 모두. 이전 버전에서 고쳐 쓴 상자도 지금 방식으로 바뀌고, 써 넣은 글자는 그대로입니다."
-                onClick={() => void refitRewritten()}
+                onClick={() => void refitRewritten('picked')}
                 disabled={!editable || ocrLines.length === 0 || !added.some((b) => b.cover)}
               />
             </RibbonGroup>
@@ -2162,6 +2493,19 @@ export function TextEditor({
         </p>
       )}
 
+      {editable && oldRewrites > 0 && !oldNoteClosed.has(pageKey) && (
+        <p className="te-notice te-old-note">
+          이 쪽에 이전 버전에서 고쳐 쓴 줄이 {oldRewrites}개 있습니다. ‘다시 맞추기’를 누르면 글꼴·크기·색이 스캔에 더 자연스럽게
+          맞춰집니다{ocrLines.length === 0 ? ' (먼저 글자 인식을 해 주세요)' : ''}.
+          <button type="button" onClick={() => void refitRewritten('all')} disabled={ocrLines.length === 0}>
+            다시 맞추기
+          </button>
+          <button type="button" aria-label="이 안내 닫기" onClick={() => setOldNoteClosed((closed) => new Set(closed).add(pageKey))}>
+            ✕
+          </button>
+        </p>
+      )}
+
       <main className="te-main" ref={mainRef}>
         {!data && !error && (
           <p className="te-notice">
@@ -2192,7 +2536,17 @@ export function TextEditor({
           </p>
         )}
         {data && !data.rotated && (
-          <div className="te-canvas">
+          <div
+            className="te-canvas"
+            onContextMenu={(e) => {
+              const target = e.target as HTMLElement
+              // Typing in a box: the browser's own menu (paste, spelling) is the one wanted.
+              const typing = target.closest('[data-index], [data-added]')
+              if (typing && typing === document.activeElement) return
+              e.preventDefault()
+              openMenu(target, e.clientX, e.clientY)
+            }}
+          >
             <img
               src={previewUrl(documentId, pageIndex, revision, dpi)}
               alt={`${page.sourceFileName} ${pageIndex + 1}쪽`}
@@ -2333,6 +2687,24 @@ export function TextEditor({
       {coveredCount === 0 && removedCount > 0 && (
         <p className="te-redact-note te-redact-ok">✓ 수정한 줄의 원래 글자는 PDF에서 지워졌습니다 (가리기만 한 것이 아닙니다).</p>
       )}
+      {fixing !== null && ocrLines[fixing] && (
+        <OcrFixBar
+          key={fixing}
+          lines={ocrLines}
+          index={fixing}
+          unsure={UNSURE}
+          onSave={saveFix}
+          onGo={(i) => {
+            setFixing(i)
+            setOcrPicked(i)
+            window.setTimeout(() =>
+              document.querySelector(`.te-ocr-line[data-ocr="${i}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' }),
+            )
+          }}
+          onClose={() => setFixing(null)}
+        />
+      )}
+      {menu && <ContextMenu x={menu.x} y={menu.y} label={menu.label} entries={menu.entries} onClose={() => setMenu(null)} />}
       <footer className="te-statusbar" aria-label="상태 표시줄">
         <span className="te-group">
           <button type="button" onClick={() => void navigate(-1)} disabled={position <= 0} title="이전 페이지 (Ctrl+←)" aria-label="이전 페이지">

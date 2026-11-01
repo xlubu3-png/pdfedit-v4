@@ -485,6 +485,28 @@ class OcrControllerTest {
         assertThatThrownBy(() -> ocr.textBox(upload.documentId(), 0, -1)).isInstanceOf(InvalidEditException.class);
     }
 
+    /** What recognition misread is corrected in the text alone: search and the export say it, the scan stays. */
+    @Test
+    void aMisreadLineIsCorrectedWithoutTouchingTheScan() throws Exception {
+        UploadResponse upload = pdf.upload(file(scannedPdf()), null);
+        ocr.recognize(upload.documentId(), 0);
+        byte[] before = store.getContent(upload.documentId());
+
+        OcrText corrected = ocr.correct(upload.documentId(), 0, 2,
+                new OcrController.Correction("  연락처 010-1111-2222 "));
+
+        assertThat(corrected.text()).isEqualTo("연락처 010-1111-2222");
+        assertThat(corrected.score()).as("a corrected line is sure").isEqualTo(1f);
+        assertThat(ocr.recognized(upload.documentId(), 0).lines().get(2)).isEqualTo(corrected);
+        assertThat(store.getContent(upload.documentId())).as("the scan itself").isEqualTo(before);
+        String text = exportedText(upload.documentId(), false);
+        assertThat(text).contains("010-1111-2222").doesNotContain("010-2345-6789");
+        assertThatThrownBy(() -> ocr.correct(upload.documentId(), 0, 2, new OcrController.Correction(" ")))
+                .isInstanceOf(InvalidEditException.class);
+        assertThatThrownBy(() -> ocr.correct(upload.documentId(), 0, 9, new OcrController.Correction("글자")))
+                .isInstanceOf(InvalidEditException.class);
+    }
+
     @Test
     void aPageThatIsNotThereIsRefused() throws Exception {
         UploadResponse blank = pdf.createBlankDocument(200, 200);

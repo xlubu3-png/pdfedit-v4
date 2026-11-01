@@ -437,6 +437,22 @@ class OcrControllerTest {
         g.dispose();
         assertThat(differing(scan, edited, 0, labelEnd)).as("the label is left as scanned").isZero();
         assertThat(differing(scan, edited, labelEnd + 10, WIDTH)).as("the number is redrawn").isPositive();
+
+        // Its colour changed in the editor: the new number is drawn in it, as the editor shows it.
+        AddedText red = new AddedText("c", changed.text(), box.x(), box.y(), box.fontFamily(), box.fontSize(),
+                box.bold(), "#ff0000", List.of(), box.cover(), box.rotation(), box.charSpacing());
+        java.awt.image.BufferedImage reddened = render(textEditService.buildSinglePage(content, 0,
+                new com.pdfedit.service.PageEdits(java.util.Map.of(), List.of(red))));
+        int redPixels = 0;
+        for (int y = 560; y < 640; y++) {
+            for (int x = labelEnd + 10; x < Math.min(WIDTH, reddened.getWidth()); x++) {
+                int rgb = reddened.getRGB(x, y);
+                if ((rgb >> 16 & 0xFF) > 200 && (rgb >> 8 & 0xFF) < 80 && (rgb & 0xFF) < 80) {
+                    redPixels++;
+                }
+            }
+        }
+        assertThat(redPixels).as("the new number in the box's colour").isPositive();
     }
 
     private static java.awt.image.BufferedImage render(byte[] pdf) throws IOException {

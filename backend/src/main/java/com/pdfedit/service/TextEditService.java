@@ -746,9 +746,10 @@ public class TextEditService {
             cs.restoreGraphicsState();
         }
         if (!middle.isBlank()) {
-            // Among scanned letters, in the scan's own ink (the box's colour is toned to stand for a whole line).
-            Color ink = RunEdit.colour(cover.ink() != null ? cover.ink() : box.color(), Color.BLACK);
-            drawLine(cs, styled, middle, start, baseline, size, ink, squeeze, box.charSpacing() * squeeze);
+            // In the box's colour, as the editor shows it (and as the user may have changed it), which is told from
+            // the scan's ink when the line is rewritten.
+            drawLine(cs, styled, middle, start, baseline, size, RunEdit.colour(box.color(), Color.BLACK), squeeze,
+                    box.charSpacing() * squeeze);
         }
         drawInvisible(cs, styled, now, box.x(), box.y(), box.fontSize(), box.charSpacing());
         return true;

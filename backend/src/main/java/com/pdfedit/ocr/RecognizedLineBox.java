@@ -49,14 +49,13 @@ public class RecognizedLineBox implements DisposableBean {
     private static final int LETTER_DIFFERENCE = 30;
     /** Pixels the patch reaches around each letter pixel, for the soft and blotchy edges of scanned letters. */
     private static final int SPREAD = 3;
-    /**
-     * ... and further, over pixels that differ from the paper by more than {@link #PAPER_NOISE} but too little to
-     * be ink: the ringing of a compressed scan round its letters.
-     */
-    private static final int RINGING = 7;
-    private static final int PAPER_NOISE = 6;
+    /** ... and further, over pixels too little apart from the paper to be ink: a compressed scan's ringing. */
+    private static final int RINGING = 10;
     /** How opaque the patch paints the ringing: as good as fully, but told apart from the paint over the letters. */
     private static final int RINGING_ALPHA = 0xFE;
+    /** Pixels the patch's edge fades out over, from this opacity down. */
+    private static final int FEATHER = 4;
+    private static final int FEATHERED = 0xA0;
     /**
      * A row of the line's area with one unbroken stretch of ink this long (a share of the width) is a table rule
      * or a shaded band, not letters; a column, one this long (a share of the height).
@@ -392,7 +391,8 @@ public class RecognizedLineBox implements DisposableBean {
 
     /**
      * A line's part of the page, drawn: the picture, where it is on the whole page (pixels), and where the line's
-     * own box is in the picture (the picture reaches SPREAD pixels further, less at the page's edge).
+     * own box is in the picture (the picture reaches RINGING pixels further, less at the page's edge: a line's box
+     * is drawn close round its letters, and their ringing reaches past it).
      */
     private record Region(BufferedImage image, Px area, Px core) {
     }
@@ -411,8 +411,8 @@ public class RecognizedLineBox implements DisposableBean {
         Px core = new Px(x0, y0,
                 clamp((int) Math.ceil((line.x() + line.width() - crop.getLowerLeftX()) * SCALE), x0 + 1, pageWidth),
                 clamp((int) Math.ceil((crop.getUpperRightY() - line.y()) * SCALE), y0 + 1, pageHeight));
-        Px area = new Px(Math.max(0, core.x0() - SPREAD), Math.max(0, core.y0() - SPREAD),
-                Math.min(pageWidth, core.x1() + SPREAD), Math.min(pageHeight, core.y1() + SPREAD));
+        Px area = new Px(Math.max(0, core.x0() - RINGING), Math.max(0, core.y0() - RINGING),
+                Math.min(pageWidth, core.x1() + RINGING), Math.min(pageHeight, core.y1() + RINGING));
         BufferedImage image = new BufferedImage(area.width(), area.height(), BufferedImage.TYPE_INT_RGB);
         Graphics2D g = image.createGraphics();
         try {
@@ -875,8 +875,9 @@ public class RecognizedLineBox implements DisposableBean {
         }
         // A compressed scan rings round its letters with pixels a little lighter or darker than the paper, further
         // out than their soft edges: left after the letters are painted over, they would outline them. Near the
-        // letters, what is not quite paper (but too light to be ink of its own) is painted too - a shade less than
-        // opaque, so the patch still tells where the letters are.
+        // letters, all that looks like paper (too light to be ink of its own) is painted too - leaving holes of
+        // clean paper among the paint would have their edges show as specks when the picture is smoothed - a shade
+        // less than opaque, so the patch still tells where the letters are.
         boolean[][] ringing = new boolean[area.height()][area.width()];
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
@@ -885,16 +886,14 @@ public class RecognizedLineBox implements DisposableBean {
                 }
                 for (int dy = -RINGING; dy <= RINGING; dy++) {
                     for (int dx = -RINGING; dx <= RINGING; dx++) {
-                        int cx = x + dx;
-                        int cy = y + dy;
-                        if (cx < 0 || cy < 0 || cx >= w || cy >= h) {
+                        int ax = core.x0() + x + dx - area.x0();
+                        int ay = core.y0() + y + dy - area.y0();
+                        if (ax < 0 || ay < 0 || ax >= area.width() || ay >= area.height()) {
                             continue;
                         }
-                        int ax = core.x0() + cx - area.x0();
-                        int ay = core.y0() + cy - area.y0();
                         if (!paint[ay][ax] && !ringing[ay][ax]) {
-                            int d = difference(image.getRGB(core.x0() + cx, core.y0() + cy), paper);
-                            ringing[ay][ax] = d > PAPER_NOISE && d <= LETTER_DIFFERENCE;
+                            int d = difference(image.getRGB(area.x0() + ax, area.y0() + ay), paper);
+                            ringing[ay][ax] = d <= LETTER_DIFFERENCE;
                         }
                     }
                 }
@@ -925,7 +924,46 @@ public class RecognizedLineBox implements DisposableBean {
                 }
             }
         }
+        feather(patch, image, area, paper);
         return patch;
+    }
+
+    /**
+     * The patch's edge faded out over {@link #FEATHER} pixels of paper round it. A picture drawn at another size
+     * than its own is smoothed, and smoothing an edge from opaque to clear in one pixel overshoots: viewers and the
+     * preview alike would show it as a ring of specks lighter than the paper round the painted letters.
+     */
+    private static void feather(BufferedImage patch, BufferedImage image, Px area, Color paper) {
+        int w = patch.getWidth();
+        int h = patch.getHeight();
+        int[] alpha = new int[w * h];
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                alpha[y * w + x] = patch.getRGB(x, y) >>> 24;
+            }
+        }
+        int colour = paper.getRGB() & 0xFFFFFF;
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                if (alpha[y * w + x] != 0
+                        || difference(image.getRGB(x + area.x0(), y + area.y0()), paper) > LETTER_DIFFERENCE) {
+                    continue;
+                }
+                int near = FEATHER + 1;
+                for (int dy = -FEATHER; dy <= FEATHER; dy++) {
+                    for (int dx = -FEATHER; dx <= FEATHER; dx++) {
+                        int nx = x + dx;
+                        int ny = y + dy;
+                        if (nx >= 0 && ny >= 0 && nx < w && ny < h && alpha[ny * w + nx] > FEATHERED) {
+                            near = Math.min(near, Math.max(Math.abs(dx), Math.abs(dy)));
+                        }
+                    }
+                }
+                if (near <= FEATHER) {
+                    patch.setRGB(x, y, FEATHERED * (FEATHER + 1 - near) / FEATHER << 24 | colour);
+                }
+            }
+        }
     }
 
     /**

@@ -92,6 +92,16 @@ public class RecognizedLineBox implements DisposableBean {
     private static final double OUTER = 0.2;
     /** Ink whose middle is further than this (a share of the distance between letters) from all letters was not read. */
     private static final double UNREAD = 0.9;
+    /**
+     * A check box is at least this share of the line's box tall (and no taller than it), as wide as tall within
+     * this ratio, inked along this share of each side (in its outer {@link #BOX_BAND}) and with at most this share of
+     * its ink in its middle half.
+     */
+    private static final double BOX_SIDE_LEAST = 0.3;
+    private static final double BOX_SQUARE = 0.8;
+    private static final double BOX_BAND = 0.2;
+    private static final double BOX_SIDES = 0.7;
+    private static final double BOX_MIDDLE = 0.03;
     /** Room left after ink recognition did not read, before the next letter (a share of the font size). */
     private static final double ROOM = 0.15;
     /** Pages whose fonts were compared, remembered for their next rewrites. */
@@ -1055,6 +1065,8 @@ public class RecognizedLineBox implements DisposableBean {
         boolean[][] seen = new boolean[h][w];
         int[] stack = new int[w * h];
         List<Integer> patch = new ArrayList<>();
+        // The insides of the check boxes found so far: what lies in them (the mark of ▣) goes with the box.
+        List<int[]> boxes = new ArrayList<>();
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
                 if (!ink[y][x] || seen[y][x]) {
@@ -1097,6 +1109,20 @@ public class RecognizedLineBox implements DisposableBean {
                 // A thin patch lying all in the box's outer band across the line: a rule slanting past, not a letter.
                 boolean thin = high - low + 1 <= THIN * across;
                 atEdge |= thin && (high < OUTER * across || low > (1 - OUTER) * across);
+                boolean inBox = false;
+                for (int[] inside : boxes) {
+                    inBox |= minX >= inside[0] && maxX <= inside[2] && minY >= inside[1] && maxY <= inside[3];
+                }
+                if (inBox) {
+                    continue;
+                }
+                if (!vertical && !atEdge && checkBox(patch, w, minX, minY, maxX, maxY, h)) {
+                    boxes.add(new int[] {minX, minY, maxX, maxY});
+                    if (unread != null) {
+                        unread.add(new int[] {minX, maxX});
+                    }
+                    continue;
+                }
                 boolean far = false;
                 if (places != null) {
                     double middle = (minX + maxX) / 2.0;
@@ -1116,6 +1142,51 @@ public class RecognizedLineBox implements DisposableBean {
             }
         }
         return out;
+    }
+
+    /**
+     * Whether a patch of ink is a check box (□, or the frame of ▣): about square, about a letter tall, and drawn
+     * round its edge alone - ink on most of each side, none in its middle. Recognition does not read these, and
+     * they stay as scanned even when the whole line is drawn anew; next to a letter they are too close to be told
+     * apart by where the letters are.
+     *
+     * @param across the line's box height, pixels
+     */
+    static boolean checkBox(List<Integer> patch, int w, int minX, int minY, int maxX, int maxY, int across) {
+        int width = maxX - minX + 1;
+        int height = maxY - minY + 1;
+        if (height < BOX_SIDE_LEAST * across || height > across || width < BOX_SQUARE * height
+                || height < BOX_SQUARE * width) {
+            return false;
+        }
+        int bandX = Math.max(1, (int) Math.round(width * BOX_BAND));
+        int bandY = Math.max(1, (int) Math.round(height * BOX_BAND));
+        boolean[] top = new boolean[width];
+        boolean[] bottom = new boolean[width];
+        boolean[] left = new boolean[height];
+        boolean[] right = new boolean[height];
+        int middle = 0;
+        for (int at : patch) {
+            int x = at % w - minX;
+            int y = at / w - minY;
+            top[x] |= y < bandY;
+            bottom[x] |= y >= height - bandY;
+            left[y] |= x < bandX;
+            right[y] |= x >= width - bandX;
+            if (x >= width / 4 && x < width - width / 4 && y >= height / 4 && y < height - height / 4) {
+                middle++;
+            }
+        }
+        return middle <= BOX_MIDDLE * patch.size() && share(top) >= BOX_SIDES && share(bottom) >= BOX_SIDES
+                && share(left) >= BOX_SIDES && share(right) >= BOX_SIDES;
+    }
+
+    private static double share(boolean[] marks) {
+        int n = 0;
+        for (boolean mark : marks) {
+            n += mark ? 1 : 0;
+        }
+        return marks.length == 0 ? 0 : n / (double) marks.length;
     }
 
     /** Whether the page pixel is on a rule or band found inside the line (never painted over). */

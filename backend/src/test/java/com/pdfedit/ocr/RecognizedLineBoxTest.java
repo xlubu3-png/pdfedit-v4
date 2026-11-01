@@ -191,4 +191,34 @@ class RecognizedLineBoxTest {
             boxes.destroy();
         }
     }
+
+    @Test
+    void aCheckBoxBesideALetterIsLeftAsScannedButALettersOwnSquareIsNot() {
+        // A box 40 high: a solid letter, a check box 24 across right after it, then a letter drawn as a narrow frame
+        // (as ㅁ in a syllable is), each about 30 apart.
+        boolean[][] ink = new boolean[40][120];
+        for (int y = 8; y < 32; y++) {
+            for (int x = 4; x < 26; x++) {
+                ink[y][x] = true;
+            }
+        }
+        for (int i = 0; i < 24; i++) {
+            ink[8][30 + i] = ink[31][30 + i] = true;
+            ink[8 + i][30] = ink[8 + i][53] = true;
+        }
+        for (int i = 0; i < 24; i++) {
+            ink[8 + i][62] = ink[8 + i][74] = true;
+        }
+        for (int x = 62; x <= 74; x++) {
+            ink[8][x] = ink[31][x] = true;
+        }
+        List<int[]> unread = new java.util.ArrayList<>();
+
+        boolean[][] letters = RecognizedLineBox.ownLetters(ink, false, "가나", List.of(15 / 120f, 68 / 120f), unread);
+
+        assertThat(letters[20][10]).as("the solid letter").isTrue();
+        assertThat(letters[8][40]).as("the check box").isFalse();
+        assertThat(letters[20][62]).as("the narrow frame of a letter").isTrue();
+        assertThat(unread).extracting(span -> span[0]).containsExactly(30);
+    }
 }

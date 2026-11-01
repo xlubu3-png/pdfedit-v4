@@ -61,6 +61,8 @@ class ScannedFormRewriteTest {
     private static byte[] pdf;
     private static int wordFrom;
     private static int wordTo;
+    /** Where the check boxes are along the title (first and last column, before the tilt). */
+    private static final List<int[]> CHECK_BOXES = new java.util.ArrayList<>();
 
     @BeforeAll
     static void scan() throws Exception {
@@ -88,6 +90,12 @@ class ScannedFormRewriteTest {
         g.setFont(batang);
         String title = BEFORE + WORD + AFTER;
         g.drawString(title, LEFT, BASELINE);
+        for (int i = 0; i < BEFORE.length(); i++) {
+            if (BEFORE.charAt(i) == '□' || BEFORE.charAt(i) == '▣') {
+                int from = LEFT + g.getFontMetrics().stringWidth(BEFORE.substring(0, i));
+                CHECK_BOXES.add(new int[] {from, from + g.getFontMetrics().charWidth(BEFORE.charAt(i))});
+            }
+        }
         wordFrom = LEFT + g.getFontMetrics().stringWidth(BEFORE);
         wordTo = wordFrom + g.getFontMetrics().stringWidth(WORD);
         g.dispose();
@@ -175,5 +183,39 @@ class ScannedFormRewriteTest {
         assertThat(lighterBefore).as("the scan rings its letters").isGreaterThan(100);
         assertThat(lighter).as("specks lighter than the paper left where the old word was")
                 .isLessThan(lighterBefore / 5);
+    }
+
+    /** Dark pixels (the scan's ink) between columns {@code from} and {@code to} of the title's rows. */
+    private static int dark(BufferedImage image, int from, int to) {
+        int count = 0;
+        for (int y = BASELINE - 34; y < BASELINE + 6; y++) {
+            for (int x = from; x < to; x++) {
+                count += (image.getRGB(x, y) >> 8 & 0xFF) < 128 ? 1 : 0;
+            }
+        }
+        return count;
+    }
+
+    @Test
+    void theCheckBoxesStayWhenTheWholeTitleIsDrawnAnew() throws Exception {
+        List<OcrText> lines = OCR.recognize(pdf, 0).lines();
+        OcrText title = lines.stream().filter(l -> l.text().contains(WORD)).findFirst().orElseThrow();
+        AddedText box = new RecognizedLineBox(MATCHER).of(pdf, 0, title, lines);
+        // Far longer words than the line has room for: the line is drawn anew as a whole.
+        String longer = box.text().replace(WORD, "약제비와 진료비 계산서 및 영수증 발급 확인");
+        AddedText changed = new AddedText("c", longer, box.x(), box.y(), box.fontFamily(), box.fontSize(),
+                box.bold(), box.color(), List.of(), box.cover(), box.rotation(), box.charSpacing());
+
+        BufferedImage scan = render(pdf);
+        BufferedImage edited = render(EDITS.buildSinglePage(pdf, 0, new PageEdits(Map.of(), List.of(changed))));
+
+        assertThat(CHECK_BOXES).hasSize(4);
+        for (int[] checkBox : CHECK_BOXES) {
+            // The page is turned half a degree about its middle: the title moves about 7 pixels right.
+            int before = dark(scan, checkBox[0] + 2, checkBox[1] + 12);
+            assertThat(before).as("the scan's check box at " + checkBox[0]).isGreaterThan(30);
+            assertThat(dark(edited, checkBox[0] + 2, checkBox[1] + 12)).as("the check box at " + checkBox[0])
+                    .isGreaterThan(before * 3 / 4);
+        }
     }
 }

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { fetchRedactions, findPersonalInfo, saveRedactions } from '../api'
 import { mergeAreas, newAreaId, PERSONAL_KINDS } from '../redaction'
 import type { PageItem, PersonalInfoKind, PersonalInfoMatch } from '../types'
+import { errorText } from '../errors'
 
 interface PageRef {
   documentId: string
@@ -52,7 +53,7 @@ export function RedactDialog({ pages, onClose, onDraw, onChanged }: RedactDialog
     try {
       return await work()
     } catch (e) {
-      setError(e instanceof Error ? e.message : '처리하지 못했습니다')
+      setError(errorText(e, '처리하지 못했습니다'))
       return undefined
     } finally {
       setBusy(false)

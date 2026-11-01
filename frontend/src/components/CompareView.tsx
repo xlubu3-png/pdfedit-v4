@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { compareDocuments, compareLook, originalUrl } from '../api'
 import { areaStyle, changedPages, documentsIn, pairCount } from '../compare'
 import type { CompareResult, PageItem, PageSize, TextChange, VisualResult } from '../types'
+import { errorText } from '../errors'
 
 interface CompareViewProps {
   pages: PageItem[]
@@ -35,7 +36,7 @@ export function CompareView({ pages, onClose }: CompareViewProps) {
       setVisual(new Map())
       setIndex(changedPages(compared)[0]?.index ?? 0)
     } catch (e) {
-      setError(e instanceof Error ? e.message : '문서를 비교하지 못했습니다')
+      setError(errorText(e, '문서를 비교하지 못했습니다'))
     } finally {
       setBusy(false)
     }
@@ -48,7 +49,7 @@ export function CompareView({ pages, onClose }: CompareViewProps) {
     let cancelled = false
     compareLook(result.a, index, result.b, index)
       .then((found) => !cancelled && setVisual((prev) => new Map(prev).set(index, found)))
-      .catch((e) => !cancelled && setError(e instanceof Error ? e.message : '모양을 비교하지 못했습니다'))
+      .catch((e) => !cancelled && setError(errorText(e, '모양을 비교하지 못했습니다')))
     return () => {
       cancelled = true
     }

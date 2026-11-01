@@ -60,6 +60,7 @@ import {
 } from 'lucide-react'
 import type { AppInfo, AppSettings, PageItem, ReplaceResult, UpdateInfo, UploadResponse } from './types'
 import { downloadBlob } from './download'
+import { errorText } from './errors'
 
 /**
  * The name the screen shows. The installed program, its folders and its installer keep the name WINTECH_PDF:
@@ -232,7 +233,7 @@ function App() {
           scanned.pages.push(...newPages)
         }
       } catch (e) {
-        problems.push(e instanceof Error ? e.message : `업로드 중 오류가 발생했습니다: ${file.name}`)
+        problems.push(errorText(e, `업로드 중 오류가 발생했습니다: ${file.name}`))
       }
     }
     setError(problems.length > 0 ? problems.join('\n') : null)
@@ -270,7 +271,7 @@ function App() {
       setNotice(message)
       return message
     } catch (e) {
-      setError(e instanceof Error ? e.message : '글자를 인식하지 못했습니다')
+      setError(errorText(e, '글자를 인식하지 못했습니다'))
       return null
     } finally {
       setOcrProgress(null)
@@ -371,7 +372,7 @@ function App() {
         return next
       })
     } catch (e) {
-      setError(e instanceof Error ? e.message : '빈 페이지 추가 중 오류가 발생했습니다')
+      setError(errorText(e, '빈 페이지 추가 중 오류가 발생했습니다'))
     } finally {
       setBusy(false)
     }
@@ -404,7 +405,7 @@ function App() {
       }
       setPages((prev) => prev.flatMap((p) => (copies.has(p.key) ? [p, copies.get(p.key)!] : [p])))
     } catch (e) {
-      setError(e instanceof Error ? e.message : '페이지를 복제하지 못했습니다')
+      setError(errorText(e, '페이지를 복제하지 못했습니다'))
     } finally {
       setBusy(false)
     }
@@ -447,7 +448,7 @@ function App() {
       downloadBlob(blob, fileName)
       setNotice(exportedNotice(redaction, lock))
     } catch (e) {
-      setError(e instanceof Error ? e.message : '추출 중 오류가 발생했습니다')
+      setError(errorText(e, '추출 중 오류가 발생했습니다'))
     } finally {
       setBusy(false)
     }
@@ -478,7 +479,7 @@ function App() {
       const { blob } = await exportPdf(chosen, exportFileName(chosen), flatten)
       await printPdf(blob)
     } catch (e) {
-      setError(e instanceof Error ? e.message : '인쇄할 문서를 만들지 못했습니다')
+      setError(errorText(e, '인쇄할 문서를 만들지 못했습니다'))
     } finally {
       setBusy(false)
     }
@@ -497,7 +498,7 @@ function App() {
       downloadBlob(blob, fileName)
       setNotice(exportedNotice(redaction, lock))
     } catch (e) {
-      setError(e instanceof Error ? e.message : '내보내기 중 오류가 발생했습니다')
+      setError(errorText(e, '내보내기 중 오류가 발생했습니다'))
     } finally {
       setBusy(false)
     }
@@ -556,7 +557,7 @@ function App() {
       handleFontsReloaded(next)
       setFontsNote(reloadMessage(before, next.installedFonts, next.unreadableFonts ?? []))
     } catch (e) {
-      setError(e instanceof Error ? e.message : '글꼴을 다시 읽지 못했습니다')
+      setError(errorText(e, '글꼴을 다시 읽지 못했습니다'))
     } finally {
       setFontsBusy(false)
     }
@@ -579,7 +580,7 @@ function App() {
         setUpdateNote(`최신 버전입니다 (v${result.current}).`)
       }
     } catch (e) {
-      setUpdateNote(e instanceof Error ? e.message : '업데이트를 확인하지 못했습니다')
+      setUpdateNote(errorText(e, '업데이트를 확인하지 못했습니다'))
     } finally {
       setUpdateChecking(false)
     }
@@ -597,7 +598,7 @@ function App() {
       setUpdateState('launched')
     } catch (e) {
       setUpdateState('idle')
-      setError(e instanceof Error ? e.message : '업데이트하지 못했습니다')
+      setError(errorText(e, '업데이트하지 못했습니다'))
     }
   }
 
@@ -960,6 +961,15 @@ function App() {
             onExtract={handleExtractOne}
             onDuplicate={(key) => void handleDuplicate([key])}
             onEditText={setEditingKey}
+            onRedact={setDrawKey}
+            onOcr={(key) => {
+              const page = pages.find((p) => p.key === key)
+              if (page) void handleOcr([page])
+            }}
+            onPrint={(key) => {
+              const page = pages.find((p) => p.key === key)
+              if (page) void handlePrint([page])
+            }}
           />
         </>
       )}

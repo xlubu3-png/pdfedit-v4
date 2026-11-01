@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { errorText } from '../errors'
 
 /** The periods offered; the current one is added when it is none of them (set elsewhere). */
 const CHOICES = [7, 30, 90, 180, 365]
@@ -23,7 +24,7 @@ export function RetentionDialog({ days, onSave, onClose }: RetentionDialogProps)
       await onSave(chosen)
       onClose()
     } catch (e) {
-      setError(e instanceof Error ? e.message : '저장하지 못했습니다')
+      setError(errorText(e, '저장하지 못했습니다'))
       setBusy(false)
     }
   }

@@ -27,6 +27,8 @@ interface PageThumbnailProps {
   onExtract: (key: string) => void
   onDuplicate: (key: string) => void
   onEditText: (key: string) => void
+  /** A right click (or the menu key) on the card: the page's menu, opened where it was asked for. */
+  onMenu?: (key: string, x: number, y: number) => void
 }
 
 export function PageThumbnail({
@@ -45,6 +47,7 @@ export function PageThumbnail({
   onExtract,
   onDuplicate,
   onEditText,
+  onMenu,
 }: PageThumbnailProps) {
   return (
     <div
@@ -58,6 +61,11 @@ export function PageThumbnail({
       onDrop={(e: DragEvent<HTMLDivElement>) => {
         e.preventDefault()
         onDrop()
+      }}
+      onContextMenu={(e) => {
+        if (!onMenu) return
+        e.preventDefault()
+        onMenu(page.key, e.clientX, e.clientY)
       }}
     >
       <div className="page-number">{index + 1}</div>
@@ -81,7 +89,7 @@ export function PageThumbnail({
       >
         <img
           src={thumbnailUrl(page.documentId, page.pageIndex, 240, page.textRevision)}
-          alt={`${page.sourceFileName} p.${page.pageIndex + 1}`}
+          alt={`${page.sourceFileName} ${page.pageIndex + 1}쪽`}
           style={{ transform: `rotate(${page.rotation}deg)` }}
         />
       </div>

@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import type { PageItem } from '../types'
+import { ContextMenu } from './ContextMenu'
+import type { MenuEntry } from './ContextMenu'
 import { PageThumbnail } from './PageThumbnail'
 
 interface PageGridProps {
@@ -14,6 +16,11 @@ interface PageGridProps {
   onExtract: (key: string) => void
   onDuplicate: (key: string) => void
   onEditText: (key: string) => void
+  /** Draws redaction areas on the page by hand. */
+  onRedact: (key: string) => void
+  /** Recognizes the page's text (a scan). */
+  onOcr: (key: string) => void
+  onPrint: (key: string) => void
 }
 
 export function PageGrid({
@@ -28,9 +35,14 @@ export function PageGrid({
   onExtract,
   onDuplicate,
   onEditText,
+  onRedact,
+  onOcr,
+  onPrint,
 }: PageGridProps) {
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null)
   const [overIndex, setOverIndex] = useState<number | null>(null)
+  /** The page whose right-click menu is open, and where it was asked for. */
+  const [menu, setMenu] = useState<{ key: string; x: number; y: number } | null>(null)
 
   function handleDrop() {
     if (draggingIndex === null || overIndex === null || draggingIndex === overIndex) {
@@ -46,28 +58,64 @@ export function PageGrid({
     setOverIndex(null)
   }
 
+  /** What the card's buttons do, and the rest of what can be done to one page, in one menu. */
+  function entriesFor(key: string): MenuEntry[] {
+    const selected = selectedKeys.has(key)
+    return [
+      { label: '텍스트 편집', shortcut: '더블클릭', disabled: busy, onSelect: () => onEditText(key) },
+      { label: '가림 영역 그리기 (개인정보)', disabled: busy, onSelect: () => onRedact(key) },
+      { label: '글자 인식 (OCR)', disabled: busy, onSelect: () => onOcr(key) },
+      'separator',
+      { label: '왼쪽으로 회전', disabled: busy, onSelect: () => onRotate(key, -90) },
+      { label: '오른쪽으로 회전', disabled: busy, onSelect: () => onRotate(key, 90) },
+      'separator',
+      { label: '페이지 복제 (고친 내용째로)', disabled: busy, onSelect: () => onDuplicate(key) },
+      { label: '뒤에 빈 페이지 삽입', disabled: busy, onSelect: () => onInsertBlankAfter(key) },
+      { label: '이 페이지만 추출 (PDF로 저장)', disabled: busy, onSelect: () => onExtract(key) },
+      { label: '이 페이지 인쇄', disabled: busy, onSelect: () => onPrint(key) },
+      'separator',
+      { label: selected ? '선택 해제' : '선택', disabled: busy, onSelect: () => onToggleSelect(key) },
+      { label: '페이지 삭제', disabled: busy, onSelect: () => onDelete(key) },
+    ]
+  }
+
+  const menuIndex = menu ? pages.findIndex((p) => p.key === menu.key) : -1
+
   return (
-    <div className="page-grid">
-      {pages.map((page, index) => (
-        <PageThumbnail
-          key={page.key}
-          page={page}
-          index={index}
-          isDragging={draggingIndex === index}
-          isSelected={selectedKeys.has(page.key)}
-          busy={busy}
-          onDragStart={setDraggingIndex}
-          onDragOver={setOverIndex}
-          onDrop={handleDrop}
-          onRotate={onRotate}
-          onDelete={onDelete}
-          onToggleSelect={onToggleSelect}
-          onInsertBlankAfter={onInsertBlankAfter}
-          onExtract={onExtract}
-          onDuplicate={onDuplicate}
-          onEditText={onEditText}
+    <>
+      <div className="page-grid">
+        {pages.map((page, index) => (
+          <PageThumbnail
+            key={page.key}
+            page={page}
+            index={index}
+            isDragging={draggingIndex === index}
+            isSelected={selectedKeys.has(page.key)}
+            busy={busy}
+            onDragStart={setDraggingIndex}
+            onDragOver={setOverIndex}
+            onDrop={handleDrop}
+            onRotate={onRotate}
+            onDelete={onDelete}
+            onToggleSelect={onToggleSelect}
+            onInsertBlankAfter={onInsertBlankAfter}
+            onExtract={onExtract}
+            onDuplicate={onDuplicate}
+            onEditText={onEditText}
+            onMenu={(key, x, y) => setMenu({ key, x, y })}
+          />
+        ))}
+      </div>
+      {/* A page removed while its menu was open (by another action) takes the menu with it. */}
+      {menu && menuIndex >= 0 && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          label={`${menuIndex + 1}쪽`}
+          entries={entriesFor(menu.key)}
+          onClose={() => setMenu(null)}
         />
-      ))}
-    </div>
+      )}
+    </>
   )
 }

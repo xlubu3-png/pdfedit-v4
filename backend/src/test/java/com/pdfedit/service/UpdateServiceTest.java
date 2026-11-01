@@ -167,12 +167,24 @@ class UpdateServiceTest {
         latestStatus = 500;
         UpdateInfo broken = service(true, "0.051").check(false);
         assertThat(broken.newer()).isFalse();
-        assertThat(broken.error()).isNotBlank();
+        assertThat(broken.error()).isEqualTo("업데이트 정보를 가져오지 못했습니다. GitHub가 500 오류로 응답했습니다.");
 
         github.stop(0);
         UpdateInfo gone = service(true, "0.051").check(false);
         assertThat(gone.newer()).isFalse();
-        assertThat(gone.error()).isNotBlank();
+        // Said in Korean: no exception class name or English text from Java on the screen.
+        assertThat(gone.error()).startsWith("업데이트 정보를 가져오지 못했습니다. ").doesNotContain("Exception");
+    }
+
+    @Test
+    void whyAConnectionFailedIsSaidInKorean() {
+        assertThat(UpdateService.reason(new java.net.ConnectException("Connection refused"))).isEqualTo("인터넷 연결을 확인해 주세요.");
+        assertThat(UpdateService.reason(new java.net.UnknownHostException("api.github.com"))).isEqualTo("인터넷 연결을 확인해 주세요.");
+        assertThat(UpdateService.reason(new java.net.http.HttpTimeoutException("request timed out")))
+                .isEqualTo("GitHub가 응답하지 않습니다. 잠시 후 다시 시도해 주세요.");
+        assertThat(UpdateService.reason(new java.io.IOException("Connection reset"))).isEqualTo("잠시 후 다시 시도해 주세요.");
+        assertThat(UpdateService.reason(new java.io.IOException("Windows에서만 설치할 수 있습니다.")))
+                .isEqualTo("Windows에서만 설치할 수 있습니다.");
     }
 
     @Test

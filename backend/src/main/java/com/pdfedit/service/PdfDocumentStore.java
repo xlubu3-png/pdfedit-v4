@@ -76,6 +76,9 @@ public class PdfDocumentStore {
                   Map<String, List<Redaction>> redactions, Map<String, List<OcrText>> ocr) {
     }
 
+    /** Said (as the 404 answer) for a document the app no longer holds, e.g. one removed after the retention period. */
+    static final String UNKNOWN_DOCUMENT = "문서를 찾을 수 없습니다. 보관 기간이 지나 지워졌을 수 있으니 파일을 다시 열어 주세요.";
+
     /** Most pictures uploaded for one document, and the biggest one (bytes). */
     public static final int MAX_IMAGES = 50;
     public static final int MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -398,7 +401,7 @@ public class PdfDocumentStore {
     private Entry require(String documentId) {
         Entry entry = documents.get(documentId);
         if (entry == null) {
-            throw new NoSuchElementException("Unknown document id: " + documentId);
+            throw new NoSuchElementException(UNKNOWN_DOCUMENT);
         }
         Instant now = Instant.now();
         if (dataDir != null && Duration.between(entry.lastAccessed, now).compareTo(TOUCH_INTERVAL) > 0) {
@@ -526,7 +529,7 @@ public class PdfDocumentStore {
 
     private Path imagePath(String documentId, String imageId) {
         if (!imageId.matches("[A-Za-z0-9-]{1,64}")) {
-            throw new NoSuchElementException("Unknown picture id: " + imageId);
+            throw new NoSuchElementException("그림을 찾을 수 없습니다. 그림을 다시 넣어 주세요.");
         }
         return dataDir.resolve(safe(documentId) + "." + imageId + ".img");
     }
@@ -542,7 +545,7 @@ public class PdfDocumentStore {
     /** Ids are generated UUIDs; refuse anything else so an id can never name a file outside the data folder. */
     private static String safe(String documentId) {
         if (!documentId.matches("[A-Za-z0-9-]{1,64}")) {
-            throw new NoSuchElementException("Unknown document id: " + documentId);
+            throw new NoSuchElementException(UNKNOWN_DOCUMENT);
         }
         return documentId;
     }

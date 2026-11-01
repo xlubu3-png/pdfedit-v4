@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { KeyboardEvent, ReactNode } from 'react'
 import { findText, replaceText } from '../api'
 import type { FindMatch, PageItem, ReplaceResult } from '../types'
+import { errorText } from '../errors'
 
 interface FindReplaceDialogProps {
   /** The pages searched: all the pages in the list, in order. */
@@ -45,7 +46,7 @@ export function FindReplaceDialog({ pages, initialQuery = '', onClose, onOpenPag
     try {
       return await work()
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : '실패했습니다')
+      setMessage(errorText(e, '실패했습니다'))
       return undefined
     } finally {
       setBusy(false)

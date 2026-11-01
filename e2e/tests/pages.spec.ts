@@ -57,3 +57,59 @@ test('fitting the page shows the whole page in the editor', async ({ page }) => 
   await page.keyboard.press('Control+0')
   await expect(zoom).toHaveText(widthFit ?? '')
 })
+
+test('a right click on a page in the list opens its menu, which rotates, duplicates and deletes it', async ({ page }) => {
+  await page.goto('/')
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'menu.pdf',
+    mimeType: 'application/pdf',
+    buffer: simplePdf(['Menu line'], 2),
+  })
+  await expect(page.getByText('2페이지')).toBeVisible()
+  const second = page.locator('.page-card').nth(1)
+
+  await second.click({ button: 'right' })
+  await expect(page.getByRole('menu', { name: '2쪽' })).toBeVisible()
+  await page.getByRole('menuitem', { name: '오른쪽으로 회전' }).click()
+  await expect(page.getByRole('menu')).toHaveCount(0)
+  await expect(second.locator('img')).toHaveAttribute('style', /rotate\(90deg\)/)
+
+  await second.click({ button: 'right' })
+  await page.getByRole('menuitem', { name: /페이지 복제/ }).click()
+  await expect(page.getByText('3페이지')).toBeVisible()
+
+  // Esc or a click elsewhere closes the menu without doing anything.
+  await page.locator('.page-card').first().click({ button: 'right' })
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('menu')).toHaveCount(0)
+
+  await page.locator('.page-card').first().click({ button: 'right' })
+  await page.getByRole('menuitem', { name: '페이지 삭제' }).click()
+  await expect(page.getByText('2페이지')).toBeVisible()
+
+  // The editor opens from the menu too.
+  await page.locator('.page-card').first().click({ button: 'right' })
+  await page.getByRole('menuitem', { name: /텍스트 편집/ }).click()
+  await expect(page.locator('.te-box[data-index="0"]')).toBeVisible()
+})
+
+test('in the editor a right click beside the page opens the page menu, without adding text off the page', async ({ page }) => {
+  await page.goto('/')
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'margin.pdf',
+    mimeType: 'application/pdf',
+    buffer: simplePdf(['Margin line']),
+  })
+  await page.locator('button[title="텍스트 편집"]').first().click()
+  await expect(page.locator('.te-box[data-index="0"]')).toBeVisible()
+  await page.locator('.te-zoom').getByRole('button', { name: '쪽 맞춤' }).click()
+
+  const sheet = (await page.locator('.te-canvas img').boundingBox())!
+  await page.mouse.click(sheet.x - 10, sheet.y + sheet.height / 2, { button: 'right' })
+
+  await expect(page.getByRole('menu', { name: '쪽' })).toBeVisible()
+  await expect(page.getByRole('menuitem', { name: /여기에 텍스트 추가/ })).toBeDisabled()
+  await expect(page.getByRole('menuitem', { name: /이 쪽 글자 모두 복사/ })).toBeEnabled()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('menu')).toHaveCount(0)
+})

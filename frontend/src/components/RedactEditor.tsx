@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { fetchPageText, fetchRedactions, previewUrl, saveRedactions } from '../api'
 import { newAreaId } from '../redaction'
 import type { PageItem, Redaction } from '../types'
+import { errorText } from '../errors'
 
 interface RedactEditorProps {
   pages: PageItem[]
@@ -49,7 +50,7 @@ export function RedactEditor({ pages, startKey, onClose, onChanged }: RedactEdit
         setBox({ pageWidth: text.pageWidth, pageHeight: text.pageHeight, originX: text.originX, originY: text.originY })
         setAreas(saved)
       })
-      .catch((e) => !cancelled && setError(e instanceof Error ? e.message : '페이지를 불러오지 못했습니다'))
+      .catch((e) => !cancelled && setError(errorText(e, '페이지를 불러오지 못했습니다')))
     return () => {
       cancelled = true
     }
@@ -80,7 +81,7 @@ export function RedactEditor({ pages, startKey, onClose, onChanged }: RedactEdit
     } catch (e) {
       setAreas(before)
       setStatus(null)
-      setError(e instanceof Error ? e.message : '저장하지 못했습니다')
+      setError(errorText(e, '저장하지 못했습니다'))
     }
   }
 

@@ -3,6 +3,7 @@ import { createEditor } from '@rhwp/editor'
 import type { RhwpEditor } from '@rhwp/editor'
 import { ArrowLeft, FileDown } from 'lucide-react'
 import { downloadBlob } from '../download'
+import { errorText } from '../errors'
 import { formatOf, HWP_STUDIO_URL, savedName } from '../hwp'
 import type { HwpFormat } from '../hwp'
 
@@ -48,7 +49,14 @@ export function HwpEditor({ file, onClose }: HwpEditorProps) {
       } catch (e) {
         if (cancelled) return
         setStatus(null)
-        setError(`한글 문서를 열지 못했습니다: ${e instanceof Error ? e.message : String(e)}`)
+        // The editor's own reason is in English: kept in the browser console, the screen says it in Korean.
+        console.error(e)
+        const why = errorText(e, '')
+        setError(
+          why
+            ? `한글 문서를 열지 못했습니다: ${why}`
+            : '한글 문서를 열지 못했습니다. 파일이 손상되었거나 이 편집기가 읽지 못하는 형식일 수 있습니다.',
+        )
       }
     })()
     return () => {
@@ -70,7 +78,9 @@ export function HwpEditor({ file, onClose }: HwpEditorProps) {
       await current.notifySaved(name).catch(() => undefined)
       setStatus(`${name}(으)로 저장했습니다`)
     } catch (e) {
-      setError(`저장하지 못했습니다: ${e instanceof Error ? e.message : String(e)}`)
+      console.error(e)
+      const why = errorText(e, '')
+      setError(why ? `저장하지 못했습니다: ${why}` : '저장하지 못했습니다. 다시 시도해 주세요.')
     } finally {
       setSaving(false)
     }

@@ -1,10 +1,13 @@
 package com.pdfedit.service;
 
 import java.io.IOException;
+import java.net.ConnectException;
 import java.net.URI;
+import java.net.UnknownHostException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -147,7 +150,8 @@ public class UpdateService {
             try {
                 launcher.launch(file);
             } catch (IOException e) {
-                throw new UpdateFailedException("설치 프로그램을 실행하지 못했습니다: " + e.getMessage(), e);
+                log.warn("Could not start the installer {}: {}", file, e.toString());
+                throw new UpdateFailedException("설치 프로그램을 실행하지 못했습니다. " + reason(e), e);
             }
             log.info("Started the installer of {}; quitting so it can replace the files", found.version());
             Thread.ofVirtual().start(() -> {
@@ -178,12 +182,12 @@ public class UpdateService {
                 return;
             }
             if (response.statusCode() != 200) {
-                throw new IOException("GitHub 응답 " + response.statusCode());
+                throw new IOException("GitHub가 " + response.statusCode() + " 오류로 응답했습니다.");
             }
             latest = parse(response.body());
             lastError = latest == null ? "릴리스에 설치 파일(WINTECH_PDF_Setup_*.exe)이 없습니다." : null;
         } catch (IOException | RuntimeException e) {
-            lastError = "업데이트 정보를 가져오지 못했습니다 (" + e.getClass().getSimpleName() + ")";
+            lastError = "업데이트 정보를 가져오지 못했습니다. " + reason(e);
             log.info("Update check failed: {}", e.toString());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -240,6 +244,25 @@ public class UpdateService {
         }
     }
 
+    /**
+     * Why talking to GitHub (or starting the installer) failed, said in Korean for the screen. The exception's own
+     * text is English ("Connection refused", "HTTP/1.1 header parser received no bytes") and goes to the log only;
+     * a message of this class's own, already in Korean, is kept.
+     */
+    static String reason(Exception e) {
+        if (e instanceof HttpTimeoutException) {
+            return "GitHub가 응답하지 않습니다. 잠시 후 다시 시도해 주세요.";
+        }
+        if (e instanceof ConnectException || e instanceof UnknownHostException) {
+            return "인터넷 연결을 확인해 주세요.";
+        }
+        String message = e.getMessage();
+        if (message != null && message.chars().anyMatch(c -> c >= '가' && c <= '힣')) {
+            return message;
+        }
+        return "잠시 후 다시 시도해 주세요.";
+    }
+
     /** A SHA-256 (64 hex digits) found in {@code text} such as "sha256:ab12..." or "ab12...  file.exe", or null. */
     static String hashOf(String text) {
         Matcher m = SHA256.matcher(text == null ? "" : text);
@@ -282,7 +305,8 @@ public class UpdateService {
             Files.move(partial, target, StandardCopyOption.REPLACE_EXISTING);
             return target;
         } catch (IOException e) {
-            throw new UpdateFailedException("설치 파일을 내려받지 못했습니다: " + e.getMessage(), e);
+            log.warn("Could not download the installer {}: {}", found.url(), e.toString());
+            throw new UpdateFailedException("설치 파일을 내려받지 못했습니다. " + reason(e), e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new UpdateFailedException("업데이트가 중단되었습니다.", e);

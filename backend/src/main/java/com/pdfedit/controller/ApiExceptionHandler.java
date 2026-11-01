@@ -6,6 +6,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import com.pdfedit.ocr.OcrUnavailableException;
 import com.pdfedit.service.InvalidEditException;
@@ -17,6 +18,9 @@ import com.pdfedit.text.FontUnavailableException;
 @RestControllerAdvice
 public class ApiExceptionHandler {
 
+    /** spring.servlet.multipart.max-file-size, in MB (the screen checks the same size before sending). */
+    static final int MAX_UPLOAD_MB = 100;
+
     @ExceptionHandler(NoSuchElementException.class)
     public ResponseEntity<String> handleUnknownDocument(NoSuchElementException e) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
@@ -24,7 +28,14 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler(IndexOutOfBoundsException.class)
     public ResponseEntity<String> handleUnknownPage(IndexOutOfBoundsException e) {
-        return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Unknown page: " + e.getMessage());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body("없는 페이지입니다.");
+    }
+
+    /** A file over spring.servlet.multipart.max-file-size: said in Korean, not as the web server's English page. */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<String> handleTooBig(MaxUploadSizeExceededException e) {
+        return ResponseEntity.status(HttpStatus.CONTENT_TOO_LARGE)
+                .body("파일이 너무 큽니다. 한 파일에 " + MAX_UPLOAD_MB + "MB까지 열 수 있습니다.");
     }
 
     @ExceptionHandler(FontUnavailableException.class)

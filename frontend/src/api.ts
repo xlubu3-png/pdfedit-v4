@@ -19,6 +19,7 @@ import type {
   UploadResponse,
   VisualResult,
 } from './types'
+import { isKorean } from './errors'
 import { parseRedactionReport, type RedactionReport } from './redaction'
 
 const BASE = '/api/v1/pdf'
@@ -34,18 +35,53 @@ export class ApiError extends Error {
   }
 }
 
-async function failure(response: Response, fallback: string): Promise<ApiError> {
-  const detail = await response.text().catch(() => '')
-  return new ApiError(detail ? `${fallback}: ${detail}` : `${fallback} (${response.status})`, response.status)
+/** The status of a failed request, said in Korean, for an answer that carries no message of the app's own. */
+function statusText(status: number): string {
+  if (status === 404) return '찾을 수 없습니다. 보관 기간이 지나 지워졌을 수 있으니 파일을 다시 열어 주세요.'
+  if (status === 413) return '파일이 너무 큽니다.'
+  if (status >= 500) return '앱에서 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.'
+  return `오류 ${status}`
 }
+
+/**
+ * The error for a refused request. The server's own messages (in Korean) are shown as they are; anything else it
+ * answers - the web server's English error pages ("Internal Server Error", "Payload Too Large") - is not.
+ */
+export async function failure(response: Response, fallback: string): Promise<ApiError> {
+  const detail = (await response.text().catch(() => '')).trim()
+  return new ApiError(`${fallback}: ${isKorean(detail) ? detail : statusText(response.status)}`, response.status)
+}
+
+/** Said when the app does not answer at all: it was closed, or is still starting. */
+export const UNREACHABLE = '앱에 연결하지 못했습니다. 앱이 실행 중인지 확인하고 다시 시도해 주세요.'
+
+/**
+ * `fetch`, but a request that never reaches the app fails with a Korean ApiError (status 0) instead of the
+ * browser's "Failed to fetch". Status 0 is no 4xx, so an editor keeps the edits to send again.
+ */
+async function call(input: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(input, init)
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') throw e
+    throw new ApiError(UNREACHABLE, 0)
+  }
+}
+
+/** The biggest file the app takes (spring.servlet.multipart.max-file-size). */
+export const MAX_UPLOAD_MB = 100
 
 /** An encrypted PDF without its password, or with a wrong one, fails with status 401. */
 export async function uploadDocument(file: File, password?: string): Promise<UploadResponse> {
+  if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
+    // Refused before sending: the server would drop the connection halfway through such a file.
+    throw new ApiError(`업로드 실패: ${file.name}: 파일이 너무 큽니다 (한 파일에 ${MAX_UPLOAD_MB}MB까지 열 수 있습니다)`, 413)
+  }
   const formData = new FormData()
   formData.append('file', file)
   if (password !== undefined) formData.append('password', password)
 
-  const response = await fetch(`${BASE}/documents`, {
+  const response = await call(`${BASE}/documents`, {
     method: 'POST',
     body: formData,
   })
@@ -57,7 +93,7 @@ export async function uploadDocument(file: File, password?: string): Promise<Upl
 
 /** The name and page count of a document the server still holds, or null when it is gone. */
 export async function fetchDocumentInfo(documentId: string): Promise<UploadResponse | null> {
-  const response = await fetch(`${BASE}/documents/${documentId}`)
+  const response = await call(`${BASE}/documents/${documentId}`)
   if (response.status === 404) return null
   if (!response.ok) {
     throw await failure(response, '문서 정보를 불러오지 못했습니다')
@@ -68,7 +104,7 @@ export async function fetchDocumentInfo(documentId: string): Promise<UploadRespo
 /** Has the server delete its stored copy of a document; failures are ignored (the copy expires by itself). */
 export async function deleteDocument(documentId: string): Promise<void> {
   try {
-    await fetch(`${BASE}/documents/${documentId}`, { method: 'DELETE' })
+    await call(`${BASE}/documents/${documentId}`, { method: 'DELETE' })
   } catch {
     // offline or the server is gone: nothing more to do
   }
@@ -83,7 +119,7 @@ export function previewUrl(documentId: string, pageIndex: number, revision: numb
 }
 
 export async function fetchSettings(): Promise<AppSettings> {
-  const response = await fetch(`${BASE}/settings`)
+  const response = await call(`${BASE}/settings`)
   if (!response.ok) {
     throw await failure(response, '설정을 불러오지 못했습니다')
   }
@@ -91,7 +127,7 @@ export async function fetchSettings(): Promise<AppSettings> {
 }
 
 export async function saveSettings(settings: AppSettings): Promise<AppSettings> {
-  const response = await fetch(`${BASE}/settings`, {
+  const response = await call(`${BASE}/settings`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(settings),
@@ -103,7 +139,7 @@ export async function saveSettings(settings: AppSettings): Promise<AppSettings> 
 }
 
 export async function fetchAppInfo(): Promise<AppInfo> {
-  const response = await fetch(`${BASE}/info`)
+  const response = await call(`${BASE}/info`)
   if (!response.ok) {
     throw await failure(response, '앱 정보를 불러오지 못했습니다')
   }
@@ -112,7 +148,7 @@ export async function fetchAppInfo(): Promise<AppInfo> {
 
 /** Whether a newer version is published. `refresh` asks GitHub again instead of using an answer from hours ago. */
 export async function fetchUpdate(refresh = false): Promise<UpdateInfo> {
-  const response = await fetch(`${BASE}/update?refresh=${refresh}`)
+  const response = await call(`${BASE}/update?refresh=${refresh}`)
   if (!response.ok) {
     throw await failure(response, '업데이트를 확인하지 못했습니다')
   }
@@ -124,7 +160,7 @@ export async function fetchUpdate(refresh = false): Promise<UpdateInfo> {
  * answering. The marker header is what tells the server that the request comes from this page.
  */
 export async function installUpdate(): Promise<string> {
-  const response = await fetch(`${BASE}/update/install`, {
+  const response = await call(`${BASE}/update/install`, {
     method: 'POST',
     headers: { 'X-Requested-With': 'WINTECH_PDF' },
   })
@@ -136,7 +172,7 @@ export async function installUpdate(): Promise<string> {
 
 /** Has the server read the font folders again, for a font installed while the app runs; the new font count. */
 export async function reloadFonts(): Promise<AppInfo> {
-  const response = await fetch(`${BASE}/fonts/reload`, { method: 'POST' })
+  const response = await call(`${BASE}/fonts/reload`, { method: 'POST' })
   if (!response.ok) {
     throw await failure(response, '글꼴을 다시 읽지 못했습니다')
   }
@@ -145,7 +181,7 @@ export async function reloadFonts(): Promise<AppInfo> {
 }
 
 export async function createBlankDocument(): Promise<UploadResponse> {
-  const response = await fetch(`${BASE}/documents/blank`, { method: 'POST' })
+  const response = await call(`${BASE}/documents/blank`, { method: 'POST' })
   if (!response.ok) {
     throw new ApiError(`빈 페이지 생성 실패 (${response.status})`, response.status)
   }
@@ -154,7 +190,7 @@ export async function createBlankDocument(): Promise<UploadResponse> {
 
 /** Recognizes the text of a scanned page (a second or two); the server keeps it for the export. */
 export async function recognizePage(documentId: string, pageIndex: number): Promise<OcrResult> {
-  const response = await fetch(`${BASE}/documents/${documentId}/pages/${pageIndex}/ocr`, { method: 'POST' })
+  const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/ocr`, { method: 'POST' })
   if (!response.ok) {
     throw await failure(response, '글자를 인식하지 못했습니다')
   }
@@ -163,7 +199,7 @@ export async function recognizePage(documentId: string, pageIndex: number): Prom
 
 /** The text recognized on the page earlier (no lines when it never was). */
 export async function fetchPageOcr(documentId: string, pageIndex: number): Promise<OcrResult> {
-  const response = await fetch(`${BASE}/documents/${documentId}/pages/${pageIndex}/ocr`)
+  const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/ocr`)
   if (!response.ok) {
     throw await failure(response, '인식한 글자를 불러오지 못했습니다')
   }
@@ -175,7 +211,7 @@ export async function fetchPageOcr(documentId: string, pageIndex: number): Promi
  * over a patch that hides the scanned ones. Nothing is saved until the box is.
  */
 export async function ocrTextBox(documentId: string, pageIndex: number, line: number): Promise<Omit<AddedText, 'id'>> {
-  const response = await fetch(`${BASE}/documents/${documentId}/pages/${pageIndex}/ocr/${line}/text-box`, {
+  const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/ocr/${line}/text-box`, {
     method: 'POST',
   })
   if (!response.ok) {
@@ -189,7 +225,7 @@ export async function ocrTextBox(documentId: string, pageIndex: number, line: nu
  * search, copying and the export say. Gives back the line as it is now.
  */
 export async function correctOcrLine(documentId: string, pageIndex: number, line: number, text: string): Promise<OcrText> {
-  const response = await fetch(`${BASE}/documents/${documentId}/pages/${pageIndex}/ocr/${line}`, {
+  const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/ocr/${line}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text }),
@@ -202,7 +238,7 @@ export async function correctOcrLine(documentId: string, pageIndex: number, line
 
 /** A copy of the page, with everything done to it, as a one-page document of its own. */
 export async function duplicatePage(documentId: string, pageIndex: number): Promise<UploadResponse> {
-  const response = await fetch(`${BASE}/documents/${documentId}/pages/${pageIndex}/duplicate`, { method: 'POST' })
+  const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/duplicate`, { method: 'POST' })
   if (!response.ok) {
     throw await failure(response, '페이지를 복제하지 못했습니다')
   }
@@ -210,7 +246,7 @@ export async function duplicatePage(documentId: string, pageIndex: number): Prom
 }
 
 export async function fetchPageText(documentId: string, pageIndex: number): Promise<PageText> {
-  const response = await fetch(`${BASE}/documents/${documentId}/pages/${pageIndex}/text-runs`)
+  const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/text-runs`)
   if (!response.ok) {
     throw await failure(response, '텍스트를 불러오지 못했습니다')
   }
@@ -221,7 +257,7 @@ let fontsRequest: Promise<FontChoice[]> | null = null
 
 /** The font families installed on this computer; fetched once. */
 export function fetchFonts(): Promise<FontChoice[]> {
-  fontsRequest ??= fetch(`${BASE}/fonts`)
+  fontsRequest ??= call(`${BASE}/fonts`)
     .then((response) => {
       if (!response.ok) throw new Error(`글꼴 목록을 불러오지 못했습니다 (${response.status})`)
       return response.json() as Promise<FontChoice[]>
@@ -255,7 +291,7 @@ export interface UploadedImage {
 export async function uploadImage(documentId: string, file: File): Promise<UploadedImage> {
   const formData = new FormData()
   formData.append('file', file)
-  const response = await fetch(`${BASE}/documents/${documentId}/images`, { method: 'POST', body: formData })
+  const response = await call(`${BASE}/documents/${documentId}/images`, { method: 'POST', body: formData })
   if (!response.ok) {
     throw await failure(response, `그림을 올리지 못했습니다: ${file.name}`)
   }
@@ -268,7 +304,7 @@ export function imageUrl(documentId: string, imageId: string): string {
 
 /** Replaces the pictures placed on a page with this list. */
 export async function saveAddedImages(documentId: string, pageIndex: number, boxes: AddedImage[]): Promise<void> {
-  const response = await fetch(`${BASE}/documents/${documentId}/pages/${pageIndex}/added-images`, {
+  const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/added-images`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(boxes),
@@ -280,7 +316,7 @@ export async function saveAddedImages(documentId: string, pageIndex: number, box
 
 /** Replaces the text boxes added to a page with this list. */
 export async function saveAddedTexts(documentId: string, pageIndex: number, boxes: AddedText[]): Promise<void> {
-  const response = await fetch(`${BASE}/documents/${documentId}/pages/${pageIndex}/added-texts`, {
+  const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/added-texts`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(boxes),
@@ -295,7 +331,7 @@ export async function saveTextEdits(
   pageIndex: number,
   items: TextEditPayload[],
 ): Promise<void> {
-  const response = await fetch(`${BASE}/documents/${documentId}/pages/${pageIndex}/text-edits`, {
+  const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/text-edits`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(items),
@@ -306,7 +342,7 @@ export async function saveTextEdits(
 }
 
 export async function resetTextEdits(documentId: string, pageIndex: number): Promise<void> {
-  const response = await fetch(`${BASE}/documents/${documentId}/pages/${pageIndex}/text-edits`, {
+  const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/text-edits`, {
     method: 'DELETE',
   })
   if (!response.ok) {
@@ -316,7 +352,7 @@ export async function resetTextEdits(documentId: string, pageIndex: number): Pro
 
 /** The text lines of `pages` that contain `query`. */
 export async function findText(pages: PageItem[], query: string, matchCase: boolean): Promise<FindMatch[]> {
-  const response = await fetch(`${BASE}/search`, {
+  const response = await call(`${BASE}/search`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ pages: pageRefs(pages), query, matchCase }),
@@ -333,7 +369,7 @@ export async function replaceText(
   replace: string,
   matchCase: boolean,
 ): Promise<ReplaceResult> {
-  const response = await fetch(`${BASE}/replace`, {
+  const response = await call(`${BASE}/replace`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ pages: pageRefs(pages), find, replace, matchCase }),
@@ -354,7 +390,7 @@ export function originalUrl(documentId: string, pageIndex: number, width: number
 }
 
 export async function compareDocuments(a: string, b: string): Promise<CompareResult> {
-  const response = await fetch(`${BASE}/compare`, {
+  const response = await call(`${BASE}/compare`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ a, b }),
@@ -367,7 +403,7 @@ export async function compareDocuments(a: string, b: string): Promise<CompareRes
 
 export async function compareLook(a: string, pageA: number, b: string, pageB: number): Promise<VisualResult> {
   const query = new URLSearchParams({ a, pageA: String(pageA), b, pageB: String(pageB) })
-  const response = await fetch(`${BASE}/compare/visual?${query}`)
+  const response = await call(`${BASE}/compare/visual?${query}`)
   if (!response.ok) {
     throw await failure(response, '모양을 비교하지 못했습니다')
   }
@@ -375,7 +411,7 @@ export async function compareLook(a: string, pageA: number, b: string, pageB: nu
 }
 
 export async function fetchRedactions(documentId: string, pageIndex: number): Promise<Redaction[]> {
-  const response = await fetch(`${BASE}/documents/${documentId}/pages/${pageIndex}/redactions`)
+  const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/redactions`)
   if (!response.ok) {
     throw await failure(response, '가림 영역을 불러오지 못했습니다')
   }
@@ -383,7 +419,7 @@ export async function fetchRedactions(documentId: string, pageIndex: number): Pr
 }
 
 export async function saveRedactions(documentId: string, pageIndex: number, areas: Redaction[]): Promise<void> {
-  const response = await fetch(`${BASE}/documents/${documentId}/pages/${pageIndex}/redactions`, {
+  const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/redactions`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(areas),
@@ -398,7 +434,7 @@ export async function findPersonalInfo(
   kinds: PersonalInfoKind[],
   term: string,
 ): Promise<PersonalInfoMatch[]> {
-  const response = await fetch(`${BASE}/personal-info`, {
+  const response = await call(`${BASE}/personal-info`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -423,7 +459,7 @@ export async function exportPdf(
   flatten = false,
   lock?: { password: string; permissions?: number },
 ): Promise<{ blob: Blob; redaction: RedactionReport | null }> {
-  const response = await fetch(`${BASE}/export`, {
+  const response = await call(`${BASE}/export`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

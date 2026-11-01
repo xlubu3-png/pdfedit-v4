@@ -80,6 +80,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
+import { errorText } from '../errors'
 import { RibbonButton, RibbonGroup, RibbonPanel, RibbonTabs } from './Ribbon'
 import type { RibbonTab } from './Ribbon'
 import { AddedBox, ImageBox, RunBox } from './TextBoxes'
@@ -393,7 +394,7 @@ export function TextEditor({
         setData(loaded)
       })
       .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : '텍스트를 불러오지 못했습니다')
+        if (!cancelled) setError(errorText(e, '텍스트를 불러오지 못했습니다'))
       })
     return () => {
       cancelled = true
@@ -831,7 +832,7 @@ export function TextEditor({
       setStatus('')
     } catch (e) {
       setStatus('')
-      setError(e instanceof Error ? e.message : '그림을 올리지 못했습니다')
+      setError(errorText(e, '그림을 올리지 못했습니다'))
     }
   }
 
@@ -1040,7 +1041,7 @@ export function TextEditor({
       setStatus('')
     } catch (e) {
       setStatus('')
-      setError(e instanceof Error ? e.message : '그림을 붙여넣지 못했습니다')
+      setError(errorText(e, '그림을 붙여넣지 못했습니다'))
     }
   }
 
@@ -1170,7 +1171,7 @@ export function TextEditor({
       setStatus('')
     } catch (e) {
       setStatus('')
-      setError(e instanceof Error ? e.message : '인식한 글자를 고쳐 쓸 수 있게 바꾸지 못했습니다')
+      setError(errorText(e, '인식한 글자를 고쳐 쓸 수 있게 바꾸지 못했습니다'))
     }
   }
 
@@ -1199,7 +1200,7 @@ export function TextEditor({
       }
     } catch (e) {
       setStatus('')
-      setError(e instanceof Error ? e.message : '고쳐 쓴 상자를 다시 맞추지 못했습니다')
+      setError(errorText(e, '고쳐 쓴 상자를 다시 맞추지 못했습니다'))
       return
     }
     if (looks.size > 0) {
@@ -1316,7 +1317,7 @@ export function TextEditor({
       onEdited(pageKey)
       setStatus(`${areas.length}곳을 가렸습니다. 내보낼 때 검게 지워집니다 (가리기 화면에서 확인·해제)`)
     } catch (e) {
-      setError(e instanceof Error ? e.message : '가리지 못했습니다')
+      setError(errorText(e, '가리지 못했습니다'))
     }
   }
 
@@ -1361,7 +1362,7 @@ export function TextEditor({
       setOcrLines((lines) => lines.map((l, i) => (i === index ? line : l)))
       setStatus('인식한 글자를 고쳤습니다 (검색·복사·내보낸 PDF에 반영)')
     } catch (e) {
-      setError(e instanceof Error ? e.message : '인식한 글자를 고치지 못했습니다')
+      setError(errorText(e, '인식한 글자를 고치지 못했습니다'))
       throw e
     }
   }
@@ -1463,6 +1464,8 @@ export function TextEditor({
         ],
       }
     }
+    // Clicked beside the page (the grey around it): no text box can go there.
+    const onPage = layerRef.current !== null && layerRef.current.contains(target)
     const first = ocrLines.findIndex((l) => l.score < UNSURE)
     const fix: MenuEntry[] =
       ocrLines.length > 0
@@ -1471,7 +1474,12 @@ export function TextEditor({
     return {
       label: '쪽',
       entries: [
-        { label: '여기에 텍스트 추가', shortcut: 'T', disabled: !editable || selecting, onSelect: () => addTextAt(clientX, clientY) },
+        {
+          label: '여기에 텍스트 추가',
+          shortcut: 'T',
+          disabled: !editable || selecting || !onPage,
+          onSelect: () => addTextAt(clientX, clientY),
+        },
         { label: '붙여넣기', shortcut: 'Ctrl+V', disabled: !editable || clipboard === null, onSelect: () => pasteClipboard() },
         { label: '그림 추가…', disabled: !editable, onSelect: () => imageInput.current?.click() },
         'separator',
@@ -1550,7 +1558,7 @@ export function TextEditor({
       )
       onRecognized(pageKey, found.length)
     } catch (e) {
-      setError(e instanceof Error ? e.message : '글자를 인식하지 못했습니다')
+      setError(errorText(e, '글자를 인식하지 못했습니다'))
     } finally {
       setOcrBusy(false)
     }
@@ -1573,7 +1581,7 @@ export function TextEditor({
       setStatus('되돌림')
       onEdited(pageKey)
     } catch (e) {
-      setError(e instanceof Error ? e.message : '되돌리지 못했습니다')
+      setError(errorText(e, '되돌리지 못했습니다'))
     }
   }
 
@@ -1621,7 +1629,7 @@ export function TextEditor({
       setReloadToken((t) => t + 1)
       setRevision((r) => r + 1)
     } catch (e) {
-      setFontsMessage(e instanceof Error ? e.message : '글꼴을 다시 읽지 못했습니다')
+      setFontsMessage(errorText(e, '글꼴을 다시 읽지 못했습니다'))
     } finally {
       setFontsBusy(false)
     }
@@ -2506,7 +2514,23 @@ export function TextEditor({
         </p>
       )}
 
-      <main className="te-main" ref={mainRef}>
+      <main
+        className="te-main"
+        ref={mainRef}
+        // The whole page area, the grey around the page too: a right click anywhere here is the editor's.
+        onContextMenu={
+          data && !data.rotated
+            ? (e) => {
+                const target = e.target as HTMLElement
+                // Typing in a box: the browser's own menu (paste, spelling) is the one wanted.
+                const typing = target.closest('[data-index], [data-added]')
+                if (typing && typing === document.activeElement) return
+                e.preventDefault()
+                openMenu(target, e.clientX, e.clientY)
+              }
+            : undefined
+        }
+      >
         {!data && !error && (
           <p className="te-notice">
             불러오는 중…
@@ -2536,17 +2560,7 @@ export function TextEditor({
           </p>
         )}
         {data && !data.rotated && (
-          <div
-            className="te-canvas"
-            onContextMenu={(e) => {
-              const target = e.target as HTMLElement
-              // Typing in a box: the browser's own menu (paste, spelling) is the one wanted.
-              const typing = target.closest('[data-index], [data-added]')
-              if (typing && typing === document.activeElement) return
-              e.preventDefault()
-              openMenu(target, e.clientX, e.clientY)
-            }}
-          >
+          <div className="te-canvas">
             <img
               src={previewUrl(documentId, pageIndex, revision, dpi)}
               alt={`${page.sourceFileName} ${pageIndex + 1}쪽`}

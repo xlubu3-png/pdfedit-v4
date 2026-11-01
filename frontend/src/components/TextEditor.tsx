@@ -297,6 +297,10 @@ export function TextEditor({
   /** The look of the last box that was styled, so the next added box starts out the same. */
   const lastAddedLook = useRef({ fontFamily: null as string | null, fontSize: DEFAULT_ADDED_SIZE, bold: false, color: '#000000' })
   const saveTimer = useRef<number | undefined>(undefined)
+  /** A save waits on its timer, saves wait in the queue, and the preview is owed for one that was done. */
+  const saveScheduled = useRef(false)
+  const queuedSaves = useRef(0)
+  const previewOwed = useRef(false)
   const queue = useRef<Promise<void>>(Promise.resolve())
   const lastSaveFailed = useRef(false)
   const pasteCount = useRef(0)
@@ -402,6 +406,7 @@ export function TextEditor({
 
   const flush = useCallback(() => {
     window.clearTimeout(saveTimer.current)
+    saveScheduled.current = false
     const run = async () => {
       const current = dataRef.current
       if (!current) return
@@ -444,7 +449,7 @@ export function TextEditor({
         }
         setRetryable(false)
         setStatus(savedLabel())
-        setRevision((r) => r + 1)
+        previewOwed.current = true
         onEdited(pageKey)
         refreshRemoval()
       } catch (e) {
@@ -466,13 +471,27 @@ export function TextEditor({
         }
       }
     }
+    const queued = async () => {
+      try {
+        await run()
+      } finally {
+        queuedSaves.current -= 1
+        // One new preview for a burst of edits: while another save is waiting, the page is drawn after that one.
+        if (previewOwed.current && queuedSaves.current === 0 && !saveScheduled.current) {
+          previewOwed.current = false
+          setRevision((r) => r + 1)
+        }
+      }
+    }
     // Serialize saves so a slow request can never overwrite a newer one.
-    queue.current = queue.current.then(run)
+    queuedSaves.current += 1
+    queue.current = queue.current.then(queued)
     return queue.current
   }, [documentId, pageIndex, pageKey, onEdited, refreshRemoval])
 
   const scheduleSave = useCallback(() => {
     window.clearTimeout(saveTimer.current)
+    saveScheduled.current = true
     saveTimer.current = window.setTimeout(flush, 300)
   }, [flush])
 
@@ -1165,6 +1184,7 @@ export function TextEditor({
     if (!window.confirm('이 페이지의 모든 텍스트 수정과 추가한 텍스트를 되돌릴까요? (Ctrl+Z로 다시 살릴 수 있습니다)')) return
     checkpoint(`reset-page:${Date.now()}`)
     window.clearTimeout(saveTimer.current)
+    saveScheduled.current = false
     pendingRuns.current.clear()
     addedDirty.current = false
     imagesDirty.current = false

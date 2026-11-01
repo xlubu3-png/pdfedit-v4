@@ -337,3 +337,26 @@ test('text typed into an added box is found by find-and-replace, marked as a box
   await page.locator('button[title="텍스트 편집"]').first().click()
   await expect(page.locator('.te-box[data-added]')).toHaveText('담당 이영희')
 })
+
+test('a line nudged again and again is drawn afresh once, after its last move is saved', async ({ page }) => {
+  await openEditor(page, ['Hello World'])
+  let saves = 0
+  let previews = 0
+  page.on('request', (request) => {
+    if (request.url().includes('/text-edits') && request.method() !== 'GET') saves += 1
+    if (request.url().includes('/preview')) previews += 1
+  })
+
+  await page.locator('.te-box[data-index="0"]').click()
+  // Slow enough that saves go out between the moves.
+  for (let i = 0; i < 8; i++) {
+    await page.keyboard.press('ArrowRight')
+    await page.waitForTimeout(320)
+  }
+  await waitSaved(page)
+
+  // The page drawn last is the moved one, and no more pages were drawn than there were saves.
+  await expect(page.locator('.te-layer')).not.toHaveClass(/stale/)
+  expect(saves).toBeGreaterThan(1)
+  expect(previews).toBeLessThanOrEqual(saves)
+})

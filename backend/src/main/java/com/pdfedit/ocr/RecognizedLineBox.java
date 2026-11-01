@@ -316,7 +316,11 @@ public class RecognizedLineBox implements DisposableBean {
             float baseline;
             float rotation = 0;
             float spacing = 0;
-            ScanLook.Ink scanInk = line.vertical() ? null : ScanLook.Ink.of(solid);
+            // A line of a tilted scan is measured levelled: its letters' height, their words and the faces are told
+            // as if the sheet had been fed straight.
+            Level level = line.vertical() ? null : Level.of(line.tiltDegrees(), solid);
+            ScanLook.Ink scanInk = level == null ? null : ScanLook.Ink.of(level.solid());
+            ScanLook.Ink unlevelledInk = line.vertical() ? null : ScanLook.Ink.of(solid);
             ScanLook.Look look = null;
             if (scanInk != null) {
                 // Across the page: the words as the scan spaces them, in the installed font most like its letters
@@ -324,7 +328,7 @@ public class RecognizedLineBox implements DisposableBean {
                 text = ScanLook.spacedAsScanned(line.text(), line.centers(), scanInk, coreInImage.width());
                 List<SystemFonts.Face> faces = fontMatcher.documentFaces();
                 PageFont pageFont = pageFont(pdf, renderer, pageIndex, crop, pageLines, faces);
-                double darkness = darkness(image, coreInImage, scanInk, paper);
+                double darkness = darkness(image, coreInImage, unlevelledInk != null ? unlevelledInk : scanInk, paper);
                 look = chosenLook(text, scanInk, faces, pageFont, heavy(darkness, paper, fullInk(letterPixels, paper)),
                         ScanLook.letterMiddles(line.text(), line.centers(), coreInImage.width()));
                 if (look != null && !unread.isEmpty()) {
@@ -378,7 +382,10 @@ public class RecognizedLineBox implements DisposableBean {
                 spacing = round((float) (look.spacingPx() / SCALE));
                 x = round(crop.getLowerLeftX() + (float) (area.x0() + coreInImage.x0() + look.originX()) / SCALE);
                 baseline = round(crop.getUpperRightY()
-                        - (float) (area.y0() + coreInImage.y0() + look.baselineY()) / SCALE);
+                        - (float) (area.y0() + coreInImage.y0() + level.unlevelled(look.originX(), look.baselineY()))
+                                / SCALE);
+                // Drawn anew as a whole, the line follows the scan's tilt.
+                rotation = (float) level.degrees();
             } else {
                 size = round(fittedSize(doc, text, line.height(), line.width()));
                 x = round(line.x());
@@ -677,12 +684,13 @@ public class RecognizedLineBox implements DisposableBean {
             boolean[][] solid = new boolean[core.height()][core.width()];
             patch(region.image(), core, new Px(0, 0, region.area().width(), region.area().height()), paper,
                     letterPixels, false, solid, sample.text(), sample.centers(), null);
-            ScanLook.Ink ink = ScanLook.Ink.of(solid);
+            ScanLook.Ink scanned = ScanLook.Ink.of(solid);
+            ScanLook.Ink ink = scanned == null ? null : ScanLook.Ink.of(Level.of(sample.tiltDegrees(), solid).solid());
             if (ink == null) {
                 continue;
             }
             Color inkColour = ink(letterPixels, paper);
-            double darkness = darkness(region.image(), core, ink, paper);
+            double darkness = darkness(region.image(), core, scanned, paper);
             double heavy = heavy(darkness, paper, fullInk(letterPixels, paper));
             String text = ScanLook.spacedAsScanned(sample.text(), sample.centers(), ink, core.width());
             Map<SystemFonts.Face, ScanLook.Look> looks = ScanLook.looks(text, ink, plain,
@@ -784,6 +792,40 @@ public class RecognizedLineBox implements DisposableBean {
         return new Color((int) Math.round(paper.getRed() + t * (ink.getRed() - paper.getRed())),
                 (int) Math.round(paper.getGreen() + t * (ink.getGreen() - paper.getGreen())),
                 (int) Math.round(paper.getBlue() + t * (ink.getBlue() - paper.getBlue())));
+    }
+
+    /**
+     * A line's ink levelled: each column moved up or down so that a line tilted {@code degrees} (counter-clockwise)
+     * lies level, the rows grown by {@code pad} above and below to keep it all.
+     *
+     * @param slope how far the line falls (picture rows, down) per column across
+     */
+    record Level(double degrees, double slope, int pad, int middle, boolean[][] solid) {
+
+        static Level of(double degrees, boolean[][] scanned) {
+            int h = scanned.length;
+            int w = h == 0 ? 0 : scanned[0].length;
+            double slope = -Math.tan(Math.toRadians(degrees));
+            if (degrees == 0 || w == 0) {
+                return new Level(0, 0, 0, w / 2, scanned);
+            }
+            int middle = w / 2;
+            int pad = (int) Math.ceil(Math.abs(slope) * middle) + 1;
+            boolean[][] out = new boolean[h + 2 * pad][w];
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++) {
+                    if (scanned[y][x]) {
+                        out[y + pad - (int) Math.round(slope * (x - middle))][x] = true;
+                    }
+                }
+            }
+            return new Level(degrees, slope, pad, middle, out);
+        }
+
+        /** Where row {@code y} of the levelled ink, at column {@code x}, is on the line's picture. */
+        double unlevelled(double x, double y) {
+            return y - pad + slope * (x - middle);
+        }
     }
 
     /** Pixel columns {@code x0} up to (not including) {@code x1}, rows {@code y0} up to {@code y1}. */

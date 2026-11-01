@@ -81,6 +81,11 @@ public class TextEditService {
     private static final float MIN_SQUEEZE = 0.75f;
     /** How many pixels a cover's patch reaches past the scanned ink (RecognizedLineBox's spread). */
     private static final int PATCH_MARGIN = 3;
+    /**
+     * A rewritten scan line turned at most this many degrees (the tilt of a sheet fed askew) still has only its
+     * changed words drawn anew, turned the same way.
+     */
+    private static final float SLIGHT_TURN = 5f;
     /** PNG compression quality of previews (1 packs least): fast packing, for pictures made after every edit. */
     private static final float QUICK_PNG = 0.9f;
     /** The patch's gap between two words is at least this share of its letters' height wide. */
@@ -656,15 +661,16 @@ public class TextEditService {
      * Draws a box rewriting a scanned line by its changes alone, which looks the most like the scan: the letters it
      * keeps stay as scanned; the ones it changes are painted over and the new ones drawn where they were. The whole
      * text goes in as invisible text, to be searched and copied. False - the whole line is then drawn anew - when
-     * the box has a look of its own in parts or more than one line, or the new letters do not fit where the old ones
-     * were, even drawn somewhat narrower.
+     * the box has a look of its own in parts or more than one line, is turned more than a scan's tilt, or the new
+     * letters do not fit where the old ones were, even drawn somewhat narrower.
      */
     private boolean drawChanges(PDPageContentStream cs, PDDocument outDoc, AddedText box, FontCache fonts)
             throws IOException {
         AddedText.Cover cover = box.cover();
         String before = cover.read();
         String now = box.text() == null ? "" : box.text();
-        if (!box.spans().isEmpty() || box.rotation() != 0 || now.contains("\n") || now.contains("\r")) {
+        if (!box.spans().isEmpty() || Math.abs(box.rotation()) > SLIGHT_TURN || now.contains("\n")
+                || now.contains("\r")) {
             return false;
         }
         // The letters both have at the start and at the end are kept.
@@ -682,7 +688,7 @@ public class TextEditService {
         FontMatcher.Styled styled = fonts.styled.computeIfAbsent(key,
                 k -> fontMatcher.loadStyled(outDoc, box.fontFamily(), box.bold()));
         if (keepStart == before.length() && keepStart == now.length()) {
-            drawInvisible(cs, styled, now, box.x(), box.y(), box.fontSize(), box.charSpacing());
+            drawInvisibleTurned(cs, styled, box, now);
             return true;
         }
         // Whole words are redrawn: where one scanned letter ends and the next begins is hard to tell on a coarse
@@ -748,10 +754,14 @@ public class TextEditService {
         if (!middle.isBlank()) {
             // In the box's colour, as the editor shows it (and as the user may have changed it), which is told from
             // the scan's ink when the line is rewritten.
+            // Turned as the scan's line is (a sheet fed a little askew), about where the new words start.
+            cs.saveGraphicsState();
+            cs.transform(turnAbout(box.rotation(), start, baseline));
             drawLine(cs, styled, middle, start, baseline, size, RunEdit.colour(box.color(), Color.BLACK), squeeze,
                     box.charSpacing() * squeeze);
+            cs.restoreGraphicsState();
         }
-        drawInvisible(cs, styled, now, box.x(), box.y(), box.fontSize(), box.charSpacing());
+        drawInvisibleTurned(cs, styled, box, now);
         return true;
     }
 
@@ -1117,11 +1127,24 @@ public class TextEditService {
 
     /** The turn of a box about its first baseline's start, (x, y). */
     private static Matrix turn(AddedText box) {
-        double a = Math.toRadians(box.rotation());
+        return turnAbout(box.rotation(), box.x(), box.y());
+    }
+
+    /** Turning by {@code degrees} (counter-clockwise) about the point ({@code x}, {@code y}). */
+    private static Matrix turnAbout(float degrees, float x, float y) {
+        double a = Math.toRadians(degrees);
         float cos = (float) Math.cos(a);
         float sin = (float) Math.sin(a);
-        return new Matrix(cos, sin, -sin, cos, box.x() - cos * box.x() + sin * box.y(),
-                box.y() - sin * box.x() - cos * box.y());
+        return new Matrix(cos, sin, -sin, cos, x - cos * x + sin * y, y - sin * x - cos * y);
+    }
+
+    /** The box's whole text as invisible text, along the box (turned as it is), to be searched and copied. */
+    private static void drawInvisibleTurned(PDPageContentStream cs, FontMatcher.Styled styled, AddedText box,
+            String text) throws IOException {
+        cs.saveGraphicsState();
+        cs.transform(turn(box));
+        drawInvisible(cs, styled, text, box.x(), box.y(), box.fontSize(), box.charSpacing());
+        cs.restoreGraphicsState();
     }
 
     /**

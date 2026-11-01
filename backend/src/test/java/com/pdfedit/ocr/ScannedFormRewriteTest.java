@@ -158,6 +158,10 @@ class ScannedFormRewriteTest {
                 "Myeongjo");
         float size = PIXELS * 72 / 200f;
         assertThat(box.fontSize()).as("about the scan's size").isBetween(size * 0.88f, size * 1.12f);
+        // The page was turned clockwise as it shows: the line falls to the right, and the box with it.
+        assertThat(title.tiltDegrees()).as("the page's tilt, told by its lines").isBetween(-(float) TILT - 0.25f,
+                -(float) TILT + 0.25f);
+        assertThat(box.rotation()).isEqualTo(title.tiltDegrees());
 
         AddedText changed = new AddedText("c", box.text().replace(WORD, "상상송"), box.x(), box.y(),
                 box.fontFamily(), box.fontSize(), box.bold(), box.color(), List.of(), box.cover(), box.rotation(),

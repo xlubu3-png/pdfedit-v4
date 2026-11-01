@@ -37,6 +37,16 @@ public class PageOcr implements DisposableBean {
     /** How far (points) around a real text line an OCR line still counts as the same text. */
     private static final float SAME_TEXT_MARGIN = 2f;
 
+    /**
+     * A page's tilt is told by its lines across at least this many times longer than tall, when it has at least
+     * {@link #TILT_LINES} of them; less than {@link #LEAST_TILT} degrees is no tilt, more than {@link #MOST_TILT} is
+     * not a sheet fed askew (a page drawn turned, which the lines' corners tell poorly).
+     */
+    private static final double LONG_LINE = 6;
+    private static final int TILT_LINES = 1;
+    private static final double LEAST_TILT = 0.15;
+    private static final double MOST_TILT = 5;
+
     private final TextEditService textEditService;
     private OcrEngine engine;
 
@@ -69,6 +79,7 @@ public class PageOcr implements DisposableBean {
             throw new OcrUnavailableException(e);
         }
         float k = 72f / DPI;
+        Float tilt = tilt(read);
         List<OcrText> lines = new ArrayList<>();
         int alreadyText = 0;
         for (OcrLine line : read) {
@@ -80,7 +91,7 @@ public class PageOcr implements DisposableBean {
                 centers.add(Math.round(c * 1000) / 1000f);
             }
             OcrText text = new OcrText(line.text(), x, bottom, (line.right() - line.left()) * k, top - bottom,
-                    line.score(), centers, line.orientation());
+                    line.score(), centers, line.orientation(), line.orientation() == null ? tilt : null);
             if (onRealText(text, runs)) {
                 alreadyText++;
             } else {
@@ -88,6 +99,30 @@ public class PageOcr implements DisposableBean {
             }
         }
         return new Result(lines, alreadyText, (System.nanoTime() - start) / 1e9);
+    }
+
+    /**
+     * How far the page is turned, in degrees counter-clockwise: the middle of the slopes of its long lines across
+     * (a scanner turns all of a sheet alike, and a long line's corners tell its slope best); null when it has too
+     * few such lines, or is turned too little to matter.
+     */
+    static Float tilt(List<OcrLine> lines) {
+        List<Double> slopes = new ArrayList<>();
+        for (OcrLine line : lines) {
+            float[] c = line.corners();
+            double run = c[2] - c[0];
+            if (line.orientation() == null && run >= LONG_LINE * Math.max(1, line.bottom() - line.top())) {
+                // The top edge, from the top-left corner to the top-right; the picture's y runs down.
+                slopes.add(-Math.toDegrees(Math.atan2(c[3] - c[1], run)));
+            }
+        }
+        if (slopes.size() < TILT_LINES) {
+            return null;
+        }
+        slopes.sort(null);
+        double middle = slopes.get(slopes.size() / 2);
+        return Math.abs(middle) < LEAST_TILT || Math.abs(middle) > MOST_TILT ? null
+                : Math.round(middle * 100) / 100f;
     }
 
     private static boolean onRealText(OcrText line, List<TextRunDto> runs) {

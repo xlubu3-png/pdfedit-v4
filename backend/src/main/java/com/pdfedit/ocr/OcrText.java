@@ -15,12 +15,24 @@ import com.pdfedit.text.TextLines;
  *                before this was recorded, whose letters are then taken as evenly spread
  * @param orientation how a vertical line runs ({@link OcrLine#DOWN}, {@link OcrLine#UP}, {@link OcrLine#STACKED});
  *                null across the page, or for lines kept before this was recorded (then told by their shape)
+ * @param tilt    degrees a line across the page rises by, counter-clockwise as PDF counts: the page's tilt as
+ *                scanned (a sheet fed a little askew); null for none, or for lines kept before this was recorded
  */
 public record OcrText(String text, float x, float y, float width, float height, float score, List<Float> centers,
-        String orientation) {
+        String orientation, Float tilt) {
 
     public OcrText(String text, float x, float y, float width, float height, float score, List<Float> centers) {
-        this(text, x, y, width, height, score, centers, null);
+        this(text, x, y, width, height, score, centers, null, null);
+    }
+
+    public OcrText(String text, float x, float y, float width, float height, float score, List<Float> centers,
+            String orientation) {
+        this(text, x, y, width, height, score, centers, orientation, null);
+    }
+
+    /** The line's tilt in degrees (counter-clockwise), 0 when it has none or none was recorded. */
+    public float tiltDegrees() {
+        return tilt == null || vertical() ? 0 : tilt;
     }
 
     /** Letters are taken this much wider than half the usual distance between two, so a box covers its letter. */

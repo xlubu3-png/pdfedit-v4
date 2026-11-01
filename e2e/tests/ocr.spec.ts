@@ -238,3 +238,38 @@ test('a recognized line opened with a double click and left unchanged goes back 
     .poll(async () => (await (await page.request.get(`/api/v1/pdf/documents/${id}/pages/0/text-runs`)).json()).added.length)
     .toBe(0)
 })
+
+test('a box rewritten in an older look is fitted to the scan again, keeping its text', async ({ page }) => {
+  await page.goto('/')
+  await page.locator('input[type=file]').setInputFiles({ name: 'scan.pdf', mimeType: 'application/pdf', buffer: await scan(page) })
+  await page.getByRole('button', { name: '나중에' }).click()
+  await page.locator('button[title="텍스트 편집"]').first().click()
+  const editor = page.getByRole('dialog', { name: '텍스트 편집' })
+  await editor.getByRole('button', { name: '글자 인식(OCR)' }).click()
+  const phone = page.locator('.te-ocr-line[data-ocr="1"]')
+  await expect(phone).toBeVisible({ timeout: 60_000 })
+  await phone.dblclick()
+  await expect(page.locator('.te-box[data-added]')).toBeFocused()
+  await page.keyboard.press('Control+a')
+  await page.keyboard.type('연락처 010-9999-0000')
+  await page.locator('.te-layer').click({ position: { x: 5, y: 5 } })
+  await expect(page.locator('.te-status')).toContainText('반영됨')
+  const src = await page.locator('.te-canvas img').first().getAttribute('src')
+  const id = /documents\/([^/]+)\//.exec(src ?? '')![1]
+  const added = async () => (await (await page.request.get(`/api/v1/pdf/documents/${id}/pages/0/text-runs`)).json()).added
+  const fitted = (await added())[0]
+
+  // As an earlier version left it: another face, far too large and too light.
+  const old = { ...fitted, fontFamily: 'Gulim', fontSize: fitted.fontSize * 1.6, color: '#a0a0a0' }
+  expect((await page.request.put(`/api/v1/pdf/documents/${id}/pages/0/added-texts`, { data: [old] })).ok()).toBeTruthy()
+  await editor.getByRole('button', { name: '페이지 목록' }).click()
+  await page.locator('button[title="텍스트 편집"]').first().click()
+  await expect(page.locator('.te-box[data-added]')).toBeVisible()
+
+  await editor.getByRole('button', { name: '다시 맞추기' }).click()
+
+  await expect(page.locator('.te-status')).toContainText('다시 맞췄습니다')
+  await expect.poll(async () => (await added())[0].fontSize).toBeCloseTo(fitted.fontSize, 1)
+  const again = (await added())[0]
+  expect(again).toMatchObject({ id: fitted.id, text: '연락처 010-9999-0000', fontFamily: fitted.fontFamily, color: fitted.color })
+})

@@ -236,6 +236,8 @@ export interface Cover {
   height: number
   color: string
   patch?: string | null
+  /** For a rewritten scan line: what was read off it (spaced as the scan is), which the redraw compares against. */
+  read?: string | null
 }
 
 /** A picture (stamp, signature, logo) the user put on the page; coordinates are PDF user space, `y` is the bottom edge. */

@@ -24,6 +24,7 @@ import { History } from '../history'
 import { keyCode } from '../keys'
 import { copyText } from '../clipboard'
 import { ocrMessage, recognizeAll } from '../ocr'
+import { lineOfCover, refitted } from '../refit'
 import type { SnapTargets } from '../snap'
 import { clearField, formatRange, lookAt, remapSpans, toggleFor } from '../spans'
 import type { LookPatch } from '../spans'
@@ -1135,6 +1136,45 @@ export function TextEditor({
     }
   }
 
+  /**
+   * Rewrites rewritten boxes again as a line is rewritten now (font, size, colour, place and cover told afresh):
+   * the box picked, or with none picked every rewritten box of the page. Boxes rewritten by an earlier version
+   * take today's look; the text the user wrote stays. One Ctrl+Z takes it all back.
+   */
+  async function refitRewritten() {
+    if (!editable) return
+    const picked = selected?.kind === 'added' ? addedRef.current.find((b) => b.id === selected.id && b.cover) : undefined
+    const targets = picked ? [picked] : addedRef.current.filter((b) => b.cover)
+    if (targets.length === 0) return
+    setStatus('다시 맞추는 중…')
+    const looks = new Map<string, AddedText>()
+    let missing = 0
+    try {
+      for (const box of targets) {
+        const index = lineOfCover(box.cover!, ocrLines)
+        if (index === null) {
+          missing += 1
+          continue
+        }
+        looks.set(box.id, refitted(box, await ocrTextBox(documentId, pageIndex, index)))
+      }
+    } catch (e) {
+      setStatus('')
+      setError(e instanceof Error ? e.message : '고쳐 쓴 상자를 다시 맞추지 못했습니다')
+      return
+    }
+    if (looks.size > 0) {
+      checkpoint(`refit:${Date.now()}`)
+      putAdded(addedRef.current.map((b) => looks.get(b.id) ?? b))
+      addedDirty.current = true
+      scheduleSave()
+    }
+    setStatus(looks.size > 0 ? `고쳐 쓴 상자 ${looks.size}개를 다시 맞췄습니다` : '')
+    if (missing > 0) {
+      setError(`고쳐 쓴 상자 ${missing}개는 인식한 줄을 찾지 못해 그대로 두었습니다. 글자 인식을 다시 해 주세요.`)
+    }
+  }
+
   /** Recognizes every page of the list (this one too), then shows what this page has. */
   async function recognizeEveryPage() {
     await flush()
@@ -1853,6 +1893,13 @@ export function TextEditor({
                 title="고른 점선 줄을 고칠 수 있는 글자로 바꿉니다 (두 번 클릭 또는 Enter). 스캔의 글자는 바탕색으로 덮입니다."
                 onClick={() => ocrPicked !== null && void rewriteLine(ocrPicked)}
                 disabled={!editable || ocrPicked === null}
+              />
+              <RibbonButton
+                icon={<RefreshCw />}
+                label="다시 맞추기"
+                title="고쳐 쓴 상자의 글꼴·크기·색을 스캔에 다시 맞춥니다: 고른 상자, 고르지 않았으면 이 쪽의 고쳐 쓴 상자 모두. 이전 버전에서 고쳐 쓴 상자도 지금 방식으로 바뀌고, 써 넣은 글자는 그대로입니다."
+                onClick={() => void refitRewritten()}
+                disabled={!editable || ocrLines.length === 0 || !added.some((b) => b.cover)}
               />
             </RibbonGroup>
           </RibbonPanel>

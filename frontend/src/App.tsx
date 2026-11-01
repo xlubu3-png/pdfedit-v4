@@ -56,6 +56,7 @@ import {
   RotateCw,
   ScanText,
   Search,
+  Shrink,
   SquareCheck,
   Trash,
   Undo2,
@@ -64,6 +65,7 @@ import type { AppInfo, AppSettings, PageItem, ReplaceResult, UpdateInfo, UploadR
 import { downloadBlob } from './download'
 import { errorText } from './errors'
 import { usePageList } from './pageHistory'
+import { shrinkMessage, type ShrinkReport } from './shrink'
 
 /**
  * The name the screen shows. The installed program, its folders and its installer keep the name WINTECH_PDF:
@@ -123,6 +125,8 @@ function App() {
   const [drawKey, setDrawKey] = useState<string | null>(null)
   /** Export every page as a picture, so nothing of the original (covered-up) text stays in the file. */
   const [flatten, setFlatten] = useState(false)
+  /** "용량 줄이기": exports store their pictures again, smaller (scans of tens of megabytes, for a mail). */
+  const [compress, setCompress] = useState(false)
   const [findOpen, setFindOpen] = useState(false)
   /** What find and replace opens looking for (a word picked in the editor), or nothing. */
   const [findQuery, setFindQuery] = useState('')
@@ -437,8 +441,17 @@ function App() {
     return { password: choice.password, permissions }
   }
 
-  function exportedNotice(redaction: Parameters<typeof redactionMessage>[0], lock: ExportLock | undefined) {
-    const lines = [lock ? '암호를 걸어 내보냈습니다.' : null, redactionMessage(redaction)].filter(Boolean)
+  function exportedNotice(
+    redaction: Parameters<typeof redactionMessage>[0],
+    lock: ExportLock | undefined,
+    shrink: ShrinkReport | null,
+    fileSize: number,
+  ) {
+    const lines = [
+      lock ? '암호를 걸어 내보냈습니다.' : null,
+      redactionMessage(redaction),
+      compress ? shrinkMessage(shrink, fileSize, flatten) : null,
+    ].filter(Boolean)
     return lines.length > 0 ? lines.join(' ') : null
   }
 
@@ -449,9 +462,9 @@ function App() {
     setBusy(true)
     setError(null)
     try {
-      const { blob, redaction } = await exportPdf(targetPages, fileName, flatten, lock)
+      const { blob, redaction, shrink } = await exportPdf(targetPages, fileName, flatten, lock, compress)
       downloadBlob(blob, fileName)
-      setNotice(exportedNotice(redaction, lock))
+      setNotice(exportedNotice(redaction, lock, shrink, blob.size))
     } catch (e) {
       setError(errorText(e, '추출 중 오류가 발생했습니다'))
     } finally {
@@ -499,9 +512,9 @@ function App() {
     setError(null)
     try {
       const fileName = exportFileName(pages)
-      const { blob, redaction } = await exportPdf(pages, fileName, flatten, lock)
+      const { blob, redaction, shrink } = await exportPdf(pages, fileName, flatten, lock, compress)
       downloadBlob(blob, fileName)
-      setNotice(exportedNotice(redaction, lock))
+      setNotice(exportedNotice(redaction, lock, shrink, blob.size))
     } catch (e) {
       setError(errorText(e, '내보내기 중 오류가 발생했습니다'))
     } finally {
@@ -976,6 +989,13 @@ function App() {
                   title="켜면 각 페이지를 그림으로 바꿔 내보냅니다. 수정 전 글자가 파일에서 완전히 사라지지만 검색·복사는 할 수 없습니다."
                   onClick={() => setFlatten((f) => !f)}
                   pressed={flatten}
+                />
+                <RibbonButton
+                  icon={<Shrink />}
+                  label="용량 줄이기"
+                  title="켜면 내보낼 때 스캔·사진 같은 그림을 150dpi로 다시 저장해 파일을 작게 만듭니다(메일·서류 제출용). 글자와 표·도형은 그대로이고, 작은 그림·흑백 스캔은 손대지 않습니다."
+                  onClick={() => setCompress((c) => !c)}
+                  pressed={compress}
                 />
                 <RibbonButton
                   icon={<Printer />}

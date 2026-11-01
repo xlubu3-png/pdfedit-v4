@@ -21,6 +21,7 @@ import type {
 } from './types'
 import { isKorean } from './errors'
 import { parseRedactionReport, type RedactionReport } from './redaction'
+import { parseShrinkReport, type ShrinkReport } from './shrink'
 
 const BASE = '/api/v1/pdf'
 
@@ -451,14 +452,16 @@ export async function findPersonalInfo(
 
 /**
  * The exported file, and what its redaction did (null from a server without the report). With a lock, the
- * file is encrypted with that password and allows what `permissions` allows (everything when undefined).
+ * file is encrypted with that password and allows what `permissions` allows (everything when undefined). With
+ * `compress` ("용량 줄이기") its pictures are stored again smaller, and `shrink` says by how much.
  */
 export async function exportPdf(
   pages: PageItem[],
   fileName: string,
   flatten = false,
   lock?: { password: string; permissions?: number },
-): Promise<{ blob: Blob; redaction: RedactionReport | null }> {
+  compress = false,
+): Promise<{ blob: Blob; redaction: RedactionReport | null; shrink: ShrinkReport | null }> {
   const response = await call(`${BASE}/export`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -470,11 +473,16 @@ export async function exportPdf(
       })),
       fileName,
       flatten,
+      compress,
       ...(lock ? { password: lock.password, permissions: lock.permissions ?? null } : {}),
     }),
   })
   if (!response.ok) {
     throw await failure(response, '내보내기 실패')
   }
-  return { blob: await response.blob(), redaction: parseRedactionReport(response.headers.get('X-Redaction-Report')) }
+  return {
+    blob: await response.blob(),
+    redaction: parseRedactionReport(response.headers.get('X-Redaction-Report')),
+    shrink: parseShrinkReport(response.headers.get('X-Shrink-Report')),
+  }
 }

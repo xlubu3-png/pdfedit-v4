@@ -12,6 +12,7 @@ import org.apache.pdfbox.pdmodel.encryption.InvalidPasswordException;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.text.PDFTextStripper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -28,9 +29,11 @@ import org.springframework.web.multipart.MultipartFile;
 
 import com.pdfedit.dto.ExportRequest;
 import com.pdfedit.dto.UploadResponse;
+import com.pdfedit.ocr.PageOcr;
 import com.pdfedit.redact.Redaction;
 import com.pdfedit.redact.Redactor;
 import com.pdfedit.service.InvalidEditException;
+import com.pdfedit.service.PageCopies;
 import com.pdfedit.service.PageEdits;
 import com.pdfedit.service.PageRotationBaker;
 import com.pdfedit.service.PasswordRequiredException;
@@ -57,6 +60,8 @@ public class PdfController {
     private final PdfThumbnailService thumbnailService;
     private final PdfExportService exportService;
     private final TextEditService textEditService;
+    /** Started in the background when a scan is opened; none in tests that build the controller by hand. */
+    private PageOcr pageOcr;
 
     public PdfController(PdfDocumentStore store, PdfThumbnailService thumbnailService,
             PdfExportService exportService, TextEditService textEditService) {
@@ -64,6 +69,11 @@ public class PdfController {
         this.thumbnailService = thumbnailService;
         this.exportService = exportService;
         this.textEditService = textEditService;
+    }
+
+    @Autowired(required = false)
+    void setPageOcr(PageOcr pageOcr) {
+        this.pageOcr = pageOcr;
     }
 
     @GetMapping("/health")
@@ -101,6 +111,10 @@ public class PdfController {
             throw new InvalidEditException("페이지가 없는 PDF입니다.");
         }
         String documentId = store.store(file.getOriginalFilename(), content, pageCount);
+        if (scanned && pageOcr != null) {
+            // The screen offers text recognition for a scan: the engine gets ready while the user decides.
+            pageOcr.prepareInBackground();
+        }
         return new UploadResponse(documentId, file.getOriginalFilename(), pageCount, unlocked, permissions, scanned);
     }
 
@@ -161,6 +175,11 @@ public class PdfController {
                 PDDocument copy = new PDDocument();
                 ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             copy.importPage(source.getPage(pageIndex));
+            // The page's form fields and links come along, the rest of the document does not; its bookmarks stay
+            // with the original (exported together, the two would each bring them).
+            PageCopies copies = new PageCopies();
+            copies.add(source, source.getPage(pageIndex));
+            copies.finish(copy, false, true);
             copy.save(out);
             content = out.toByteArray();
         }

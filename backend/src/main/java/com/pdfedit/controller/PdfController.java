@@ -2,6 +2,7 @@ package com.pdfedit.controller;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -11,6 +12,7 @@ import org.apache.pdfbox.pdmodel.encryption.InvalidPasswordException;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.text.PDFTextStripper;
+import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -48,6 +50,8 @@ public class PdfController {
     private static final int MAX_THUMBNAIL_WIDTH = 2000;
     /** Pages looked at to tell a scan; enough, and quick even for a long document. */
     private static final int SCAN_CHECK_PAGES = 5;
+    private static final float MIN_PAGE_SIDE = 3;
+    private static final float MAX_PAGE_SIDE = 14_400;
 
     private final PdfDocumentStore store;
     private final PdfThumbnailService thumbnailService;
@@ -125,6 +129,11 @@ public class PdfController {
     public UploadResponse createBlankDocument(
             @RequestParam(defaultValue = "595") float width,
             @RequestParam(defaultValue = "842") float height) throws IOException {
+        // PDF readers accept pages of 3 to 14,400 units a side; outside that (or NaN) the page is unusable.
+        if (!(width >= MIN_PAGE_SIDE && width <= MAX_PAGE_SIDE && height >= MIN_PAGE_SIDE && height <= MAX_PAGE_SIDE)) {
+            throw new InvalidEditException("페이지 크기는 " + (int) MIN_PAGE_SIDE + "~" + (int) MAX_PAGE_SIDE
+                    + "pt 사이여야 합니다.");
+        }
         byte[] content;
         try (PDDocument document = new PDDocument()) {
             document.addPage(new PDPage(new PDRectangle(width, height)));
@@ -199,7 +208,9 @@ public class PdfController {
 
         PdfExportService.RedactionReport redaction = result.redaction();
         return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
+                // filename*=UTF-8''... as well, so a Korean file name arrives intact instead of as question marks.
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment().filename(fileName, StandardCharsets.UTF_8).build().toString())
                 // e.g. "areas=3;removed=41;pictures=2,5": what the screen reports after the download.
                 .header(REDACTION_HEADER, "areas=" + redaction.areas() + ";removed=" + redaction.glyphsRemoved()
                         + ";pictures=" + redaction.picturePages().stream().map(String::valueOf)

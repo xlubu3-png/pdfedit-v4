@@ -359,7 +359,8 @@ public class TextEditService {
         byte[] singlePage = edits.isEmpty() ? null : buildSinglePage(pdf, pageIndex, edits);
         try (PDDocument doc = Loader.loadPDF(singlePage != null ? singlePage : pdf)) {
             int renderIndex = singlePage != null ? 0 : pageIndex;
-            BufferedImage image = new PDFRenderer(doc).renderImageWithDPI(renderIndex, dpi);
+            float shownDpi = RenderLimits.cappedDpi(doc.getPage(renderIndex).getCropBox(), dpi);
+            BufferedImage image = new PDFRenderer(doc).renderImageWithDPI(renderIndex, shownDpi);
             return quickPng(image);
         }
     }

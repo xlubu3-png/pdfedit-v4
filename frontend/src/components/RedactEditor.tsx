@@ -43,10 +43,6 @@ export function RedactEditor({ pages, startKey, onClose, onChanged }: RedactEdit
   useEffect(() => {
     if (documentId === undefined || pageIndex === undefined) return
     let cancelled = false
-    setBox(null)
-    setSelected(null)
-    setStatus(null)
-    setError(null)
     Promise.all([fetchPageText(documentId, pageIndex), fetchRedactions(documentId, pageIndex)])
       .then(([text, saved]) => {
         if (cancelled) return
@@ -58,6 +54,17 @@ export function RedactEditor({ pages, startKey, onClose, onChanged }: RedactEdit
       cancelled = true
     }
   }, [documentId, pageIndex])
+
+  /** Another page: what was shown for this one goes at once, so its areas are never taken for the next page's. */
+  const goTo = (next: number) => {
+    setBox(null)
+    setAreas([])
+    setSelected(null)
+    setDrag(null)
+    setStatus(null)
+    setError(null)
+    setIndex(next)
+  }
 
   const width = Math.min(1000, Math.max(320, window.innerWidth - 80))
   const scale = box ? width / box.pageWidth : 0
@@ -123,17 +130,17 @@ export function RedactEditor({ pages, startKey, onClose, onChanged }: RedactEdit
           {status}
         </span>
         <span className="te-group">
-          <button type="button" onClick={() => setIndex((i) => i - 1)} disabled={index <= 0} title="이전 페이지">
+          <button type="button" onClick={() => goTo(index - 1)} disabled={index <= 0} title="이전 페이지">
             ◀
           </button>
           <span className="te-sub">
             {index + 1} / {pages.length}
           </span>
-          <button type="button" onClick={() => setIndex((i) => i + 1)} disabled={index >= pages.length - 1} title="다음 페이지">
+          <button type="button" onClick={() => goTo(index + 1)} disabled={index >= pages.length - 1} title="다음 페이지">
             ▶
           </button>
         </span>
-        <button type="button" onClick={() => void commit([])} disabled={areas.length === 0}>
+        <button type="button" onClick={() => void commit([])} disabled={!box || areas.length === 0}>
           이 페이지 가림 지우기
         </button>
         <button type="button" className="primary" onClick={onClose}>

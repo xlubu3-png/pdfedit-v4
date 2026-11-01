@@ -48,7 +48,11 @@ public class UpdateService {
     private static final Duration API_TIMEOUT = Duration.ofSeconds(8);
     private static final Duration DOWNLOAD_TIMEOUT = Duration.ofMinutes(10);
     private static final long MAX_INSTALLER_BYTES = 400L * 1024 * 1024;
-    private static final Pattern INSTALLER_NAME = Pattern.compile("(?i)^WINTECH_PDF_Setup_.*\\.exe$");
+    /**
+     * Letters, digits, dots, dashes and underscores only: the name becomes a file path and is handed to
+     * {@code cmd /c start}, where a slash, {@code &} or quote would name another file or run another command.
+     */
+    private static final Pattern INSTALLER_NAME = Pattern.compile("(?i)^WINTECH_PDF_Setup_[A-Za-z0-9._-]*\\.exe$");
     private static final Pattern SHA256 = Pattern.compile("(?i)\\b([0-9a-f]{64})\\b");
 
     /** What is needed to install a release: where it is, what it must hash to. */

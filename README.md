@@ -350,6 +350,7 @@ Linux(`/usr/share/fonts`, `~/.fonts` 등), macOS의 글꼴 폴더를 처음 필�
 ```
 cd backend;  .\gradlew.bat test            # 백엔드: 글자 추출·지우기·그리기·API (페이지를 그려서 픽셀로 확인하는 테스트 포함)
 cd frontend; npx vitest run                # 화면 부품: 상자·서식 계산·겹침 경고 등 (jsdom)
+cd frontend; npm run lint                  # 코드 검사 (public/hwp-studio의 내려받은 편집기 파일은 검사하지 않음)
 cd backend;  .\gradlew.bat bootJar         # 아래 화면 테스트가 쓸 jar를 먼저 만듭니다
 cd e2e;      npm ci; npm test              # 실제 화면: 앱을 새로 띄워 Edge로 조작
 ```

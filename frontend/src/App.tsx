@@ -59,6 +59,7 @@ import {
   Trash,
 } from 'lucide-react'
 import type { AppInfo, AppSettings, PageItem, ReplaceResult, UpdateInfo, UploadResponse } from './types'
+import { downloadBlob } from './download'
 
 /**
  * The name the screen shows. The installed program, its folders and its installer keep the name WINTECH_PDF:
@@ -82,15 +83,6 @@ interface LockAsk {
 
 /** How an export is locked: with this password, allowing these permissions (all when undefined). */
 type ExportLock = { password: string; permissions?: number }
-
-function downloadBlob(blob: Blob, fileName: string) {
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = fileName
-  a.click()
-  URL.revokeObjectURL(url)
-}
 
 const rotate = (p: PageItem, delta: 90 | -90): PageItem => ({
   ...p,

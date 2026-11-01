@@ -81,6 +81,8 @@ public class TextEditService {
     private static final float MIN_SQUEEZE = 0.75f;
     /** How many pixels a cover's patch reaches past the scanned ink (RecognizedLineBox's spread). */
     private static final int PATCH_MARGIN = 3;
+    /** PNG compression quality of previews (1 packs least): fast packing, for pictures made after every edit. */
+    private static final float QUICK_PNG = 0.9f;
     /** The patch's gap between two words is at least this share of its letters' height wide. */
     private static final double WORD_GAP = 0.2;
     /** A redrawn word takes the scanned one's height when that is within these shares of the box's size. */
@@ -353,9 +355,28 @@ public class TextEditService {
         try (PDDocument doc = Loader.loadPDF(singlePage != null ? singlePage : pdf)) {
             int renderIndex = singlePage != null ? 0 : pageIndex;
             BufferedImage image = new PDFRenderer(doc).renderImageWithDPI(renderIndex, dpi);
+            return quickPng(image);
+        }
+    }
+
+    /**
+     * The picture as a PNG packed lightly: a preview is made again after every edit and goes no further than this
+     * PC, so time matters more than bytes (a scanned page packs a third faster, a few percent larger).
+     */
+    private static byte[] quickPng(BufferedImage image) throws IOException {
+        javax.imageio.ImageWriter writer = ImageIO.getImageWritersByFormatName("png").next();
+        try {
+            javax.imageio.ImageWriteParam param = writer.getDefaultWriteParam();
+            param.setCompressionMode(javax.imageio.ImageWriteParam.MODE_EXPLICIT);
+            param.setCompressionQuality(QUICK_PNG);
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
-            ImageIO.write(image, "png", bos);
+            try (javax.imageio.stream.ImageOutputStream out = ImageIO.createImageOutputStream(bos)) {
+                writer.setOutput(out);
+                writer.write(null, new javax.imageio.IIOImage(image, null, null), param);
+            }
             return bos.toByteArray();
+        } finally {
+            writer.dispose();
         }
     }
 
@@ -682,9 +703,11 @@ public class TextEditService {
         // (the widest stretch without ink between the letters either side): a kept word is never touched.
         BufferedImage patch = patchOf(cover);
         float[] gapBefore = lastKept < 0 || !anyGone ? null
-                : wordGap(cover, patch, (letters.get(lastKept)[1] + letters.get(firstGone)[0]) / 2);
+                : wordGap(cover, patch, (letters.get(lastKept)[1] + letters.get(firstGone)[0]) / 2,
+                        middle(letters, lastKept), middle(letters, firstGone));
         float[] gapAfter = nextKept < 0 || !anyGone ? null
-                : wordGap(cover, patch, (letters.get(lastGone)[1] + letters.get(nextKept)[0]) / 2);
+                : wordGap(cover, patch, (letters.get(lastGone)[1] + letters.get(nextKept)[0]) / 2,
+                        middle(letters, lastGone), middle(letters, nextKept));
         float from = lastKept < 0 ? cover.x() : anyGone ? (gapBefore[0] + gapBefore[1]) / 2 : letters.get(lastKept)[1];
         float to = nextKept < 0 ? cover.x() + cover.width() : anyGone ? (gapAfter[0] + gapAfter[1]) / 2
                 : letters.get(nextKept)[0];
@@ -694,8 +717,9 @@ public class TextEditService {
                 : lastKept < 0 ? from : letters.get(lastKept)[1];
         // ... and end where the gap before the next kept word begins, so the words stay as far apart as they were.
         float end = nextKept < 0 ? cover.x() + cover.width() : anyGone ? gapAfter[0] : letters.get(nextKept)[0];
-        // As tall as the scanned words they replace, standing where they stood: the box's size was told from the
-        // whole line (its brackets and symbols too), which can be a little off for a word.
+        // At the box's size (told from the line's words), but no taller than the scanned words they replace, and
+        // standing where they stood: the patch tells their place, and their height a little generously (it reaches
+        // a few pixels past the ink, more by a rule's soft edge) - enough to keep a box told too large in check.
         float size = box.fontSize();
         float baseline = box.y();
         float[] inkRows = anyGone ? inkRows(cover, patch, from, to) : null;
@@ -703,8 +727,8 @@ public class TextEditService {
         if (inkRows != null && glyphRows != null && glyphRows[1] > glyphRows[0]) {
             float fitted = (inkRows[1] - inkRows[0]) / (glyphRows[1] - glyphRows[0]);
             if (fitted > SIZE_FIT_RANGE_LOW * size && fitted < SIZE_FIT_RANGE_HIGH * size) {
-                size = fitted;
-                baseline = inkRows[0] - glyphRows[0] * size;
+                size = Math.min(size, fitted);
+                baseline = (inkRows[0] + inkRows[1]) / 2 - (glyphRows[0] + glyphRows[1]) / 2 * size;
             }
         }
         Float measured = tryMeasureWidth(styled.font(), middle, size);
@@ -750,7 +774,7 @@ public class TextEditService {
         int bottom = -1;
         for (int y = 0; y < patch.getHeight(); y++) {
             for (int x = x0; x <= x1; x++) {
-                if ((patch.getRGB(x, y) >>> 24) != 0) {
+                if (overLetter(patch.getRGB(x, y))) {
                     top = Math.min(top, y);
                     bottom = Math.max(bottom, y);
                     break;
@@ -784,7 +808,7 @@ public class TextEditService {
                 }
                 byte[] bytes = font.encode(new String(Character.toChars(cp)));
                 int code = font.readCode(new ByteArrayInputStream(bytes));
-                java.awt.geom.Rectangle2D bounds = vector.getPath(code).getBounds2D();
+                java.awt.geom.Rectangle2D bounds = vector.getNormalizedPath(code).getBounds2D();
                 if (!bounds.isEmpty()) {
                     low = Math.min(low, (float) bounds.getMinY() / 1000f);
                     high = Math.max(high, (float) bounds.getMaxY() / 1000f);
@@ -794,6 +818,15 @@ public class TextEditService {
             return null;
         }
         return high > low ? new float[] {low, high} : null;
+    }
+
+    /**
+     * Whether a pixel of a cover's patch is painted over a scanned letter (its ink and a few pixels round it). The
+     * patch also paints the ringing a compressed scan leaves further out, a shade less than opaque (see
+     * RecognizedLineBox), which says nothing of where the letters are.
+     */
+    private static boolean overLetter(int argb) {
+        return (argb >>> 24) == 0xFF;
     }
 
     /** The cover's patch as a picture; null without one, or when it cannot be read. */
@@ -813,7 +846,7 @@ public class TextEditService {
         int[] painted = new int[Math.max(0, to - from + 1)];
         for (int c = from; c <= to; c++) {
             for (int y = 0; y < patch.getHeight(); y++) {
-                if ((patch.getRGB(c, y) >>> 24) != 0) {
+                if (overLetter(patch.getRGB(c, y))) {
                     painted[c - from]++;
                 }
             }
@@ -822,12 +855,14 @@ public class TextEditService {
     }
 
     /**
-     * Where two scanned words part near x {@code expected} (points): from where to where the stretch of the patch
-     * without paint (the letters' ink and a little around it) nearest it reaches, of those wide enough to be a
-     * space - the gaps inside a Hangul letter are narrower. Just {@code expected} when there is no patch, or no such
-     * stretch.
+     * Where two scanned words part (points): from where to where the widest stretch of the patch without paint (the
+     * letters' ink and a little around it) between the middles of the letters either side ({@code left} and
+     * {@code right}) reaches; when there is none, the stretch nearest x {@code expected} of those wide enough to be
+     * a space - the gaps inside a Hangul letter are narrower. Just {@code expected} when there is no patch, or no
+     * such stretch.
      */
-    private static float[] wordGap(AddedText.Cover cover, BufferedImage patch, float expected) {
+    private static float[] wordGap(AddedText.Cover cover, BufferedImage patch, float expected, float left,
+            float right) {
         if (patch == null) {
             return new float[] {expected, expected};
         }
@@ -837,7 +872,7 @@ public class TextEditService {
         int bottom = -1;
         for (int y = 0; y < patch.getHeight(); y++) {
             for (int x = 0; x < w; x++) {
-                if ((patch.getRGB(x, y) >>> 24) != 0) {
+                if (overLetter(patch.getRGB(x, y))) {
                     top = Math.min(top, y);
                     bottom = Math.max(bottom, y);
                     break;
@@ -852,14 +887,34 @@ public class TextEditService {
         double wide = WORD_GAP * Math.max(1, bottom - top + 1 - 2 * PATCH_MARGIN);
         int bestFrom = -1;
         int bestTo = -1;
+        double from = (left - cover.x()) * perPoint;
+        double to = (right - cover.x()) * perPoint;
         for (int i = 0; i < w; i++) {
             if (painted[i] == 0) {
                 int j = i;
                 while (j < w && painted[j] == 0) {
                     j++;
                 }
+                double mid = (i + j) / 2.0;
+                if (i > 0 && j < w && mid > from && mid < to && (bestFrom < 0 || j - i > bestTo - bestFrom)) {
+                    bestFrom = i;
+                    bestTo = j;
+                }
+                i = j;
+            }
+        }
+        // Failing that, one near: not past the letters either side by more than they are apart.
+        double reach = Math.max(1, to - from);
+        boolean between = bestFrom >= 0;
+        for (int i = 0; i < w && !between; i++) {
+            if (painted[i] == 0) {
+                int j = i;
+                while (j < w && painted[j] == 0) {
+                    j++;
+                }
+                double mid = (i + j) / 2.0;
                 // A stretch at either end of the patch is outside the line, not between its words.
-                if (i > 0 && j < w && j - i >= wide && (bestFrom < 0
+                if (i > 0 && j < w && j - i >= wide && mid > from - reach && mid < to + reach && (bestFrom < 0
                         || Math.abs((i + j) / 2.0 - want) < Math.abs((bestFrom + bestTo) / 2.0 - want))) {
                     bestFrom = i;
                     bestTo = j;

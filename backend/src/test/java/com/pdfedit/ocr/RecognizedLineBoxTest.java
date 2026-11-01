@@ -144,4 +144,30 @@ class RecognizedLineBoxTest {
                     .isLessThan(80);
         }
     }
+
+    @Test
+    void aRuleSlantingAlongTheLineIsNotTakenForItsLetters() {
+        // A line 300 pixels long whose letters (8 blocks 20 high) sit under a rule rising 4 rows over its length.
+        boolean[][] ink = new boolean[40][300];
+        for (int x = 0; x < 300; x++) {
+            ink[4 - x / 75][x] = true;
+            ink[5 - x / 75][x] = true;
+        }
+        for (int letter = 0; letter < 8; letter++) {
+            for (int y = 12; y < 32; y++) {
+                for (int x = 10 + 36 * letter; x < 30 + 36 * letter; x++) {
+                    ink[y][x] = true;
+                }
+            }
+        }
+
+        boolean[][] letters = RecognizedLineBox.withoutSlantingRules(ink);
+
+        for (int x = 0; x < 300; x++) {
+            assertThat(letters[4 - x / 75][x] || letters[5 - x / 75][x]).as("the rule at x=" + x).isFalse();
+        }
+        for (int y = 12; y < 32; y++) {
+            assertThat(letters[y][15]).as("a letter, y=" + y).isTrue();
+        }
+    }
 }

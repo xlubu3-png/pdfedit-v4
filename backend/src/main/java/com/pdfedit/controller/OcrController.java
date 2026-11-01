@@ -44,20 +44,27 @@ public class OcrController {
     public record OcrResponse(List<OcrText> lines, int alreadyText, double seconds) {
     }
 
-    /** Recognizes the page (again) and keeps the result. Takes a second or two. */
+    /**
+     * Recognizes the page (again) and keeps the result. Takes a second or two. The page's font, which rewriting its
+     * lines needs, is then told in the background.
+     */
     @PostMapping
     public OcrResponse recognize(@PathVariable String documentId, @PathVariable int pageIndex) throws IOException {
         checkPage(documentId, pageIndex);
-        PageOcr.Result result = pageOcr.recognize(store.getContent(documentId), pageIndex);
+        byte[] pdf = store.getContent(documentId);
+        PageOcr.Result result = pageOcr.recognize(pdf, pageIndex);
         store.setOcr(documentId, pageIndex, result.lines());
+        lineBox.prepare(pdf, pageIndex, result.lines());
         return new OcrResponse(result.lines(), result.alreadyText(), result.seconds());
     }
 
-    /** What was recognized on the page; empty when nothing was. */
+    /** What was recognized on the page; empty when nothing was. Its font is told in the background as well. */
     @GetMapping
     public OcrResponse recognized(@PathVariable String documentId, @PathVariable int pageIndex) {
         checkPage(documentId, pageIndex);
-        return new OcrResponse(store.ocr(documentId, pageIndex), 0, 0);
+        List<OcrText> lines = store.ocr(documentId, pageIndex);
+        lineBox.prepare(store.getContent(documentId), pageIndex, lines);
+        return new OcrResponse(lines, 0, 0);
     }
 
     /**

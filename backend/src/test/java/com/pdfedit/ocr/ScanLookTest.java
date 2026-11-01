@@ -159,4 +159,24 @@ class ScanLookTest {
         assertThat(ScanLook.spacedAsScanned("가나다", List.of(9 / 120f, 25 / 120f), ink, 120))
                 .as("no places for every letter: left as read").isEqualTo("가나다");
     }
+
+    @Test
+    void lettersWithNoGapBetweenThemKeepTheSpaceRecognitionRead() {
+        // "가나 다라" with a rule running under the line, joining every letter: no column is free of ink.
+        boolean[][] solid = new boolean[20][120];
+        for (int left : new int[] {4, 20, 52, 68}) {
+            for (int y = 2; y < 16; y++) {
+                for (int x = left; x < left + 10; x++) {
+                    solid[y][x] = true;
+                }
+            }
+        }
+        for (int x = 0; x < 120; x++) {
+            solid[18][x] = true;
+        }
+        ScanLook.Ink ink = ScanLook.Ink.of(solid);
+        List<Float> centers = List.of(9 / 120f, 25 / 120f, 41 / 120f, 57 / 120f, 73 / 120f);
+
+        assertThat(ScanLook.spacedAsScanned("가나 다라", centers, ink, 120)).isEqualTo("가나 다라");
+    }
 }

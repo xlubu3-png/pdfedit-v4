@@ -10,6 +10,9 @@ import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import javax.imageio.ImageIO;
 
@@ -19,6 +22,9 @@ import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDFont;
 import org.apache.pdfbox.rendering.PDFRenderer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.stereotype.Component;
 
 import com.pdfedit.service.PageNotEditableException;
@@ -33,7 +39,7 @@ import com.pdfedit.text.SystemFonts;
  * through the line's area are left as they are.
  */
 @Component
-public class RecognizedLineBox {
+public class RecognizedLineBox implements DisposableBean {
 
     /** Pixels per point the page is drawn at to read its colours and to lay the patch over its letters. */
     private static final float SCALE = 3f;
@@ -42,11 +48,25 @@ public class RecognizedLineBox {
     /** Pixels the patch reaches around each letter pixel, for the soft and blotchy edges of scanned letters. */
     private static final int SPREAD = 3;
     /**
+     * ... and further, over pixels that differ from the paper by more than {@link #PAPER_NOISE} but too little to
+     * be ink: the ringing of a compressed scan round its letters.
+     */
+    private static final int RINGING = 7;
+    private static final int PAPER_NOISE = 6;
+    /** How opaque the patch paints the ringing: as good as fully, but told apart from the paint over the letters. */
+    private static final int RINGING_ALPHA = 0xFE;
+    /**
      * A row of the line's area with one unbroken stretch of ink this long (a share of the width) is a table rule
      * or a shaded band, not letters; a column, one this long (a share of the height).
      */
     private static final double RULE_ROW = 0.5;
     private static final double RULE_COLUMN = 0.9;
+    /**
+     * A stretch of a row this long (a share of the line's length) is longer than any letter's stroke: with the rows
+     * this many above and below, it may be part of a rule slanting along the line.
+     */
+    private static final double RULE_PIECE = 0.08;
+    private static final int SLANT_ROWS = 2;
     /** Distance between the baselines of a text box's lines, relative to the font size (as TextEditService draws). */
     private static final float LINE_SPACING = 1.2f;
     /** Font size relative to the recognized line's height, when the width does not ask for less. */
@@ -89,6 +109,11 @@ public class RecognizedLineBox {
     private static final double BOLD_WITH_PAGE = 1.15;
     /** How much a font's fit drops per unit of the (natural) log of how much heavier or lighter it is than the scan. */
     private static final double WEIGHT_MISFIT = 0.3;
+    /**
+     * ... beyond this many times heavier or lighter: how heavy a scan's letters are is told only roughly (its blur and
+     * the rectangle round its ink), and within it the letters' shapes tell faces apart better.
+     */
+    private static final double WEIGHT_SLACK = 1.4;
     /** Sizes this close (a share) to one of the page's lines' are that line's size. */
     private static final double SAME_SIZE = 0.08;
     /** Colours this close in lightness (0-255) to the page's text colour are that colour. */
@@ -96,11 +121,13 @@ public class RecognizedLineBox {
     private static final float SURE_LINE = 0.85f;
     private static final int SAMPLE_LETTERS = 4;
     /** A rewritten line's ink is lightened at most this far towards the paper (1 is the scan's own ink). */
-    private static final double LIGHTEST_TONE = 0.7;
+    private static final double LIGHTEST_TONE = 0.85;
     /** Colour channels are grouped by this much to find the paper's colour in a noisy (JPEG) scan. */
     private static final int BUCKET = 24;
     /** Pixels this close (summed channel difference) to the paper's commonest colour are paper, specks and all. */
     private static final int PAPER_SPECKS = 36;
+
+    private static final Logger log = LoggerFactory.getLogger(RecognizedLineBox.class);
 
     private final FontMatcher fontMatcher;
 
@@ -108,14 +135,52 @@ public class RecognizedLineBox {
         this.fontMatcher = fontMatcher;
     }
 
-    /** The font each page was found set in, kept for the page's next rewrites. */
-    private final Map<String, PageFont> pageFonts = java.util.Collections.synchronizedMap(
-            new java.util.LinkedHashMap<>(16, 0.75f, true) {
-                @Override
-                protected boolean removeEldestEntry(Map.Entry<String, PageFont> eldest) {
-                    return size() > PAGES_REMEMBERED;
+    /**
+     * The font each page was found set in, kept for the page's next rewrites; while it is being told (in the
+     * background after the page was recognized, or for a rewrite), the rewrite waits for it rather than tells it
+     * again.
+     */
+    private final Map<String, CompletableFuture<PageFont>> pageFonts = new java.util.LinkedHashMap<>(16, 0.75f,
+            true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, CompletableFuture<PageFont>> eldest) {
+            return size() > PAGES_REMEMBERED;
+        }
+    };
+
+    /** Tells pages' fonts in the background, one page at a time. */
+    private final ExecutorService preparing = Executors.newSingleThreadExecutor(work -> {
+        Thread thread = new Thread(work, "page-font");
+        thread.setDaemon(true);
+        thread.setPriority(Thread.MIN_PRIORITY);
+        return thread;
+    });
+
+    /**
+     * Tells the font of a recognized page in the background, so that the page's first rewrite need not: telling
+     * it compares a dozen faces over several of its lines, which takes a few seconds.
+     */
+    public void prepare(byte[] pdf, int pageIndex, List<OcrText> pageLines) {
+        if (pageLines.isEmpty()) {
+            return;
+        }
+        preparing.execute(() -> {
+            try (PDDocument doc = Loader.loadPDF(pdf)) {
+                PDPage page = doc.getPage(pageIndex);
+                if (page.getRotation() % 360 == 0) {
+                    pageFont(pdf, new PDFRenderer(doc), pageIndex, page.getCropBox(), pageLines,
+                            fontMatcher.documentFaces());
                 }
-            });
+            } catch (IOException | RuntimeException failed) {
+                log.debug("The font of page {} could not be told ahead: {}", pageIndex, failed.toString());
+            }
+        });
+    }
+
+    @Override
+    public void destroy() {
+        preparing.shutdownNow();
+    }
 
     /**
      * The font a page's text is set in: its family, whether its letters are bold, the sizes its lines are set at
@@ -176,7 +241,8 @@ public class RecognizedLineBox {
                 List<SystemFonts.Face> faces = fontMatcher.documentFaces();
                 PageFont pageFont = pageFont(pdf, renderer, pageIndex, crop, pageLines, faces);
                 double darkness = darkness(image, coreInImage, scanInk, paper);
-                look = chosenLook(text, scanInk, faces, pageFont, heavy(darkness, paper, fullInk(letterPixels, paper)));
+                look = chosenLook(text, scanInk, faces, pageFont, heavy(darkness, paper, fullInk(letterPixels, paper)),
+                        ScanLook.letterMiddles(line.text(), line.centers(), coreInImage.width()));
                 if (look != null && !unread.isEmpty()) {
                     // Room for what recognition did not read (check boxes, symbols), which stays as scanned.
                     String roomy = withRoom(text, line.text(), line.centers(), coreInImage.width(), unread, scanInk,
@@ -296,9 +362,9 @@ public class RecognizedLineBox {
      * @param heavy how much of the rectangle around the scan's letters their ink covers
      */
     private static ScanLook.Look chosenLook(String text, ScanLook.Ink ink, List<SystemFonts.Face> faces,
-            PageFont page, double heavy) {
+            PageFont page, double heavy, double[] middles) {
         Map<SystemFonts.Face, ScanLook.Look> looks = ScanLook.looks(text, ink, faces.stream().filter(f -> !f.bold())
-                .toList());
+                .toList(), middles);
         if (looks.isEmpty()) {
             return null;
         }
@@ -318,7 +384,7 @@ public class RecognizedLineBox {
         }
         String family = chosen.getKey().family();
         return faces.stream().filter(f -> f.bold() && f.family().equals(family)).findFirst()
-                .map(face -> ScanLook.looks(text, ink, List.of(face)).get(face))
+                .map(face -> ScanLook.looks(text, ink, List.of(face), middles).get(face))
                 .orElse(chosen.getValue());
     }
 
@@ -330,7 +396,8 @@ public class RecognizedLineBox {
      */
     private static double score(ScanLook.Look look, double heavy) {
         double weight = heavy / Math.max(1e-6, look.coverage());
-        return look.likeness() * Math.max(0.5, 1 - WEIGHT_MISFIT * Math.abs(Math.log(Math.max(1e-6, weight))));
+        double misfit = Math.max(0, Math.abs(Math.log(Math.max(1e-6, weight))) - Math.log(WEIGHT_SLACK));
+        return look.likeness() * Math.max(0.5, 1 - WEIGHT_MISFIT * misfit);
     }
 
     /**
@@ -413,7 +480,8 @@ public class RecognizedLineBox {
         if (letters.isEmpty() || ink == null) {
             return null;
         }
-        float height = ink.height() / SCALE;
+        List<Double> middles = seen.stream().map(at -> (double) (at - left) * SCALE).toList();
+        float height = (float) (ScanLook.letterHeight(ink, middles) / SCALE);
         float inkLeft = left + ink.left() / SCALE;
         float inkRight = left + (ink.right() + 1) / SCALE;
         float firstMiddle = inkLeft + halfWidth(letters.getFirst(), height);
@@ -487,10 +555,34 @@ public class RecognizedLineBox {
         }
         String key = pageIndex + ":" + pdf.length + ":" + java.util.Arrays.hashCode(
                 java.util.Arrays.copyOf(pdf, Math.min(pdf.length, 4096))) + ":" + samples.hashCode();
-        PageFont known = pageFonts.get(key);
-        if (known != null) {
-            return known;
+        CompletableFuture<PageFont> known;
+        CompletableFuture<PageFont> mine = new CompletableFuture<>();
+        synchronized (pageFonts) {
+            known = pageFonts.putIfAbsent(key, mine);
         }
+        if (known != null) {
+            try {
+                return known.join();
+            } catch (java.util.concurrent.CompletionException | java.util.concurrent.CancellationException failed) {
+                return measuredPageFont(renderer, pageIndex, crop, samples, faces);
+            }
+        }
+        try {
+            PageFont found = measuredPageFont(renderer, pageIndex, crop, samples, faces);
+            mine.complete(found);
+            return found;
+        } catch (IOException | RuntimeException failed) {
+            synchronized (pageFonts) {
+                pageFonts.remove(key, mine);
+            }
+            mine.completeExceptionally(failed);
+            throw failed;
+        }
+    }
+
+    /** The font of the page, told by {@code samples} of its lines. */
+    private PageFont measuredPageFont(PDFRenderer renderer, int pageIndex, PDRectangle crop, List<OcrText> samples,
+            List<SystemFonts.Face> faces) throws IOException {
         List<SystemFonts.Face> plain = faces.stream().filter(f -> !f.bold()).toList();
         Map<String, Double> fits = new HashMap<>();
         Map<String, Integer> counts = new HashMap<>();
@@ -513,7 +605,8 @@ public class RecognizedLineBox {
             double darkness = darkness(region.image(), core, ink, paper);
             double heavy = heavy(darkness, paper, fullInk(letterPixels, paper));
             String text = ScanLook.spacedAsScanned(sample.text(), sample.centers(), ink, core.width());
-            Map<SystemFonts.Face, ScanLook.Look> looks = ScanLook.looks(text, ink, plain);
+            Map<SystemFonts.Face, ScanLook.Look> looks = ScanLook.looks(text, ink, plain,
+                    ScanLook.letterMiddles(sample.text(), sample.centers(), core.width()));
             looks.forEach((face, look) -> {
                 fits.merge(face.family(), score(look, heavy), Double::sum);
                 counts.merge(face.family(), 1, Integer::sum);
@@ -544,10 +637,8 @@ public class RecognizedLineBox {
             }
         }
         colours.sort(java.util.Comparator.comparingInt(c -> lightness(c.getRGB())));
-        PageFont found = new PageFont(family, !sizes.isEmpty() && weight / sizes.size() > BOLD_ALONE, sizes,
+        return new PageFont(family, !sizes.isEmpty() && weight / sizes.size() > BOLD_ALONE, sizes,
                 colours.isEmpty() ? null : colours.get(colours.size() / 2));
-        pageFonts.put(key, found);
-        return found;
     }
 
     /**
@@ -680,6 +771,9 @@ public class RecognizedLineBox {
                 letter[y][x] = ink[y][x] && !ruleRow[y] && !ruleColumn[x];
             }
         }
+        if (!vertical) {
+            letter = withoutSlantingRules(letter);
+        }
         letter = ownLetters(letter, vertical, text, centers, unread);
 
         boolean[][] paint = new boolean[area.height()][area.width()];
@@ -709,8 +803,36 @@ public class RecognizedLineBox {
         if (!any) {
             return null;
         }
+        // A compressed scan rings round its letters with pixels a little lighter or darker than the paper, further
+        // out than their soft edges: left after the letters are painted over, they would outline them. Near the
+        // letters, what is not quite paper (but too light to be ink of its own) is painted too - a shade less than
+        // opaque, so the patch still tells where the letters are.
+        boolean[][] ringing = new boolean[area.height()][area.width()];
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                if (!letter[y][x]) {
+                    continue;
+                }
+                for (int dy = -RINGING; dy <= RINGING; dy++) {
+                    for (int dx = -RINGING; dx <= RINGING; dx++) {
+                        int cx = x + dx;
+                        int cy = y + dy;
+                        if (cx < 0 || cy < 0 || cx >= w || cy >= h) {
+                            continue;
+                        }
+                        int ax = core.x0() + cx - area.x0();
+                        int ay = core.y0() + cy - area.y0();
+                        if (!paint[ay][ax] && !ringing[ay][ax]) {
+                            int d = difference(image.getRGB(core.x0() + cx, core.y0() + cy), paper);
+                            ringing[ay][ax] = d > PAPER_NOISE && d <= LETTER_DIFFERENCE;
+                        }
+                    }
+                }
+            }
+        }
         BufferedImage patch = new BufferedImage(area.width(), area.height(), BufferedImage.TYPE_INT_ARGB);
         int fill = 0xFF000000 | paper.getRGB() & 0xFFFFFF;
+        int ringFill = RINGING_ALPHA << 24 | paper.getRGB() & 0xFFFFFF;
         // See-through pixels are the paper's colour too, not black: a viewer that smooths the picture blends its
         // colours before its transparency, and see-through black would show as a grey rim round the patch.
         int clear = paper.getRGB() & 0xFFFFFF;
@@ -728,10 +850,69 @@ public class RecognizedLineBox {
                     if (inside || difference(image.getRGB(ax + area.x0(), ay + area.y0()), paper) <= LETTER_DIFFERENCE) {
                         patch.setRGB(ax, ay, fill);
                     }
+                } else if (ringing[ay][ax]) {
+                    patch.setRGB(ax, ay, ringFill);
                 }
             }
         }
         return patch;
+    }
+
+    /**
+     * The ink without the rules slanting along the line on a tilted scan. Row by row a slanting rule is a stretch
+     * too short to be told a rule (it steps up or down a row every so often), but rows a few apart together hold it
+     * unbroken over most of the line. A stretch of a row is taken for part of such a rule when it is longer than
+     * any letter's stroke ({@link #RULE_PIECE} of the line) and the rows within {@link #SLANT_ROWS} of it hold ink
+     * unbroken over {@link #RULE_ROW} of the line where it is; it is left out with the rows a couple above and below
+     * it, its soft edges (the letters touching it are still painted over, a few pixels round their other ink). Left
+     * in, the rule would be painted over with the letters and make the line look much taller than it is.
+     */
+    static boolean[][] withoutSlantingRules(boolean[][] ink) {
+        int h = ink.length;
+        int w = h == 0 ? 0 : ink[0].length;
+        boolean[][] out = new boolean[h][];
+        for (int y = 0; y < h; y++) {
+            out[y] = ink[y].clone();
+        }
+        for (int y = 0; y < h; y++) {
+            // Where the rows around this one hold ink, and the unbroken stretches of that.
+            boolean[] band = new boolean[w];
+            for (int yy = Math.max(0, y - SLANT_ROWS); yy <= Math.min(h - 1, y + SLANT_ROWS); yy++) {
+                for (int x = 0; x < w; x++) {
+                    band[x] |= ink[yy][x];
+                }
+            }
+            for (int x = 0; x < w; ) {
+                if (!ink[y][x]) {
+                    x++;
+                    continue;
+                }
+                int from = x;
+                while (x < w && ink[y][x]) {
+                    x++;
+                }
+                if (x - from < RULE_PIECE * w) {
+                    continue;
+                }
+                int left = from;
+                while (left > 0 && band[left - 1]) {
+                    left--;
+                }
+                int right = x;
+                while (right < w && band[right]) {
+                    right++;
+                }
+                if (right - left >= RULE_ROW * w) {
+                    // The rule and its soft edges, a couple of rows either side.
+                    for (int yy = Math.max(0, y - SLANT_ROWS); yy <= Math.min(h - 1, y + SLANT_ROWS); yy++) {
+                        for (int c = from; c < x; c++) {
+                            out[yy][c] = false;
+                        }
+                    }
+                }
+            }
+        }
+        return out;
     }
 
     /**
@@ -954,9 +1135,10 @@ public class RecognizedLineBox {
     }
 
     /**
-     * The ink's colour: the middle one (by lightness) of the pixels that clearly differ from the paper - the soft
-     * edges of the letters on one side, their darkest cores on the other, as the eye sees a scanned stroke. Black
-     * when there is no ink to see.
+     * The ink's colour: the one a quarter of the way (by lightness) from the darkest of the pixels that clearly differ
+     * from the paper - the soft edges of the letters on one side, their darkest cores on the other; the eye sees a
+     * scanned stroke by its core more than its edges, and the edges of small letters are most of their pixels.
+     * Black when there is no ink to see.
      */
     static Color ink(List<Integer> pixels, Color paper) {
         List<Integer> ink = new ArrayList<>();
@@ -971,7 +1153,7 @@ public class RecognizedLineBox {
             return Color.BLACK;
         }
         ink.sort((a, b) -> Integer.compare(lightness(a), lightness(b)));
-        return new Color(ink.get(ink.size() / 2));
+        return new Color(ink.get(ink.size() / 4));
     }
 
     private static int lightness(int rgb) {

@@ -6,7 +6,7 @@ name: 설치 파일 빌드
 #    올립니다(installer/release-notes/<버전>.md의 한글 설명과 함께). 설치된 앱은 이것을 업데이트로 받습니다.
 on:
   push:
-    branches: [master, claude/admiring-brown-xdsv02]
+    branches: [master]
   workflow_dispatch:
     inputs:
       publish:

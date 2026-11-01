@@ -135,19 +135,21 @@ public final class ImageShrinker {
                 if (!candidate(image)) {
                     return image;
                 }
-                BufferedImage picture = image.getImage();
-                // A gray picture stays gray: stored as colour it would take three times the room.
+                // A gray picture stays gray (stored as colour it would take three times the room). Its levels are
+                // copied by value into a colour picture, scaled there and copied back: no colour conversion of any
+                // kind is left to touch them on the way (ImageShrinkerTest compares the levels before and after).
                 boolean gray = image.getColorSpace().getNumberOfComponents() == 1;
-                if (gray && picture.getType() != BufferedImage.TYPE_BYTE_GRAY) {
-                    picture = draw(picture, picture.getWidth(), picture.getHeight(), true);
-                }
+                BufferedImage picture = gray ? grayAsRgb(image.getImage()) : image.getImage();
                 int longest = Math.max(picture.getWidth(), picture.getHeight());
                 if (longest > mostPixels) {
                     double scale = (double) mostPixels / longest;
                     picture = scaled(picture, Math.max(1, (int) Math.round(picture.getWidth() * scale)),
-                            Math.max(1, (int) Math.round(picture.getHeight() * scale)), gray);
+                            Math.max(1, (int) Math.round(picture.getHeight() * scale)));
                 }
                 boolean photo = isJpeg(image) || colours(picture) > (gray ? PHOTO_GRAYS : PHOTO_COLOURS);
+                if (gray) {
+                    picture = rgbAsGray(picture);
+                }
                 PDImageXObject stored = photo ? JPEGFactory.createFromImage(document, picture, QUALITY)
                         : LosslessFactory.createFromImage(document, picture);
                 long was = image.getCOSObject().getLength();
@@ -175,8 +177,8 @@ public final class ImageShrinker {
             return false;
         }
         COSStream stream = image.getCOSObject();
-        if (stream.containsKey(COSName.SMASK) || stream.containsKey(COSName.MASK)
-                || stream.containsKey(COSName.DECODE)) {
+        // A /Decode array needs no care: the picture is read with it applied, and stored again without one.
+        if (stream.containsKey(COSName.SMASK) || stream.containsKey(COSName.MASK)) {
             return false;
         }
         for (COSName filter : filters(stream)) {
@@ -223,17 +225,54 @@ public final class ImageShrinker {
         return seen.size();
     }
 
-    /** Smaller, in halving steps then one last one, so that fine lines and text do not break up into steps. */
-    static BufferedImage scaled(BufferedImage picture, int width, int height, boolean gray) {
+    /**
+     * Smaller, in halving steps then one last one, so that fine lines and text do not break up into steps. Drawn as
+     * sRGB colour into sRGB colour: no conversion of the levels on the way.
+     */
+    static BufferedImage scaled(BufferedImage picture, int width, int height) {
         BufferedImage current = picture;
         while (current.getWidth() / 2 >= width && current.getHeight() / 2 >= height) {
-            current = draw(current, current.getWidth() / 2, current.getHeight() / 2, gray);
+            current = draw(current, current.getWidth() / 2, current.getHeight() / 2);
         }
-        return current.getWidth() == width && current.getHeight() == height ? current : draw(current, width, height, gray);
+        return current.getWidth() == width && current.getHeight() == height ? current : draw(current, width, height);
     }
 
-    private static BufferedImage draw(BufferedImage from, int width, int height, boolean gray) {
-        BufferedImage to = new BufferedImage(width, height, gray ? BufferedImage.TYPE_BYTE_GRAY : BufferedImage.TYPE_INT_RGB);
+    /** The gray levels of a gray picture, as stored, put in a colour picture (red, green and blue the same). */
+    static BufferedImage grayAsRgb(BufferedImage picture) {
+        int width = picture.getWidth();
+        int height = picture.getHeight();
+        int[] pixels = new int[width * height];
+        if (picture.getType() == BufferedImage.TYPE_BYTE_GRAY) {
+            // The stored levels themselves: getRGB would take them for linear light and brighten them.
+            picture.getRaster().getSamples(0, 0, width, height, 0, pixels);
+            for (int i = 0; i < pixels.length; i++) {
+                int level = pixels[i];
+                pixels[i] = level << 16 | level << 8 | level;
+            }
+        } else {
+            picture.getRGB(0, 0, width, height, pixels, 0, width);
+        }
+        BufferedImage rgb = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+        rgb.getRaster().setDataElements(0, 0, width, height, pixels);
+        return rgb;
+    }
+
+    /** A colour picture of gray levels back as a gray picture, level for level. */
+    static BufferedImage rgbAsGray(BufferedImage picture) {
+        int width = picture.getWidth();
+        int height = picture.getHeight();
+        int[] pixels = picture.getRGB(0, 0, width, height, null, 0, width);
+        for (int i = 0; i < pixels.length; i++) {
+            int p = pixels[i];
+            pixels[i] = ((p >> 16 & 255) + (p >> 8 & 255) + (p & 255)) / 3;
+        }
+        BufferedImage gray = new BufferedImage(width, height, BufferedImage.TYPE_BYTE_GRAY);
+        gray.getRaster().setSamples(0, 0, width, height, 0, pixels);
+        return gray;
+    }
+
+    private static BufferedImage draw(BufferedImage from, int width, int height) {
+        BufferedImage to = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
         Graphics2D g = to.createGraphics();
         try {
             g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);

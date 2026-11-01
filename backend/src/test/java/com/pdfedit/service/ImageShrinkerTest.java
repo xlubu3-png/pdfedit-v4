@@ -107,6 +107,7 @@ class ImageShrinkerTest {
     void aLosslessColourScanBecomesAJpegOfAt150Dpi() throws IOException {
         try (PDDocument doc = pages(d -> LosslessFactory.createFromImage(d, photo(2480, 3508, false)))) {
             long before = images(doc.getPage(0)).get(0).getCOSObject().getLength();
+            double colourBefore = brightness(doc);
 
             ImageShrinker.Report report = ImageShrinker.shrink(doc);
 
@@ -114,6 +115,7 @@ class ImageShrinkerTest {
             assertThat(isJpeg(image)).isTrue();
             assertThat(Math.max(image.getWidth(), image.getHeight())).isEqualTo(A4_MOST);
             assertThat(report.pictures()).isEqualTo(1);
+            assertThat(brightness(doc)).isCloseTo(colourBefore, org.assertj.core.data.Offset.offset(3.0));
             assertThat(report.before()).isEqualTo(before);
             assertThat(report.after()).isLessThan(before / 5);
         }
@@ -132,13 +134,17 @@ class ImageShrinkerTest {
     }
 
     @Test
-    void aGrayScanStaysGray() throws IOException {
+    void aGrayScanStaysGrayAndJustAsLight() throws IOException {
         try (PDDocument doc = pages(d -> LosslessFactory.createFromImage(d, photo(2480, 3508, true)))) {
+            double before = shownGray(images(doc.getPage(0)).get(0));
+
             ImageShrinker.shrink(doc);
 
             PDImageXObject image = images(doc.getPage(0)).get(0);
             assertThat(isJpeg(image)).isTrue();
             assertThat(image.getColorSpace()).isInstanceOf(PDDeviceGray.class);
+            // The gray levels stored are what a viewer shows: they stay as they were.
+            assertThat(shownGray(image)).isCloseTo(before, org.assertj.core.data.Offset.offset(2.0));
         }
     }
 
@@ -150,6 +156,74 @@ class ImageShrinkerTest {
             PDImageXObject image = images(doc.getPage(0)).get(0);
             assertThat(isJpeg(image)).isFalse();
             assertThat(image.getHeight()).isEqualTo(A4_MOST);
+        }
+    }
+
+    /** The mean level a viewer shows for a gray picture: its samples as read, /Decode applied (PDFBox applies it). */
+    private static double shownGray(PDImageXObject image) throws IOException {
+        java.awt.image.WritableRaster raster = image.getRawRaster();
+        long sum = 0;
+        for (int y = 0; y < raster.getHeight(); y++) {
+            for (int x = 0; x < raster.getWidth(); x++) {
+                sum += raster.getSample(x, y, 0);
+            }
+        }
+        return (double) sum / (raster.getWidth() * raster.getHeight());
+    }
+
+    /** The page's average gray (0 black, 255 white), drawn small. */
+    private static double brightness(PDDocument doc) throws IOException {
+        BufferedImage page = new org.apache.pdfbox.rendering.PDFRenderer(doc).renderImageWithDPI(0, 20);
+        long sum = 0;
+        for (int y = 0; y < page.getHeight(); y++) {
+            for (int x = 0; x < page.getWidth(); x++) {
+                int rgb = page.getRGB(x, y);
+                sum += ((rgb >> 16 & 255) + (rgb >> 8 & 255) + (rgb & 255)) / 3;
+            }
+        }
+        return (double) sum / (page.getWidth() * page.getHeight());
+    }
+
+    @Test
+    void anIdentityDecodeArrayDoesNotKeepAScanFromShrinking() throws IOException {
+        try (PDDocument doc = pages(d -> {
+            PDImageXObject image = LosslessFactory.createFromImage(d, photo(2480, 3508, false));
+            image.getCOSObject().setItem(COSName.DECODE, new org.apache.pdfbox.cos.COSArray(java.util.List.of(
+                    org.apache.pdfbox.cos.COSInteger.ZERO, org.apache.pdfbox.cos.COSInteger.ONE,
+                    org.apache.pdfbox.cos.COSInteger.ZERO, org.apache.pdfbox.cos.COSInteger.ONE,
+                    org.apache.pdfbox.cos.COSInteger.ZERO, org.apache.pdfbox.cos.COSInteger.ONE)));
+            return image;
+        })) {
+            ImageShrinker.Report report = ImageShrinker.shrink(doc);
+
+            assertThat(report.pictures()).isEqualTo(1);
+            assertThat(isJpeg(images(doc.getPage(0)).get(0))).isTrue();
+        }
+    }
+
+    @Test
+    void anInvertingDecodeArrayStillLooksTheSameStoredAgain() throws IOException {
+        // A dark gray scan that /Decode [1 0] shows light: stored again, it must stay light.
+        BufferedImage dark = photo(2480, 3508, true);
+        for (int y = 0; y < dark.getHeight(); y++) {
+            for (int x = 0; x < dark.getWidth(); x++) {
+                int g = (dark.getRGB(x, y) & 255) / 4;
+                dark.setRGB(x, y, new Color(g, g, g).getRGB());
+            }
+        }
+        try (PDDocument doc = pages(d -> {
+            PDImageXObject image = LosslessFactory.createFromImage(d, dark);
+            image.getCOSObject().setItem(COSName.DECODE, new org.apache.pdfbox.cos.COSArray(java.util.List.of(
+                    org.apache.pdfbox.cos.COSInteger.ONE, org.apache.pdfbox.cos.COSInteger.ZERO)));
+            return image;
+        })) {
+            double before = shownGray(images(doc.getPage(0)).get(0));
+
+            ImageShrinker.Report report = ImageShrinker.shrink(doc);
+
+            assertThat(report.pictures()).isEqualTo(1);
+            assertThat(before).isGreaterThan(150);
+            assertThat(shownGray(images(doc.getPage(0)).get(0))).isCloseTo(before, org.assertj.core.data.Offset.offset(2.0));
         }
     }
 

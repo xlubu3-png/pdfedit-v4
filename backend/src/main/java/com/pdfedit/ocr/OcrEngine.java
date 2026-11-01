@@ -785,7 +785,11 @@ public final class OcrEngine implements AutoCloseable {
     }
 
     @Override
-    public void close() throws OrtException {
+    /**
+     * Closes the models once a reading under way has finished: closed under a running one (the app quitting while a
+     * page is recognized, or the warm-up of a scan just opened) the native engine could crash the app on its way out.
+     */
+    public synchronized void close() throws OrtException {
         detector.close();
         reader.close();
     }

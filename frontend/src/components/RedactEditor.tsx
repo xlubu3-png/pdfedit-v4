@@ -37,6 +37,12 @@ export function RedactEditor({ pages, startKey, onClose, onChanged }: RedactEdit
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const layer = useRef<HTMLDivElement>(null)
+  /** The page on screen, and the last save started: a save that ends after either changed leaves the screen alone. */
+  const shownKey = useRef(page?.key)
+  const lastSave = useRef(0)
+  useEffect(() => {
+    shownKey.current = page?.key
+  })
 
   // Only another page is loaded again; a saved change (which redraws the thumbnails) is not.
   const documentId = page?.documentId
@@ -71,16 +77,28 @@ export function RedactEditor({ pages, startKey, onClose, onChanged }: RedactEdit
   const scale = box ? width / box.pageWidth : 0
 
   async function commit(next: Redaction[]) {
+    const target = page
+    const save = ++lastSave.current
     const before = areas
     setAreas(next)
     setStatus('저장 중…')
     try {
-      await saveRedactions(page.documentId, page.pageIndex, next)
-      onChanged({ documentId: page.documentId, pageIndex: page.pageIndex })
-      setStatus(`가림 영역 ${next.length}곳 · 저장됨`)
+      await saveRedactions(target.documentId, target.pageIndex, next)
+      onChanged({ documentId: target.documentId, pageIndex: target.pageIndex })
+      if (shownKey.current === target.key && save === lastSave.current) {
+        setStatus(`가림 영역 ${next.length}곳 · 저장됨`)
+      }
     } catch (e) {
-      setAreas(before)
-      setStatus(null)
+      if (shownKey.current !== target.key) {
+        // Another page is on screen now: its areas stay as they are, only the failure is told.
+        setError(`${target.sourceFileName} ${target.pageIndex + 1}쪽의 가림 영역을 저장하지 못했습니다. 그 쪽으로 돌아가 다시 그려 주세요.`)
+        return
+      }
+      if (save === lastSave.current) {
+        // A later save (which has these areas too) would otherwise be undone on screen.
+        setAreas(before)
+        setStatus(null)
+      }
       setError(errorText(e, '저장하지 못했습니다'))
     }
   }

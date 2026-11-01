@@ -24,9 +24,6 @@ function renderCard(busy: boolean, onEditText = vi.fn(), onDuplicate = vi.fn(), 
       isDragging={false}
       isSelected={false}
       busy={busy}
-      onDragStart={noop}
-      onDragOver={noop}
-      onDrop={noop}
       onRotate={noop}
       onDelete={noop}
       onToggleSelect={noop}

@@ -13,7 +13,8 @@
   matches the published hash (GitHub's own digest of the asset, or the .sha256 file uploaded here).
 
   Needs the GitHub CLI (gh), logged in (gh auth login) with rights on the repository, and the commit of this
-  version pushed. -Draft creates the release unpublished.
+  version pushed. -Draft creates the release unpublished. The GitHub Actions workflow build-installer.yml runs
+  this too (its "릴리스로 올리기" option), signed in with the job's token.
 
   Saved as UTF-8 with a BOM: Windows PowerShell 5.1 reads the Korean text in this file correctly only then.
 #>
@@ -52,12 +53,19 @@ try {
     if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
         throw 'GitHub CLI(gh)가 없습니다. https://cli.github.com 에서 설치한 뒤 gh auth login 으로 로그인하세요.'
     }
-    gh auth status *> $null
-    if ($LASTEXITCODE -ne 0) { throw 'GitHub CLI(gh)에 로그인되어 있지 않습니다. 먼저 gh auth login 을 실행하세요.' }
+    # On GitHub Actions (.github/workflows/build-installer.yml) gh signs in with the job's GH_TOKEN, and the code
+    # is the commit that was pushed: there is nothing to log in to or push first.
+    $onGitHub = $env:GITHUB_ACTIONS -eq 'true'
+    if (-not $env:GH_TOKEN) {
+        gh auth status *> $null
+        if ($LASTEXITCODE -ne 0) { throw 'GitHub CLI(gh)에 로그인되어 있지 않습니다. 먼저 gh auth login 을 실행하세요.' }
+    }
     if (git status --porcelain) { throw '커밋하지 않은 변경이 있습니다. 릴리스가 소스와 같도록 먼저 커밋하세요.' }
-    git fetch origin *> $null
-    if ((git rev-parse HEAD) -ne (git rev-parse '@{u}')) {
-        throw '마지막 커밋이 아직 GitHub에 올라가지 않았습니다. git push 를 먼저 하세요 (태그가 GitHub에 없는 코드를 가리키게 됩니다).'
+    if (-not $onGitHub) {
+        git fetch origin *> $null
+        if ((git rev-parse HEAD) -ne (git rev-parse '@{u}')) {
+            throw '마지막 커밋이 아직 GitHub에 올라가지 않았습니다. git push 를 먼저 하세요 (태그가 GitHub에 없는 코드를 가리키게 됩니다).'
+        }
     }
     gh release view $tag *> $null
     if ($LASTEXITCODE -eq 0) { throw "릴리스 $tag 이(가) 이미 있습니다. 새로 내려면 app.version을 올리세요." }

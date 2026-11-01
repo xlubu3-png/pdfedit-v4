@@ -409,6 +409,37 @@ button.primary:disabled {
   inset: 0;
 }
 
+/* Picking text to copy: the boxes are left alone, the text layer over them takes the mouse. */
+.te-layer.selecting {
+  pointer-events: none;
+}
+
+.te-textlayer {
+  position: absolute;
+  inset: 0;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+  overflow: hidden;
+}
+
+.te-textlayer span {
+  position: absolute;
+  white-space: pre;
+  color: transparent;
+  transform-origin: 0 0;
+  font-family: '맑은 고딕', 'Malgun Gothic', sans-serif;
+}
+
+.te-textlayer span::selection {
+  background: rgba(0, 110, 230, 0.32);
+  color: transparent;
+}
+
+.te-textlayer br::selection {
+  background: transparent;
+}
+
 /*
  * Unedited boxes stay fully transparent so the real PDF rendering underneath shows through
  * untouched - an unedited page should look pixel-identical to the original. A box only becomes

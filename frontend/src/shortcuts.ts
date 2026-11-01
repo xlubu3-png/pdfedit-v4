@@ -66,6 +66,15 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     ],
   },
   {
+    title: '글자 선택 (복사용)',
+    items: [
+      { keys: ['S'], label: '글자 선택 켜기·끄기 (보기 → 글자 선택)' },
+      { keys: ['끌기'], label: '여러 줄을 마우스로 골라 Ctrl+C로 복사' },
+      { keys: ['Ctrl', 'A'], label: '쪽의 글자 모두 고르기' },
+      { keys: ['Esc'], label: '글자 선택 끝내기' },
+    ],
+  },
+  {
     title: '보기와 이동',
     items: [
       { keys: ['Ctrl', '+'], label: '확대' },

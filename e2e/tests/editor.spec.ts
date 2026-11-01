@@ -360,3 +360,30 @@ test('a line nudged again and again is drawn afresh once, after its last move is
   expect(saves).toBeGreaterThan(1)
   expect(previews).toBeLessThanOrEqual(saves)
 })
+
+test('in text selection the lines are picked with a drag across them and copied with Ctrl+C', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await openEditor(page, ['Hello World', 'Second line', 'Third line'])
+
+  await page.keyboard.press('s')
+  const lines = page.locator('.te-textlayer span')
+  await expect(lines).toHaveCount(3)
+  const first = (await lines.nth(0).boundingBox())!
+  const second = (await lines.nth(1).boundingBox())!
+  await page.mouse.move(first.x + 1, first.y + first.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(second.x + second.width - 1, second.y + second.height / 2, { steps: 8 })
+  await page.mouse.up()
+  await page.keyboard.press('Control+c')
+
+  const copied = await page.evaluate(() => navigator.clipboard.readText())
+  expect(copied.replace(/\r\n/g, '\n').trim()).toBe('Hello World\nSecond line')
+  // Nothing on the page was edited or picked as a line.
+  await expect(page.locator('.te-item.selected')).toHaveCount(0)
+
+  // Esc leaves text selection: a click picks a line again.
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.te-textlayer')).toHaveCount(0)
+  await page.locator('.te-box[data-index="0"]').click()
+  await expect(page.locator('.te-item.selected .te-box[data-index="0"]')).toHaveCount(1)
+})

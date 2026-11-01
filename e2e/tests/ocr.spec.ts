@@ -273,3 +273,22 @@ test('a box rewritten in an older look is fitted to the scan again, keeping its 
   const again = (await added())[0]
   expect(again).toMatchObject({ id: fitted.id, text: '연락처 010-9999-0000', fontFamily: fitted.fontFamily, color: fitted.color })
 })
+
+test('in text selection a scan\'s recognized lines are all picked with Ctrl+A and copied', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.goto('/')
+  await page.locator('input[type=file]').setInputFiles({ name: 'scan.pdf', mimeType: 'application/pdf', buffer: await scan(page) })
+  await page.getByRole('button', { name: '나중에' }).click()
+  await page.locator('button[title="텍스트 편집"]').first().click()
+  const editor = page.getByRole('dialog', { name: '텍스트 편집' })
+  await editor.getByRole('button', { name: '글자 인식(OCR)' }).click()
+  await expect(page.locator('.te-ocr-line[data-ocr="1"]')).toBeVisible({ timeout: 60_000 })
+
+  await editor.getByRole('button', { name: '글자 선택' }).first().click()
+  await expect(page.locator('.te-textlayer span')).toHaveCount(2)
+  await page.keyboard.press('Control+a')
+  await page.keyboard.press('Control+c')
+
+  const copied = (await page.evaluate(() => navigator.clipboard.readText())).replace(/\s+/g, '')
+  expect(copied).toBe('스캔문서글자인식시험연락처010-2345-6789')
+})

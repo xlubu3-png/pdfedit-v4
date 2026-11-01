@@ -25,6 +25,7 @@ import { keyCode } from '../keys'
 import { copyText } from '../clipboard'
 import { ocrMessage, recognizeAll } from '../ocr'
 import { lineOfCover, refitted } from '../refit'
+import { selectableLines } from '../textSelect'
 import type { SnapTargets } from '../snap'
 import { clearField, formatRange, lookAt, remapSpans, toggleFor } from '../spans'
 import type { LookPatch } from '../spans'
@@ -32,6 +33,7 @@ import type { AddedImage, AddedText, AppInfo, FontChoice, OcrText, PageItem, Pag
 import { fitPageZoom, fitZoom, previewDpi, PX_PER_PT_AT_100, zoomStep } from '../zoom'
 import { HelpDialog } from './HelpDialog'
 import { MissingFontDialog } from './MissingFontDialog'
+import { TextSelectLayer } from './TextSelectLayer'
 import { StyleBar, StyleInfo, ZoomControl } from './StyleBar'
 import type { ImageView, StyleView } from './StyleBar'
 import {
@@ -61,6 +63,7 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
+  TextSelect,
   Trash,
   Type,
   Underline,
@@ -274,6 +277,8 @@ export function TextEditor({
    * edit never sees a stale copy.
    */
   const [runStates, setRunStates] = useState(new Map<number, RunState>())
+  /** Text selection: the page's text is picked with the mouse and copied, as in a PDF viewer; nothing is edited. */
+  const [selecting, setSelecting] = useState(false)
   const [added, setAdded] = useState<AddedText[]>([])
   const [images, setImages] = useState<AddedImage[]>([])
   const statesRef = useRef(runStates)
@@ -1175,6 +1180,20 @@ export function TextEditor({
     }
   }
 
+  /** Turns text selection on or off; turning it on leaves whatever was being edited. */
+  function toggleSelecting() {
+    const on = !selecting
+    if (on) {
+      setAdding(false)
+      setEditing(null)
+      setSelected(null)
+      setOcrPicked(null)
+    } else {
+      window.getSelection()?.removeAllRanges()
+    }
+    setSelecting(on)
+  }
+
   /** Recognizes every page of the list (this one too), then shows what this page has. */
   async function recognizeEveryPage() {
     await flush()
@@ -1453,6 +1472,30 @@ export function TextEditor({
         return
       }
 
+      if (selecting) {
+        // Picking text to copy: the keys that edit the page wait; the browser copies what is picked.
+        if (e.key === 'Escape' || (!ctrl && !e.altKey && !e.shiftKey && code === 'KeyS')) {
+          e.preventDefault()
+          toggleSelecting()
+          return
+        }
+        if (ctrl && code === 'KeyA') {
+          e.preventDefault()
+          const layer = document.querySelector('.te-textlayer')
+          if (layer) window.getSelection()?.selectAllChildren(layer)
+          return
+        }
+        const passes =
+          ctrl &&
+          (code === 'KeyS' ||
+            code === 'KeyP' ||
+            e.key === 'ArrowLeft' ||
+            e.key === 'ArrowRight' ||
+            ['=', '+', '-', '0', '9'].includes(e.key) ||
+            code.startsWith('Numpad'))
+        if (!passes) return
+      }
+
       // Text typed into a box since it got focus keeps the browser's own text undo; the page-level
       // undo takes over as soon as there is nothing typed to take back.
       const committed =
@@ -1563,6 +1606,11 @@ export function TextEditor({
       if (ctrl && !e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
         e.preventDefault()
         void navigate(e.key === 'ArrowLeft' ? -1 : 1)
+        return
+      }
+      if (!ctrl && !e.altKey && !e.shiftKey && code === 'KeyS') {
+        e.preventDefault()
+        toggleSelecting()
         return
       }
       if (!ctrl && !e.altKey && !e.shiftKey && code === 'KeyT' && editable) {
@@ -1881,6 +1929,13 @@ export function TextEditor({
                 pressed={showOcr && ocrLines.length > 0}
               />
               <RibbonButton
+                icon={<TextSelect />}
+                label="글자 선택"
+                title="인식한 글자를 마우스로 끌어 여러 줄을 골라 Ctrl+C로 복사합니다 (S, 끝내려면 Esc)"
+                onClick={toggleSelecting}
+                pressed={selecting}
+              />
+              <RibbonButton
                 icon={<Copy />}
                 label="글자 복사"
                 title="점선 줄을 클릭해 고른 줄을, 고르지 않았으면 이 쪽에서 인식한 글자를 모두 복사합니다 (Ctrl+C)"
@@ -1923,6 +1978,15 @@ export function TextEditor({
                 title="쪽 전체가 창 안에 보이게 맞춥니다 (Ctrl+9)"
                 onClick={() => setZoomMode('page')}
                 pressed={zoomMode === 'page'}
+              />
+            </RibbonGroup>
+            <RibbonGroup label="글자">
+              <RibbonButton
+                icon={<TextSelect />}
+                label="글자 선택"
+                title="쪽의 글자를 마우스로 끌어 골라 Ctrl+C로 복사합니다. 스캔한 쪽은 인식한 글자를 고릅니다 (S, 끝내려면 Esc)"
+                onClick={toggleSelecting}
+                pressed={selecting}
               />
             </RibbonGroup>
             <RibbonGroup label="쪽 이동">
@@ -2124,7 +2188,7 @@ export function TextEditor({
             />
             {scale > 0 && (
               <div
-                className={`te-layer${adding ? ' adding' : ''}${stale ? ' stale' : ''}`}
+                className={`te-layer${adding ? ' adding' : ''}${stale ? ' stale' : ''}${selecting ? ' selecting' : ''}`}
                 ref={layerRef}
                 onPointerDown={handleLayerPointerDown}
               >
@@ -2230,6 +2294,9 @@ export function TextEditor({
                 )}
               </div>
             )}
+            {scale > 0 && selecting && (
+              <TextSelectLayer lines={selectableLines(data, runStates, ocrLines, rewritten, added, scale)} />
+            )}
           </div>
         )}
       </main>
@@ -2262,7 +2329,11 @@ export function TextEditor({
           </button>
         </span>
         <span className="te-statusbar-sep" aria-hidden="true" />
-        {editable ? (
+        {selecting ? (
+          <span className="te-style-info">
+            <b>글자 선택</b> · 끌어서 고르고 Ctrl+C로 복사 · Ctrl+A 쪽 전체 · Esc 끝내기
+          </span>
+        ) : editable ? (
           <StyleInfo view={view} image={imageView} fonts={fonts} onFontHelp={() => setFontHelpOpen(true)} />
         ) : (
           <span className="te-style-info" />

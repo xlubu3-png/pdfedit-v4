@@ -399,3 +399,51 @@ test('the right-click menu corrects a misread line, copies and redacts what is p
   await expect(note).toHaveCount(0)
   await expect.poll(async () => (await (await page.request.get(`${api}/text-runs`)).json()).added[0].fontSize).toBeCloseTo(box.fontSize, 1)
 })
+
+test('a right click on a recognized line opens the menu even when an extension stops right clicks at the document', async ({
+  page,
+}) => {
+  // What "allow right click" extensions do so that no site can turn the browser's menu off.
+  await page.addInitScript(() => document.addEventListener('contextmenu', (e) => e.stopPropagation(), true))
+  await page.goto('/')
+  await page.locator('input[type=file]').setInputFiles({ name: 'scan.pdf', mimeType: 'application/pdf', buffer: await scan(page) })
+  await page.getByRole('button', { name: '나중에' }).click()
+  await page.locator('button[title="텍스트 편집"]').first().click()
+  const editor = page.getByRole('dialog', { name: '텍스트 편집' })
+  await editor.getByRole('button', { name: '글자 인식(OCR)' }).click()
+  const phone = page.locator('.te-ocr-line[data-ocr="1"]')
+  await expect(phone).toBeVisible({ timeout: 60_000 })
+
+  await phone.click({ button: 'right' })
+  const menu = page.getByRole('menu', { name: '인식한 줄' })
+  await expect(menu).toBeVisible()
+  await expect(menu.getByRole('note')).toHaveCount(0)
+  await page.keyboard.press('Escape')
+
+  // The notice over the page is the editor's too: its menu opens there, without adding text off the page.
+  await page.locator('.te-ocr-note').first().click({ button: 'right' })
+  await expect(page.getByRole('menu', { name: '쪽' })).toBeVisible()
+  await expect(page.getByRole('menuitem', { name: /여기에 텍스트 추가/ })).toBeDisabled()
+})
+
+test('when an extension swallows right clicks whole, the menu opens as the button is let go, saying why', async ({ page }) => {
+  // Set up before the app's own scripts, as an extension is, and stopping every other listener.
+  await page.addInitScript(() => window.addEventListener('contextmenu', (e) => e.stopImmediatePropagation(), true))
+  await page.goto('/')
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'swallowed.pdf',
+    mimeType: 'application/pdf',
+    buffer: simplePdf(['Hello World', 'Second line']),
+  })
+  await page.locator('.page-card').first().click({ button: 'right' })
+  const pageMenu = page.getByRole('menu', { name: '1쪽' })
+  await expect(pageMenu).toBeVisible()
+  await expect(pageMenu.getByRole('note')).toContainText('확장 프로그램')
+  await page.keyboard.press('Escape')
+
+  await page.locator('button[title="텍스트 편집"]').first().click()
+  await page.locator('.te-box[data-index="1"]').click({ button: 'right' })
+  const lineMenu = page.getByRole('menu', { name: '글자 줄' })
+  await expect(lineMenu).toBeVisible()
+  await expect(lineMenu.getByRole('note')).toContainText('확장 프로그램')
+})

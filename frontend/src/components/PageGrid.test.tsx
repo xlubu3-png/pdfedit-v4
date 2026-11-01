@@ -67,6 +67,21 @@ describe('PageGrid right-click menu', () => {
     expect(screen.queryByRole('menu')).toBeNull()
   })
 
+  it('still opens when a browser extension stops right clicks at the document', () => {
+    const stop = (e: Event) => e.stopPropagation()
+    document.addEventListener('contextmenu', stop, true)
+    try {
+      const { card } = renderGrid()
+
+      const browserMenuShown = fireEvent.contextMenu(card(0))
+
+      expect(browserMenuShown).toBe(false)
+      expect(screen.getByRole('menu', { name: '1쪽' })).toBeTruthy()
+    } finally {
+      document.removeEventListener('contextmenu', stop, true)
+    }
+  })
+
   it('offers to unselect a selected page', () => {
     const { card, onToggleSelect } = renderGrid({ selected: ['doc-1-0'] })
 

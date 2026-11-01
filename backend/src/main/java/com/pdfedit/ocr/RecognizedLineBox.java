@@ -25,6 +25,8 @@ import org.apache.pdfbox.rendering.PDFRenderer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 import com.pdfedit.service.PageNotEditableException;
@@ -239,6 +241,15 @@ public class RecognizedLineBox implements DisposableBean {
         synchronized (waiting) {
             return waiting.size();
         }
+    }
+
+    /**
+     * The document faces a scanned line is compared against are opened once the app is up, in the background:
+     * opening a dozen font files takes a moment the first rewrite would otherwise wait for.
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    void openFacesAhead() {
+        preparing.execute(() -> fontMatcher.documentFaces().forEach(ScanLook::awtFont));
     }
 
     @Override

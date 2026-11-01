@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createEditor } from '@rhwp/editor'
 import type { RhwpEditor } from '@rhwp/editor'
 import { ArrowLeft, FileDown } from 'lucide-react'
+import { downloadBlob } from '../download'
 import { formatOf, HWP_STUDIO_URL, savedName } from '../hwp'
 import type { HwpFormat } from '../hwp'
 
@@ -11,12 +12,7 @@ interface HwpEditorProps {
 }
 
 function download(bytes: Uint8Array, fileName: string) {
-  const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: 'application/octet-stream' }))
-  const a = document.createElement('a')
-  a.href = url
-  a.download = fileName
-  a.click()
-  URL.revokeObjectURL(url)
+  downloadBlob(new Blob([new Uint8Array(bytes)], { type: 'application/octet-stream' }), fileName)
 }
 
 /**

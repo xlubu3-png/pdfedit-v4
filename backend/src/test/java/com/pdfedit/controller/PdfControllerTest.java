@@ -197,8 +197,37 @@ class PdfControllerTest {
                 List.of(new PageSpec(blank.documentId(), 0, 0)), "a\"b\r\nX-Evil: 1.pdf"));
 
         String disposition = response.getHeaders().getFirst("Content-Disposition");
-        assertThat(disposition).startsWith("attachment; filename=\"").endsWith(".pdf\"");
-        assertThat(disposition.substring(22, disposition.length() - 1)).doesNotContain("\"", "\r", "\n");
+        assertThat(disposition).startsWith("attachment; filename=").doesNotContain("\r", "\n");
+        assertThat(response.getHeaders().getContentDisposition().getFilename()).isEqualTo("a_b__X-Evil: 1.pdf");
+    }
+
+    @Test
+    void aKoreanExportFileNameArrivesIntact() throws IOException {
+        UploadResponse blank = controller.createBlankDocument(200, 200);
+
+        var response = controller.export(new ExportRequest(List.of(new PageSpec(blank.documentId(), 0, 0)), "계약서.pdf"));
+
+        assertThat(response.getHeaders().getFirst("Content-Disposition")).contains("filename*=UTF-8''");
+        assertThat(response.getHeaders().getContentDisposition().getFilename()).isEqualTo("계약서.pdf");
+    }
+
+    @Test
+    void aBlankPageOfImpossibleSizeIsRefused() {
+        assertThatThrownBy(() -> controller.createBlankDocument(0, 842)).isInstanceOf(InvalidEditException.class);
+        assertThatThrownBy(() -> controller.createBlankDocument(595, -1)).isInstanceOf(InvalidEditException.class);
+        assertThatThrownBy(() -> controller.createBlankDocument(Float.NaN, 842)).isInstanceOf(InvalidEditException.class);
+        assertThatThrownBy(() -> controller.createBlankDocument(595, 1_000_000)).isInstanceOf(InvalidEditException.class);
+    }
+
+    @Test
+    void aVeryTallPageGivesAThumbnailOfBoundedSize() throws IOException {
+        UploadResponse banner = controller.createBlankDocument(100, 14_400);
+
+        byte[] png = controller.thumbnail(banner.documentId(), 0, 2000);
+
+        var image = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(png));
+        assertThat((long) image.getWidth() * image.getHeight()).isLessThanOrEqualTo(
+                com.pdfedit.service.RenderLimits.MAX_PIXELS + 2 * 14_400);
     }
 
     @Test

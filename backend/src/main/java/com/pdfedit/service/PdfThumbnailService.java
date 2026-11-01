@@ -21,7 +21,7 @@ public class PdfThumbnailService {
                 throw new IndexOutOfBoundsException("Invalid page index: " + pageIndex);
             }
             PDRectangle box = document.getPage(pageIndex).getCropBox();
-            float scale = width / box.getWidth();
+            float scale = RenderLimits.cappedScale(box, width / box.getWidth());
 
             PDFRenderer renderer = new PDFRenderer(document);
             BufferedImage image = renderer.renderImage(pageIndex, scale);

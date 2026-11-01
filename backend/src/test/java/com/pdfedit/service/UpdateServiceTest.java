@@ -115,6 +115,17 @@ class UpdateServiceTest {
     }
 
     @Test
+    void anInstallerNameThatCouldNameAnotherFileOrRunACommandIsNotTaken() {
+        String hash = "a".repeat(64);
+        for (String name : List.of("WINTECH_PDF_Setup_0.099&calc.exe", "WINTECH_PDF_Setup_../../x.exe",
+                "WINTECH_PDF_Setup_\"a\".exe")) {
+            String json = "{\"tag_name\":\"v0.099\",\"assets\":[{\"name\":\"" + name.replace("\"", "\\\"")
+                    + "\",\"browser_download_url\":\"https://x/y.exe\",\"digest\":\"sha256:" + hash + "\"}]}";
+            assertThat(service(true, "0.051").parse(json)).as(name).isNull();
+        }
+    }
+
+    @Test
     void doesNothingWhenUpdatingIsSwitchedOff() {
         UpdateInfo info = service(false, "0.051").check(true);
 

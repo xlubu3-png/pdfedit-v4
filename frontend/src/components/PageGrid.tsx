@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
+import { BLOCKED_NOTE, useRightClick } from '../rightClick'
 import type { PageItem } from '../types'
 import { ContextMenu } from './ContextMenu'
 import type { MenuEntry } from './ContextMenu'
@@ -42,7 +43,17 @@ export function PageGrid({
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null)
   const [overIndex, setOverIndex] = useState<number | null>(null)
   /** The page whose right-click menu is open, and where it was asked for. */
-  const [menu, setMenu] = useState<{ key: string; x: number; y: number } | null>(null)
+  const [menu, setMenu] = useState<{ key: string; x: number; y: number; note?: string } | null>(null)
+  const gridRef = useRef<HTMLDivElement>(null)
+
+  // A right click on a page card opens the page's menu (taken at the window: see rightClick.ts).
+  useRightClick((target, x, y, blocked) => {
+    const card = target.closest<HTMLElement>('.page-card[data-key]')
+    const key = card?.dataset.key
+    if (!card || key === undefined || !gridRef.current?.contains(card)) return false
+    setMenu({ key, x, y, note: blocked ? BLOCKED_NOTE : undefined })
+    return true
+  })
 
   function handleDrop() {
     if (draggingIndex === null || overIndex === null || draggingIndex === overIndex) {
@@ -83,7 +94,7 @@ export function PageGrid({
 
   return (
     <>
-      <div className="page-grid">
+      <div className="page-grid" ref={gridRef}>
         {pages.map((page, index) => (
           <PageThumbnail
             key={page.key}
@@ -102,7 +113,6 @@ export function PageGrid({
             onExtract={onExtract}
             onDuplicate={onDuplicate}
             onEditText={onEditText}
-            onMenu={(key, x, y) => setMenu({ key, x, y })}
           />
         ))}
       </div>
@@ -113,6 +123,7 @@ export function PageGrid({
           y={menu.y}
           label={`${menuIndex + 1}쪽`}
           entries={entriesFor(menu.key)}
+          note={menu.note}
           onClose={() => setMenu(null)}
         />
       )}

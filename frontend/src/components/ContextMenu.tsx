@@ -18,6 +18,8 @@ interface ContextMenuProps {
   y: number
   entries: MenuEntry[]
   label: string
+  /** A line of explanation under the items. */
+  note?: string
   onClose: () => void
 }
 
@@ -25,7 +27,7 @@ interface ContextMenuProps {
  * The menu a right click (or the menu key, Shift+F10) opens: kept inside the window, worked with the arrow keys
  * and Enter, and closed by Esc, a click elsewhere, scrolling or leaving the window.
  */
-export function ContextMenu({ x, y, entries, label, onClose }: ContextMenuProps) {
+export function ContextMenu({ x, y, entries, label, note, onClose }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null)
   const [place, setPlace] = useState({ left: x, top: y })
 
@@ -107,6 +109,11 @@ export function ContextMenu({ x, y, entries, label, onClose }: ContextMenuProps)
             {entry.shortcut && <kbd>{entry.shortcut}</kbd>}
           </button>
         ),
+      )}
+      {note && (
+        <p className="context-menu-note" role="note">
+          {note}
+        </p>
       )}
     </div>
   )

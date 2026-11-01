@@ -31,6 +31,7 @@ import { lineOfCover, refitted } from '../refit'
 import { asLines, asTable, selectableLines } from '../textSelect'
 import type { PlacedText } from '../textSelect'
 import { FITTING } from '../types'
+import { BLOCKED_NOTE, useRightClick } from '../rightClick'
 import { ContextMenu } from './ContextMenu'
 import type { MenuEntry } from './ContextMenu'
 import { OcrFixBar } from './OcrFixBar'
@@ -291,7 +292,10 @@ export function TextEditor({
   /** Text selection: the page's text is picked with the mouse and copied, as in a PDF viewer; nothing is edited. */
   const [selecting, setSelecting] = useState(false)
   /** The right-click menu, where it was opened and what it offers. */
-  const [menu, setMenu] = useState<{ x: number; y: number; label: string; entries: MenuEntry[] } | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number; label: string; entries: MenuEntry[]; note?: string } | null>(
+    null,
+  )
+  const overlayRef = useRef<HTMLDivElement>(null)
   /** The recognized line whose text is being corrected (the scan left as it is). */
   const [fixing, setFixing] = useState<number | null>(null)
   /** Pages whose note about boxes rewritten by an earlier version was closed. */
@@ -1494,9 +1498,29 @@ export function TextEditor({
     }
   }
 
-  function openMenu(target: HTMLElement, clientX: number, clientY: number) {
-    setMenu({ x: clientX, y: clientY, ...menuFor(target, clientX, clientY) })
+  function openMenu(target: HTMLElement, clientX: number, clientY: number, note?: string) {
+    setMenu({ x: clientX, y: clientY, note, ...menuFor(target, clientX, clientY) })
   }
+
+  // A right click anywhere in the editor - the page, the grey around it, the ribbon, the notices - opens the
+  // editor's menu (taken at the window, so an extension on the page cannot take it away first).
+  useRightClick((target, x, y, blocked) => {
+    const overlay = overlayRef.current
+    if (!overlay) return false
+    if (!overlay.contains(target)) {
+      // The menu key with nothing focused: the menu it opens is the editor's (openMenuByKey), not the browser's.
+      return target === document.body || target === document.documentElement
+    }
+    if (target.closest('.context-menu')) return true
+    // In a dialog over the editor (help, fonts) and in a box being typed in: the browser's menu, to copy and paste.
+    if (target.closest('[role="dialog"][aria-modal="true"]') !== overlay) return false
+    if (target.closest('input, textarea, select')) return false
+    const typing = target.closest('[data-index], [data-added]')
+    if (typing && typing === document.activeElement) return false
+    if (!data || data.rotated) return false
+    openMenu(target as HTMLElement, x, y, blocked ? BLOCKED_NOTE : undefined)
+    return true
+  })
 
   /** The menu key (or Shift+F10): the menu of what is picked, or of the page. */
   function openMenuByKey() {
@@ -2035,7 +2059,7 @@ export function TextEditor({
   }, [])
 
   return (
-    <div className="te-overlay" role="dialog" aria-modal="true" aria-label="텍스트 편집">
+    <div className="te-overlay" role="dialog" aria-modal="true" aria-label="텍스트 편집" ref={overlayRef}>
       <header className="te-header rb-header">
         <div className="rb-top">
           <button type="button" className="rb-back" onClick={close} title="페이지 목록으로 돌아갑니다 (Esc)">
@@ -2514,23 +2538,7 @@ export function TextEditor({
         </p>
       )}
 
-      <main
-        className="te-main"
-        ref={mainRef}
-        // The whole page area, the grey around the page too: a right click anywhere here is the editor's.
-        onContextMenu={
-          data && !data.rotated
-            ? (e) => {
-                const target = e.target as HTMLElement
-                // Typing in a box: the browser's own menu (paste, spelling) is the one wanted.
-                const typing = target.closest('[data-index], [data-added]')
-                if (typing && typing === document.activeElement) return
-                e.preventDefault()
-                openMenu(target, e.clientX, e.clientY)
-              }
-            : undefined
-        }
-      >
+      <main className="te-main" ref={mainRef}>
         {!data && !error && (
           <p className="te-notice">
             불러오는 중…
@@ -2718,7 +2726,16 @@ export function TextEditor({
           onClose={() => setFixing(null)}
         />
       )}
-      {menu && <ContextMenu x={menu.x} y={menu.y} label={menu.label} entries={menu.entries} onClose={() => setMenu(null)} />}
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          label={menu.label}
+          entries={menu.entries}
+          note={menu.note}
+          onClose={() => setMenu(null)}
+        />
+      )}
       <footer className="te-statusbar" aria-label="상태 표시줄">
         <span className="te-group">
           <button type="button" onClick={() => void navigate(-1)} disabled={position <= 0} title="이전 페이지 (Ctrl+←)" aria-label="이전 페이지">

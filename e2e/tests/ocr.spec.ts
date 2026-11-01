@@ -292,3 +292,40 @@ test('in text selection a scan\'s recognized lines are all picked with Ctrl+A an
   const copied = (await page.evaluate(() => navigator.clipboard.readText())).replace(/\s+/g, '')
   expect(copied).toBe('스캔문서글자인식시험연락처010-2345-6789')
 })
+
+test('recognized lines shown on the page are picked with a drag and copied, and still picked and rewritten with clicks', async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.goto('/')
+  await page.locator('input[type=file]').setInputFiles({ name: 'scan.pdf', mimeType: 'application/pdf', buffer: await scan(page) })
+  await page.getByRole('button', { name: '나중에' }).click()
+  await page.locator('button[title="텍스트 편집"]').first().click()
+  await page.getByRole('dialog', { name: '텍스트 편집' }).getByRole('button', { name: '글자 인식(OCR)' }).click()
+  const title = page.locator('.te-ocr-line[data-ocr="0"]')
+  const phone = page.locator('.te-ocr-line[data-ocr="1"]')
+  await expect(phone).toBeVisible({ timeout: 60_000 })
+
+  // A drag from the first line to the end of the second, with no mode to turn on.
+  const from = (await title.boundingBox())!
+  const to = (await phone.boundingBox())!
+  await page.mouse.move(from.x + 2, from.y + from.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(to.x + to.width - 2, to.y + to.height / 2, { steps: 10 })
+  await page.mouse.up()
+  await page.keyboard.press('Control+c')
+  const copied = (await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, '\n')
+  expect(copied.split('\n').map((l) => l.replace(/\s+/g, '')).filter(Boolean)).toEqual([
+    '스캔문서글자인식시험',
+    '연락처010-2345-6789',
+  ])
+
+  // A click still picks one line, and a double click rewrites it.
+  await phone.click()
+  await expect(phone).toHaveClass(/picked/)
+  await page.keyboard.press('Control+c')
+  expect((await page.evaluate(() => navigator.clipboard.readText())).replace(/\s+/g, '')).toBe('연락처010-2345-6789')
+  await phone.dblclick()
+  await expect(page.locator('.te-box[data-added]')).toBeFocused()
+})

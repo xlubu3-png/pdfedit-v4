@@ -33,7 +33,7 @@ import type { AddedImage, AddedText, AppInfo, FontChoice, OcrText, PageItem, Pag
 import { fitPageZoom, fitZoom, previewDpi, PX_PER_PT_AT_100, zoomStep } from '../zoom'
 import { HelpDialog } from './HelpDialog'
 import { MissingFontDialog } from './MissingFontDialog'
-import { TextSelectLayer } from './TextSelectLayer'
+import { OcrLineText, TextSelectLayer } from './TextSelectLayer'
 import { StyleBar, StyleInfo, ZoomControl } from './StyleBar'
 import type { ImageView, StyleView } from './StyleBar'
 import {
@@ -1526,6 +1526,11 @@ export function TextEditor({
         else undo()
         return
       }
+      // Text dragged over across recognized lines is copied as the browser picked it, not the line picked.
+      const dragged = window.getSelection()
+      if (ctrl && code === 'KeyC' && dragged && !dragged.isCollapsed && dragged.anchorNode?.parentElement?.closest('.te-ocr-line')) {
+        return
+      }
       // Ctrl+C copies the line, unless text is selected inside the box being typed in: that is a text copy.
       if (ocrPicked !== null && !inField && !box && (ctrl ? code === 'KeyC' : e.key === 'Enter')) {
         e.preventDefault()
@@ -2220,7 +2225,7 @@ export function TextEditor({
                         key={`ocr${i}`}
                         className={`te-ocr-line${ocrPicked === i ? ' picked' : ''}${line.score < UNSURE ? ' unsure' : ''}`}
                         data-ocr={i}
-                        title={`${line.text}${line.score < UNSURE ? ` (인식이 불확실합니다: 확신도 ${Math.round(line.score * 100)}%)` : ''}\n클릭: 고르기 (Ctrl+C 복사) · 두 번 클릭: 고쳐 쓰기`}
+                        title={`${line.text}${line.score < UNSURE ? ` (인식이 불확실합니다: 확신도 ${Math.round(line.score * 100)}%)` : ''}\n클릭: 고르기 (Ctrl+C 복사) · 끌기: 여러 줄 글자 선택 (Ctrl+C 복사) · 두 번 클릭: 고쳐 쓰기`}
                         style={{
                           left: (line.x - data.originX) * scale,
                           top: (data.pageHeight - (line.y + line.height - data.originY)) * scale,
@@ -2233,7 +2238,13 @@ export function TextEditor({
                           setOcrPicked(i)
                         }}
                         onDoubleClick={() => void rewriteLine(i)}
-                      />
+                      >
+                        <OcrLineText
+                          text={line.text}
+                          vertical={line.height >= 1.5 * line.width}
+                          across={(line.height >= 1.5 * line.width ? line.width : line.height) * scale}
+                        />
+                      </div>
                     ),
                   )}
                 {data.runs.map((run) => (

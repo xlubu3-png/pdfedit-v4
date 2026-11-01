@@ -7,6 +7,38 @@ interface TextSelectLayerProps {
 }
 
 /**
+ * A recognized line's text in see-through letters inside its outline, stretched to the outline's length: a drag
+ * from one outline over the others picks their text to copy, as in a PDF viewer, while a click still picks the line.
+ *
+ * @param across how thick the line is (its height, or its width when it runs down the page), pixels
+ */
+export function OcrLineText({ text, vertical, across }: { text: string; vertical: boolean; across: number }) {
+  const ref = useRef<HTMLSpanElement>(null)
+  useLayoutEffect(() => {
+    const span = ref.current
+    const outline = span?.parentElement
+    if (!span || !outline) return
+    span.style.transform = ''
+    const natural = vertical ? span.offsetHeight : span.offsetWidth
+    const length = vertical ? outline.clientHeight : outline.clientWidth
+    if (natural > 0 && length > 0) span.style.transform = `${vertical ? 'scaleY' : 'scaleX'}(${length / natural})`
+  })
+  return (
+    <>
+      <span
+        ref={ref}
+        className={`te-ocr-text${vertical ? ' vertical' : ''}`}
+        style={{ fontSize: across * 0.85, lineHeight: `${across}px` }}
+      >
+        {vertical ? text.replace(/\s+/g, '') : text}
+      </span>
+      {/* Each line copied on a line of its own. */}
+      <br />
+    </>
+  )
+}
+
+/**
  * The page's text laid over its picture in see-through letters, as a PDF viewer does, so it can be picked with the
  * mouse across lines and copied with Ctrl+C: each line where it is on the page, stretched to the page's length of
  * it, in reading order with a line break after each.

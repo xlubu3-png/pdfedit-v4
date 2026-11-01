@@ -1,4 +1,4 @@
-import { Fragment, useLayoutEffect, useRef } from 'react'
+import { Fragment, memo, useLayoutEffect, useMemo, useRef } from 'react'
 import { readingOrder } from '../textSelect'
 import type { SelectableLine } from '../textSelect'
 
@@ -6,23 +6,30 @@ interface TextSelectLayerProps {
   lines: SelectableLine[]
 }
 
+interface OcrLineTextProps {
+  text: string
+  vertical: boolean
+  /** How thick the line is (its height, or its width when it runs down the page), pixels. */
+  across: number
+  /** How long the line is on the page (its width, or its height when it runs down the page), pixels. */
+  length: number
+}
+
 /**
  * A recognized line's text in see-through letters inside its outline, stretched to the outline's length: a drag
  * from one outline over the others picks their text to copy, as in a PDF viewer, while a click still picks the line.
- *
- * @param across how thick the line is (its height, or its width when it runs down the page), pixels
+ * Measured again only when the line or the zoom changes: a scanned page has a hundred of these, and the editor draws
+ * itself again on every save and every pick.
  */
-export function OcrLineText({ text, vertical, across }: { text: string; vertical: boolean; across: number }) {
+export const OcrLineText = memo(function OcrLineText({ text, vertical, across, length }: OcrLineTextProps) {
   const ref = useRef<HTMLSpanElement>(null)
   useLayoutEffect(() => {
     const span = ref.current
-    const outline = span?.parentElement
-    if (!span || !outline) return
+    if (!span) return
     span.style.transform = ''
     const natural = vertical ? span.offsetHeight : span.offsetWidth
-    const length = vertical ? outline.clientHeight : outline.clientWidth
     if (natural > 0 && length > 0) span.style.transform = `${vertical ? 'scaleY' : 'scaleX'}(${length / natural})`
-  })
+  }, [text, vertical, across, length])
   return (
     <>
       <span
@@ -36,7 +43,7 @@ export function OcrLineText({ text, vertical, across }: { text: string; vertical
       <br />
     </>
   )
-}
+})
 
 /**
  * The page's text laid over its picture in see-through letters, as a PDF viewer does, so it can be picked with the
@@ -45,7 +52,7 @@ export function OcrLineText({ text, vertical, across }: { text: string; vertical
  */
 export function TextSelectLayer({ lines }: TextSelectLayerProps) {
   const ref = useRef<HTMLDivElement>(null)
-  const ordered = readingOrder(lines)
+  const ordered = useMemo(() => readingOrder(lines), [lines])
 
   // Each line stretched (or squeezed) to the length it has on the page, so a drag picks the letters it passes over.
   useLayoutEffect(() => {
@@ -60,7 +67,7 @@ export function TextSelectLayer({ lines }: TextSelectLayerProps) {
         span.style.transform = turn ? `rotate(${-turn}deg) ${stretch}` : stretch
       }
     })
-  })
+  }, [ordered])
 
   return (
     <div className="te-textlayer" ref={ref} aria-label="쪽의 글자 (끌어서 고르고 Ctrl+C로 복사)">

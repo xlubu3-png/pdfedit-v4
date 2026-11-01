@@ -1311,6 +1311,11 @@ export function TextEditor({
   }
 
   const scale = data ? zoom * PX_PER_PT_AT_100 : 0
+  /** The page's text for text selection (only while it is on). */
+  const selectable = useMemo(
+    () => (selecting && data && scale > 0 ? selectableLines(data, runStates, ocrLines, rewritten, added, scale) : []),
+    [selecting, data, runStates, ocrLines, rewritten, added, scale],
+  )
   const dpi = previewDpi(scale, window.devicePixelRatio || 1)
   const stale = loadedRevision !== revision
 
@@ -1485,6 +1490,11 @@ export function TextEditor({
           if (layer) window.getSelection()?.selectAllChildren(layer)
           return
         }
+        if (!ctrl && !e.altKey && (e.key === '?' || (code === 'Slash' && e.shiftKey))) {
+          e.preventDefault()
+          setHelpOpen(true)
+          return
+        }
         const passes =
           ctrl &&
           (code === 'KeyS' ||
@@ -1576,6 +1586,7 @@ export function TextEditor({
         return
       }
       if (e.key === 'Escape') {
+        if (!box && !inField) window.getSelection()?.removeAllRanges()
         putRange(null)
         if (adding) setAdding(false)
         else if (box || inField) el?.blur()
@@ -2243,6 +2254,7 @@ export function TextEditor({
                           text={line.text}
                           vertical={line.height >= 1.5 * line.width}
                           across={(line.height >= 1.5 * line.width ? line.width : line.height) * scale}
+                          length={(line.height >= 1.5 * line.width ? line.height : line.width) * scale}
                         />
                       </div>
                     ),
@@ -2306,7 +2318,7 @@ export function TextEditor({
               </div>
             )}
             {scale > 0 && selecting && (
-              <TextSelectLayer lines={selectableLines(data, runStates, ocrLines, rewritten, added, scale)} />
+              <TextSelectLayer lines={selectable} />
             )}
           </div>
         )}

@@ -77,11 +77,13 @@ public class PdfExportService {
         int areas = 0;
         int removed = 0;
         List<Integer> picturePages = new ArrayList<>();
+        PageCopies copies = new PageCopies();
         try (PDDocument output = new PDDocument()) {
             for (PageSpec spec : pages) {
                 PDDocument source = sources.computeIfAbsent(spec.documentId(), this::loadSource);
                 PDPage sourcePage = source.getPage(spec.pageIndex());
                 PDPage imported = output.importPage(sourcePage);
+                copies.add(source, sourcePage);
 
                 PageEdits edits = store.pageEditsSnapshot(spec.documentId(), spec.pageIndex());
                 if (!edits.isEmpty()) {
@@ -117,8 +119,10 @@ public class PdfExportService {
             RedactionReport report = areas == 0 ? RedactionReport.NONE
                     : new RedactionReport(areas, removed, List.copyOf(picturePages));
             if (flatten) {
-                return new Exported(rasterize(output), report);
+                return new Exported(rasterize(output, copies), report);
             }
+            // The title, bookmarks, form fields and links go along; nothing of the pages left out does.
+            copies.finish(output, true, true);
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             output.save(out);
             return new Exported(out.toByteArray(), report);
@@ -127,8 +131,8 @@ public class PdfExportService {
         }
     }
 
-    /** A document of one picture per page, each as big as the page it shows. */
-    private static byte[] rasterize(PDDocument document) throws IOException {
+    /** A document of one picture per page, each as big as the page it shows, with the title and bookmarks. */
+    private static byte[] rasterize(PDDocument document, PageCopies copies) throws IOException {
         PDFRenderer renderer = new PDFRenderer(document);
         try (PDDocument flat = new PDDocument()) {
             for (int i = 0; i < document.getNumberOfPages(); i++) {
@@ -141,6 +145,7 @@ public class PdfExportService {
                     cs.drawImage(JPEGFactory.createFromImage(flat, image, 0.9f), 0, 0, size.getWidth(), size.getHeight());
                 }
             }
+            copies.finish(flat, true, false);
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             flat.save(out);
             return out.toByteArray();

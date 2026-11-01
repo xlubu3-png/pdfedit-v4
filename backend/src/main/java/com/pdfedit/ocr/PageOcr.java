@@ -1,9 +1,14 @@
 package com.pdfedit.ocr;
 
+import java.awt.Color;
+import java.awt.Font;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -49,6 +54,7 @@ public class PageOcr implements DisposableBean {
 
     private final TextEditService textEditService;
     private OcrEngine engine;
+    private final AtomicBoolean prepared = new AtomicBoolean();
 
     public PageOcr(TextEditService textEditService) {
         this.textEditService = textEditService;
@@ -135,6 +141,42 @@ public class PageOcr implements DisposableBean {
             }
         }
         return false;
+    }
+
+    /**
+     * Starts the recognition engine in the background, once per run of the app: called when a scan is opened, so
+     * that recognizing its first page does not also wait for the models to load and run for the first time (about
+     * half of the first page's five seconds). Quietly does nothing more if the engine cannot run here; recognizing
+     * then says so.
+     */
+    public void prepareInBackground() {
+        if (!prepared.compareAndSet(false, true)) {
+            return;
+        }
+        Thread.ofVirtual().name("ocr-warm-up").start(() -> {
+            try {
+                engine().read(warmUpPicture());
+            } catch (OrtException | RuntimeException | LinkageError e) {
+                log.info("OCR warm-up skipped: {}", e.toString());
+            }
+        });
+    }
+
+    /** A line of text to read once, so the detection and the reading both run before the first real page. */
+    private static BufferedImage warmUpPicture() {
+        BufferedImage image = new BufferedImage(640, 160, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = image.createGraphics();
+        try {
+            g.setColor(Color.WHITE);
+            g.fillRect(0, 0, image.getWidth(), image.getHeight());
+            g.setColor(Color.BLACK);
+            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 40));
+            g.drawString("문서 글자 인식 2023", 30, 95);
+        } finally {
+            g.dispose();
+        }
+        return image;
     }
 
     /** Loaded on first use: the models take a second or two and some memory, and most documents never need them. */

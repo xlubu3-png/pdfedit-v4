@@ -84,6 +84,9 @@ export function PageThumbnail({
         <img
           src={thumbnailUrl(page.documentId, page.pageIndex, 240, page.textRevision)}
           alt={`${page.sourceFileName} ${page.pageIndex + 1}쪽`}
+          // Drawn by the server page by page: a long document asks only for the pages scrolled to.
+          loading="lazy"
+          decoding="async"
           style={{ transform: `rotate(${page.rotation}deg)` }}
         />
       </div>

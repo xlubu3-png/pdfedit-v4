@@ -113,3 +113,38 @@ test('in the editor a right click beside the page opens the page menu, without a
   await page.keyboard.press('Escape')
   await expect(page.getByRole('menu')).toHaveCount(0)
 })
+
+test('changes to the page list are undone with Ctrl+Z and redone with Ctrl+Y, even after every page was taken out', async ({
+  page,
+}) => {
+  await page.goto('/')
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'undo.pdf',
+    mimeType: 'application/pdf',
+    buffer: simplePdf(['Undo line'], 3),
+  })
+  await expect(page.getByText('3페이지')).toBeVisible()
+  const cards = page.locator('.page-card')
+
+  await cards.nth(1).locator('button[title="페이지 삭제"]').click()
+  await expect(page.getByText('2페이지')).toBeVisible()
+  await page.keyboard.press('Control+z')
+  await expect(page.getByText('3페이지')).toBeVisible()
+  await expect(cards.nth(1).locator('img')).toHaveAttribute('alt', /2쪽$/)
+  await page.keyboard.press('Control+y')
+  await expect(page.getByText('2페이지')).toBeVisible()
+
+  const first = cards.first().locator('img')
+  await cards.first().locator('button[title="오른쪽으로 회전"]').click()
+  await expect(first).toHaveAttribute('style', /rotate\(90deg\)/)
+  await page.getByRole('button', { name: '실행 취소', exact: true }).click()
+  await expect(first).toHaveAttribute('style', /rotate\(0deg\)/)
+  await page.getByRole('button', { name: '다시 실행', exact: true }).click()
+  await expect(first).toHaveAttribute('style', /rotate\(90deg\)/)
+
+  await page.keyboard.press('Control+a')
+  await page.keyboard.press('Delete')
+  await expect(cards).toHaveCount(0)
+  await page.getByRole('button', { name: /되돌리기/ }).click()
+  await expect(cards).toHaveCount(2)
+})

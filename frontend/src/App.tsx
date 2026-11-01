@@ -51,16 +51,19 @@ import {
   FolderOpen,
   GitCompareArrows,
   Printer,
+  Redo2,
   RotateCcw,
   RotateCw,
   ScanText,
   Search,
   SquareCheck,
   Trash,
+  Undo2,
 } from 'lucide-react'
 import type { AppInfo, AppSettings, PageItem, ReplaceResult, UpdateInfo, UploadResponse } from './types'
 import { downloadBlob } from './download'
 import { errorText } from './errors'
+import { usePageList } from './pageHistory'
 
 /**
  * The name the screen shows. The installed program, its folders and its installer keep the name WINTECH_PDF:
@@ -91,7 +94,9 @@ const rotate = (p: PageItem, delta: 90 | -90): PageItem => ({
 })
 
 function App() {
-  const [pages, setPages] = useState<PageItem[]>([])
+  // The page list; what the user does to it (add, remove, move, turn) can be undone with Ctrl+Z.
+  const { pages, setPages, changePages, undo: undoPages, redo: redoPages, forget: forgetPageHistory, canUndo, canRedo } =
+    usePageList()
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState(false)
   const [editingKey, setEditingKey] = useState<string | null>(null)
@@ -181,7 +186,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [setPages])
 
   useEffect(() => {
     if (!restored) return
@@ -227,7 +232,7 @@ function App() {
           // -4: every permission bit, for a server that does not report them.
           ...(uploaded.unlocked ? { lockedPermissions: uploaded.permissions ?? -4 } : {}),
         }))
-        setPages((prev) => [...prev, ...newPages])
+        changePages((prev) => [...prev, ...newPages])
         if (uploaded.scanned) {
           scanned.files.push(uploaded.fileName)
           scanned.pages.push(...newPages)
@@ -324,11 +329,11 @@ function App() {
   }, [])
 
   function handleRotate(key: string, delta: 90 | -90) {
-    setPages((prev) => prev.map((p) => (p.key === key ? rotate(p, delta) : p)))
+    changePages((prev) => prev.map((p) => (p.key === key ? rotate(p, delta) : p)))
   }
 
   function handleDelete(key: string) {
-    setPages((prev) => prev.filter((p) => p.key !== key))
+    changePages((prev) => prev.filter((p) => p.key !== key))
     setSelectedKeys((prev) => {
       if (!prev.has(key)) return prev
       const next = new Set(prev)
@@ -363,7 +368,7 @@ function App() {
         rotation: 0,
         textRevision: 0,
       }
-      setPages((prev) => {
+      changePages((prev) => {
         if (!afterKey) return [...prev, newPage]
         const index = prev.findIndex((p) => p.key === afterKey)
         if (index === -1) return [...prev, newPage]
@@ -379,7 +384,7 @@ function App() {
   }
 
   function handleBulkRotate(delta: 90 | -90) {
-    setPages((prev) => prev.map((p) => (selectedKeys.has(p.key) ? rotate(p, delta) : p)))
+    changePages((prev) => prev.map((p) => (selectedKeys.has(p.key) ? rotate(p, delta) : p)))
   }
 
   /** Copies the pages, edits and all, each right after its original; afterwards each is edited on its own. */
@@ -403,7 +408,7 @@ function App() {
           ...(p.ocrLines === undefined ? {} : { ocrLines: p.ocrLines }),
         })
       }
-      setPages((prev) => prev.flatMap((p) => (copies.has(p.key) ? [p, copies.get(p.key)!] : [p])))
+      changePages((prev) => prev.flatMap((p) => (copies.has(p.key) ? [p, copies.get(p.key)!] : [p])))
     } catch (e) {
       setError(errorText(e, '페이지를 복제하지 못했습니다'))
     } finally {
@@ -412,7 +417,7 @@ function App() {
   }
 
   function handleBulkDelete() {
-    setPages((prev) => prev.filter((p) => !selectedKeys.has(p.key)))
+    changePages((prev) => prev.filter((p) => !selectedKeys.has(p.key)))
     clearSelection()
   }
 
@@ -509,7 +514,7 @@ function App() {
 
   const handleTextEdited = useCallback((key: string) => {
     setPages((prev) => prev.map((p) => (p.key === key ? { ...p, textRevision: p.textRevision + 1 } : p)))
-  }, [])
+  }, [setPages])
 
   const handleCloseEditor = useCallback(() => setEditingKey(null), [])
 
@@ -519,7 +524,7 @@ function App() {
     setPages((prev) =>
       prev.map((p) => (keys.has(`${p.documentId}:${p.pageIndex}`) ? { ...p, textRevision: p.textRevision + 1 } : p)),
     )
-  }, [])
+  }, [setPages])
 
   function handleNavigateEditor(delta: -1 | 1) {
     const next = pages[editingIndex + delta]
@@ -608,11 +613,26 @@ function App() {
     setSkippedVersion(update.latest)
   }
 
+  /** Takes back the last change of the page list (Ctrl+Z); the selection is dropped, its pages may be gone. */
+  function handleUndo() {
+    if (busy || !canUndo) return
+    undoPages()
+    clearSelection()
+  }
+
+  /** Does the last undone change again (Ctrl+Y, Ctrl+Shift+Z). */
+  function handleRedo() {
+    if (busy || !canRedo) return
+    redoPages()
+    clearSelection()
+  }
+
   function handleStartOver() {
     if (!window.confirm('모든 페이지와 수정 내용이 삭제되며 되돌릴 수 없습니다. 저장된 문서 사본도 함께 삭제됩니다. 모두 지울까요?')) return
     // The server keeps a copy of every uploaded file; starting over is the moment to remove them.
     for (const documentId of new Set(pages.map((p) => p.documentId))) void deleteDocument(documentId)
     setPages([])
+    forgetPageHistory() // the documents are deleted from the server too: there is nothing to go back to
     setSelectedKeys(new Set())
     setEditingKey(null)
     setRestoredNote(null)
@@ -626,7 +646,7 @@ function App() {
   const shortcut = useRef<(e: KeyboardEvent) => void>(() => {})
   useEffect(() => {
     shortcut.current = (e) => {
-      if (e.isComposing || e.keyCode === 229 || pages.length === 0 || passwordAsk !== null || lockAsk !== null) return
+      if (e.isComposing || e.keyCode === 229 || passwordAsk !== null || lockAsk !== null) return
       const el = e.target instanceof HTMLElement ? e.target : null
       // A page's tick box is not somewhere to type: Ctrl+D or Delete right after ticking one acts on the selection.
       const inField =
@@ -635,12 +655,26 @@ function App() {
         ) != null
       const ctrl = e.ctrlKey || e.metaKey
       const code = keyCode(e)
+      const elsewhere =
+        findOpen || redactOpen || compareOpen || hwpFile !== null || drawKey !== null || editingKey !== null || inField
+      // Undo and redo also when every page was taken out of the list: that is when they are wanted most.
+      if (!elsewhere && ctrl && !e.altKey && ((code === 'KeyZ' && e.shiftKey) || (code === 'KeyY' && !e.shiftKey))) {
+        e.preventDefault()
+        handleRedo()
+        return
+      }
+      if (!elsewhere && ctrl && !e.altKey && !e.shiftKey && code === 'KeyZ') {
+        e.preventDefault()
+        handleUndo()
+        return
+      }
+      if (pages.length === 0) return
       if (ctrl && (code === 'KeyF' || code === 'KeyH')) {
         e.preventDefault()
         setFindOpen(true)
         return
       }
-      if (findOpen || redactOpen || compareOpen || hwpFile !== null || drawKey !== null || editingKey !== null || inField) return
+      if (elsewhere) return
       if (ctrl && code === 'KeyS') {
         e.preventDefault()
         void handleExport()
@@ -807,6 +841,15 @@ function App() {
         </div>
       )}
 
+      {pages.length === 0 && canUndo && (
+        <div className="info-banner" role="status">
+          <span>목록에서 페이지를 모두 뺐습니다.</span>
+          <button type="button" onClick={handleUndo} disabled={busy}>
+            되돌리기 (Ctrl+Z)
+          </button>
+        </div>
+      )}
+
       {pages.length > 0 && (
         <>
           <div className="page-ribbon">
@@ -842,6 +885,20 @@ function App() {
                 />
               </RibbonGroup>
               <RibbonGroup label="편집">
+                <RibbonButton
+                  icon={<Undo2 />}
+                  label="실행 취소"
+                  title="페이지 목록의 마지막 변경(삭제·이동·회전·복제·추가)을 되돌립니다 (Ctrl+Z)"
+                  onClick={handleUndo}
+                  disabled={busy || !canUndo}
+                />
+                <RibbonButton
+                  icon={<Redo2 />}
+                  label="다시 실행"
+                  title="되돌린 변경을 다시 합니다 (Ctrl+Y)"
+                  onClick={handleRedo}
+                  disabled={busy || !canRedo}
+                />
                 <RibbonButton icon={<Search />} label="찾아 바꾸기" title="모든 페이지에서 글자를 찾아 바꿉니다 (Ctrl+F)" onClick={() => setFindOpen(true)} disabled={busy} />
                 <RibbonButton
                   icon={<SquareCheck />}
@@ -953,7 +1010,7 @@ function App() {
             pages={pages}
             selectedKeys={selectedKeys}
             busy={busy}
-            onReorder={setPages}
+            onReorder={changePages}
             onRotate={handleRotate}
             onDelete={handleDelete}
             onToggleSelect={handleToggleSelect}

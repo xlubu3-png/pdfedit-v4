@@ -339,6 +339,9 @@ public class TextEditService {
             if (!edits.isEmpty()) {
                 applyEdits(src, pdf, pageIndex, out, imported, edits, newFontCache(), "");
             }
+            // Only this page is saved: what points from it into the rest of the document (an annotation's /P) would
+            // take the whole document along, a big scan made again on every edit.
+            PageCopies.cutPagesNotIn(out);
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
             out.save(bos);
             return bos.toByteArray();

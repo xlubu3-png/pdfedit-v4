@@ -447,3 +447,15 @@ test('when an extension swallows right clicks whole, the menu opens as the butto
   await expect(lineMenu).toBeVisible()
   await expect(lineMenu.getByRole('note')).toContainText('확장 프로그램')
 })
+
+test('taking back the upload of a scan (Ctrl+Z) takes the offer to recognize it with it', async ({ page }) => {
+  await page.goto('/')
+  await page.locator('input[type=file]').setInputFiles({ name: 'scan.pdf', mimeType: 'application/pdf', buffer: await scan(page) })
+  const offer = page.getByText('스캔한 문서로 보입니다')
+  await expect(offer).toBeVisible()
+
+  await page.keyboard.press('Control+z')
+
+  await expect(page.locator('.page-card')).toHaveCount(0)
+  await expect(offer).toHaveCount(0)
+})

@@ -102,3 +102,102 @@ describe('PageGrid right-click menu', () => {
     expect(onDelete).not.toHaveBeenCalled()
   })
 })
+
+describe('PageGrid moving pages', () => {
+  const three: PageItem[] = [0, 1, 2].map((i) => ({
+    key: `doc-2-${i}`,
+    documentId: 'doc-2',
+    sourceFileName: '보고서.pdf',
+    pageIndex: i,
+    rotation: 0,
+    textRevision: 0,
+  }))
+  const order = (list: PageItem[]) => list.map((p) => p.pageIndex + 1).join('')
+
+  function renderThree(selected: string[] = []) {
+    const onReorder = vi.fn()
+    const noop = () => {}
+    const view = render(
+      <PageGrid
+        pages={three}
+        selectedKeys={new Set(selected)}
+        busy={false}
+        onReorder={onReorder}
+        onRotate={noop}
+        onDelete={noop}
+        onToggleSelect={noop}
+        onInsertBlankAfter={noop}
+        onExtract={noop}
+        onDuplicate={noop}
+        onEditText={noop}
+        onRedact={noop}
+        onOcr={noop}
+        onPrint={noop}
+      />,
+    )
+    const cards = Array.from(view.container.querySelectorAll<HTMLElement>('.page-card'))
+    // Cards side by side, 180 px wide with 20 px between them.
+    cards.forEach((card, i) => {
+      card.getBoundingClientRect = () =>
+        ({ left: i * 200, right: i * 200 + 180, top: 0, bottom: 260, width: 180, height: 260, x: i * 200, y: 0 }) as DOMRect
+    })
+    return { cards, onReorder }
+  }
+
+  it('moves a page to the front, the back, or one place from its menu', () => {
+    const { cards, onReorder } = renderThree()
+
+    fireEvent.contextMenu(cards[2])
+    fireEvent.click(screen.getByRole('menuitem', { name: '맨 앞으로' }))
+    fireEvent.contextMenu(cards[0])
+    fireEvent.click(screen.getByRole('menuitem', { name: /뒤로 한 칸/ }))
+    fireEvent.contextMenu(cards[0])
+
+    expect(onReorder.mock.calls.map(([list]) => order(list))).toEqual(['312', '213'])
+    // Already first: it cannot go further forward.
+    expect(screen.getByRole('menuitem', { name: '맨 앞으로' })).toHaveProperty('disabled', true)
+  })
+
+  it('moves all picked pages together when one of them is right-clicked', () => {
+    const { cards, onReorder } = renderThree(['doc-2-1', 'doc-2-2'])
+
+    fireEvent.contextMenu(cards[2])
+    fireEvent.click(screen.getByRole('menuitem', { name: /앞으로 한 칸 \(고른 2쪽\)/ }))
+
+    expect(order(onReorder.mock.calls[0][0])).toBe('231')
+  })
+
+  it('moves a page dragged with the mouse before the page it is let go on', () => {
+    const { cards, onReorder } = renderThree()
+    const grid = cards[0].parentElement!
+
+    fireEvent.pointerDown(cards[2], { button: 0, buttons: 1, pointerId: 1, pointerType: 'mouse', clientX: 490, clientY: 100 })
+    fireEvent.pointerMove(grid, { buttons: 1, pointerId: 1, pointerType: 'mouse', clientX: 20, clientY: 100 })
+    expect(cards[0].classList.contains('drop-before')).toBe(true)
+    expect(cards[2].classList.contains('dragging')).toBe(true)
+    fireEvent.pointerUp(grid, { pointerId: 1, pointerType: 'mouse', clientX: 20, clientY: 100 })
+
+    expect(order(onReorder.mock.calls[0][0])).toBe('312')
+    expect(cards[2].classList.contains('dragging')).toBe(false)
+  })
+
+  it('leaves a click, a press on a button and a drag let go with Esc as they were', () => {
+    const { cards, onReorder } = renderThree()
+    const grid = cards[0].parentElement!
+
+    fireEvent.pointerDown(cards[1], { button: 0, buttons: 1, pointerId: 1, pointerType: 'mouse', clientX: 290, clientY: 100 })
+    fireEvent.pointerMove(grid, { buttons: 1, pointerId: 1, pointerType: 'mouse', clientX: 292, clientY: 101 })
+    fireEvent.pointerUp(grid, { pointerId: 1, pointerType: 'mouse', clientX: 292, clientY: 101 })
+
+    fireEvent.pointerDown(cards[1].querySelector('button')!, { button: 0, buttons: 1, pointerId: 2, pointerType: 'mouse', clientX: 290, clientY: 240 })
+    fireEvent.pointerMove(grid, { buttons: 1, pointerId: 2, pointerType: 'mouse', clientX: 20, clientY: 100 })
+    fireEvent.pointerUp(grid, { pointerId: 2, pointerType: 'mouse' })
+
+    fireEvent.pointerDown(cards[1], { button: 0, buttons: 1, pointerId: 3, pointerType: 'mouse', clientX: 290, clientY: 100 })
+    fireEvent.pointerMove(grid, { buttons: 1, pointerId: 3, pointerType: 'mouse', clientX: 20, clientY: 100 })
+    fireEvent.keyDown(window, { key: 'Escape' })
+    fireEvent.pointerUp(grid, { pointerId: 3, pointerType: 'mouse' })
+
+    expect(onReorder).not.toHaveBeenCalled()
+  })
+})

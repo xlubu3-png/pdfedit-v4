@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import type { Page } from '@playwright/test'
 import { simplePdf } from './fixtures'
 
 test('a duplicated page comes right after its original, with what was typed on it', async ({ page }) => {
@@ -147,4 +148,62 @@ test('changes to the page list are undone with Ctrl+Z and redone with Ctrl+Y, ev
   await expect(cards).toHaveCount(0)
   await page.getByRole('button', { name: /되돌리기/ }).click()
   await expect(cards).toHaveCount(2)
+})
+
+/** The pages of the list in order, by their number in the uploaded file ("3,1,2"). */
+async function listOrder(page: Page): Promise<string> {
+  const alts = await page.locator('.page-card img').evaluateAll((imgs) => imgs.map((i) => i.getAttribute('alt') ?? ''))
+  return alts.map((alt) => /(\d+)쪽$/.exec(alt)?.[1]).join(',')
+}
+
+test('pages are moved by dragging them, also when an extension stops the browser drag events', async ({ page }) => {
+  // What "allow drag / right click" extensions do, so that no site can stop them.
+  await page.addInitScript(() => {
+    for (const type of ['dragstart', 'dragover', 'drop']) document.addEventListener(type, (e) => e.stopPropagation(), true)
+  })
+  await page.goto('/')
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'order.pdf',
+    mimeType: 'application/pdf',
+    buffer: simplePdf(['Order line'], 3),
+  })
+  await expect(page.getByText('3페이지')).toBeVisible()
+  const cards = page.locator('.page-card')
+  expect(await listOrder(page)).toBe('1,2,3')
+
+  await cards.nth(2).locator('.thumbnail-frame').dragTo(cards.nth(0).locator('.thumbnail-frame'), {
+    targetPosition: { x: 10, y: 60 },
+  })
+  await expect.poll(() => listOrder(page)).toBe('3,1,2')
+
+  // A drag is a step of its own: Ctrl+Z puts the pages back.
+  await page.keyboard.press('Control+z')
+  await expect.poll(() => listOrder(page)).toBe('1,2,3')
+})
+
+test('pages are moved from the right-click menu, the ribbon and with Ctrl+arrows', async ({ page }) => {
+  await page.goto('/')
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'moves.pdf',
+    mimeType: 'application/pdf',
+    buffer: simplePdf(['Move line'], 3),
+  })
+  await expect(page.getByText('3페이지')).toBeVisible()
+  const cards = page.locator('.page-card')
+
+  await cards.nth(0).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: '맨 뒤로' }).click()
+  await expect.poll(() => listOrder(page)).toBe('2,3,1')
+
+  // The page now last, picked, goes one place forward with Ctrl+←, and back again with the ribbon.
+  await cards.nth(2).locator('.page-select input').check()
+  await page.keyboard.press('Control+ArrowLeft')
+  await expect.poll(() => listOrder(page)).toBe('2,1,3')
+  await page.getByRole('button', { name: '뒤로', exact: true }).click()
+  await expect.poll(() => listOrder(page)).toBe('2,3,1')
+
+  page.once('dialog', (dialog) => void dialog.accept('1'))
+  await cards.nth(2).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: /다른 자리로 옮기기/ }).click()
+  await expect.poll(() => listOrder(page)).toBe('1,2,3')
 })

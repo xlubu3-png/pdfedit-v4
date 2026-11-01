@@ -40,6 +40,8 @@ import { TextEditor } from './components/TextEditor'
 import { UploadZone } from './components/UploadZone'
 import { RibbonButton, RibbonGroup, RibbonPanel } from './components/Ribbon'
 import {
+  ArrowLeft,
+  ArrowRight,
   CopyPlus,
   Eraser,
   EyeOff,
@@ -65,6 +67,7 @@ import type { AppInfo, AppSettings, PageItem, ReplaceResult, UpdateInfo, UploadR
 import { downloadBlob } from './download'
 import { errorText } from './errors'
 import { usePageList } from './pageHistory'
+import { canMoveBy, moveBy } from './pageOrder'
 import { shrinkMessage, type ShrinkReport } from './shrink'
 
 /**
@@ -387,6 +390,12 @@ function App() {
     }
   }
 
+  /** The selected pages one place earlier or later (Ctrl+← / Ctrl+→, the ribbon): one step Ctrl+Z takes back. */
+  function handleMoveSelected(delta: -1 | 1) {
+    if (busy || selectedKeys.size === 0) return
+    changePages((prev) => moveBy(prev, selectedKeys, delta))
+  }
+
   function handleBulkRotate(delta: 90 | -90) {
     changePages((prev) => prev.map((p) => (selectedKeys.has(p.key) ? rotate(p, delta) : p)))
   }
@@ -521,6 +530,14 @@ function App() {
       setBusy(false)
     }
   }
+
+  // The scan offer counts only its pages still in the list: an upload taken back (Ctrl+Z) takes the offer with it.
+  const listedKeys = new Set(pages.map((p) => p.key))
+  const scanPagesListed = scanSuggest?.pages.filter((p) => listedKeys.has(p.key)) ?? []
+  const scanStillListed =
+    scanPagesListed.length > 0
+      ? { files: [...new Set(scanPagesListed.map((p) => p.sourceFileName))], pages: scanPagesListed }
+      : null
 
   const editingIndex = editingKey === null ? -1 : pages.findIndex((p) => p.key === editingKey)
   const editingPage = editingIndex >= 0 ? pages[editingIndex] : null
@@ -705,6 +722,9 @@ function App() {
       } else if (e.key === 'Delete' && selectedKeys.size > 0) {
         e.preventDefault()
         handleBulkDelete()
+      } else if (ctrl && !e.shiftKey && !e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && selectedKeys.size > 0) {
+        e.preventDefault()
+        handleMoveSelected(e.key === 'ArrowLeft' ? -1 : 1)
       } else if (!ctrl && !e.altKey && code === 'KeyR' && selectedKeys.size > 0) {
         e.preventDefault()
         handleBulkRotate(e.shiftKey ? -90 : 90)
@@ -810,13 +830,13 @@ function App() {
         </div>
       )}
 
-      {scanSuggest && !ocrProgress && (
+      {scanStillListed && !ocrProgress && (
         <div className="info-banner update-banner" role="status">
           <span>
-            스캔한 문서로 보입니다: {scanSuggest.files.join(', ')}. 글자 인식(OCR)을 하면 내보낸 PDF에서 글자를
+            스캔한 문서로 보입니다: {scanStillListed.files.join(', ')}. 글자 인식(OCR)을 하면 내보낸 PDF에서 글자를
             검색·복사할 수 있습니다 (쪽당 2초쯤).
           </span>
-          <button type="button" className="primary" onClick={() => void handleOcr(scanSuggest.pages)} disabled={busy}>
+          <button type="button" className="primary" onClick={() => void handleOcr(scanStillListed.pages)} disabled={busy}>
             글자 인식
           </button>
           <button type="button" onClick={() => setScanSuggest(null)}>
@@ -922,6 +942,20 @@ function App() {
                 />
               </RibbonGroup>
               <RibbonGroup label="선택한 페이지">
+                <RibbonButton
+                  icon={<ArrowLeft />}
+                  label="앞으로"
+                  title="선택한 페이지를 한 칸 앞으로 옮깁니다 (Ctrl+←). 페이지 카드를 끌어 옮기거나, 오른쪽 클릭 메뉴로 맨 앞·맨 뒤·원하는 자리로 옮길 수도 있습니다."
+                  onClick={() => handleMoveSelected(-1)}
+                  disabled={busy || !canMoveBy(pages, selectedKeys, -1)}
+                />
+                <RibbonButton
+                  icon={<ArrowRight />}
+                  label="뒤로"
+                  title="선택한 페이지를 한 칸 뒤로 옮깁니다 (Ctrl+→)"
+                  onClick={() => handleMoveSelected(1)}
+                  disabled={busy || !canMoveBy(pages, selectedKeys, 1)}
+                />
                 <RibbonButton
                   icon={<RotateCcw />}
                   label="왼쪽 회전"

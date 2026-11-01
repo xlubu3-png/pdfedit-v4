@@ -7,6 +7,11 @@ name: 설치 파일 빌드
 on:
   push:
     branches: [master]
+    # Only documents changed (README, release notes, browser tests): the installer would be the same.
+    # A release ('Run workflow') always builds.
+    paths-ignore:
+      - '**.md'
+      - 'e2e/**'
   workflow_dispatch:
     inputs:
       publish:
@@ -17,9 +22,10 @@ on:
 permissions:
   contents: write
 
+# Builds after a push and releases ('Run workflow') wait in queues of their own: a newer push replaces a build
+# still running, and never touches a release being published (one queue for both cancelled it mid-upload).
 concurrency:
-  group: installer-${{ github.ref }}
-  # A newer push replaces a build still running; a release being published is never cut off.
+  group: installer-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:

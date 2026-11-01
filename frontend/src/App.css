@@ -169,6 +169,35 @@ button.primary:disabled {
   opacity: 0.4;
 }
 
+/* Dragging pages to move them: no text picked on the way, the hand closed, and a bar where they will land. */
+.page-grid {
+  user-select: none;
+}
+
+.page-grid.sorting,
+.page-grid.sorting * {
+  cursor: grabbing !important;
+}
+
+.page-card.drop-before::before,
+.page-card.drop-after::after {
+  content: '';
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  width: 4px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.page-card.drop-before::before {
+  left: -10px;
+}
+
+.page-card.drop-after::after {
+  right: -10px;
+}
+
 .page-card.selected {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-bg) inset, 0 0 0 1px var(--accent);

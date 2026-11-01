@@ -1,4 +1,3 @@
-import type { DragEvent } from 'react'
 import { thumbnailUrl } from '../api'
 import type { PageItem } from '../types'
 import {
@@ -14,12 +13,12 @@ import {
 interface PageThumbnailProps {
   page: PageItem
   index: number
+  /** Being moved: shown faint while the drag lasts. */
   isDragging: boolean
+  /** The moved pages would land right before or after this card: a bar shows on that side. */
+  dropSide?: 'before' | 'after' | null
   isSelected: boolean
   busy: boolean
-  onDragStart: (index: number) => void
-  onDragOver: (index: number) => void
-  onDrop: () => void
   onRotate: (key: string, delta: 90 | -90) => void
   onDelete: (key: string) => void
   onToggleSelect: (key: string) => void
@@ -33,11 +32,9 @@ export function PageThumbnail({
   page,
   index,
   isDragging,
+  dropSide = null,
   isSelected,
   busy,
-  onDragStart,
-  onDragOver,
-  onDrop,
   onRotate,
   onDelete,
   onToggleSelect,
@@ -48,19 +45,11 @@ export function PageThumbnail({
 }: PageThumbnailProps) {
   return (
     <div
-      className={`page-card${isDragging ? ' dragging' : ''}${isSelected ? ' selected' : ''}`}
-      // Which page a right click on the card is for (the page list's menu, PageGrid).
+      className={`page-card${isDragging ? ' dragging' : ''}${isSelected ? ' selected' : ''}${
+        dropSide ? ` drop-${dropSide}` : ''
+      }`}
+      // Which page the card is, for a right click (the page list's menu) and for moving it (PageGrid).
       data-key={page.key}
-      draggable={!busy}
-      onDragStart={() => onDragStart(index)}
-      onDragOver={(e: DragEvent<HTMLDivElement>) => {
-        e.preventDefault()
-        onDragOver(index)
-      }}
-      onDrop={(e: DragEvent<HTMLDivElement>) => {
-        e.preventDefault()
-        onDrop()
-      }}
     >
       <div className="page-number">{index + 1}</div>
       {page.ocrLines !== undefined && page.ocrLines > 0 && (

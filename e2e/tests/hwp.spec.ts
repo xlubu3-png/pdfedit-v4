@@ -87,3 +87,24 @@ test('a Hangul document opens in the HWP editor, is edited and saved as HWPX and
   await expect(view).toBeHidden()
   expect(outside).toEqual([])
 })
+
+test('a new Hangul document is made from the first screen, typed in and saved as HWPX', async ({ page }) => {
+  await page.goto('/')
+  await page.getByRole('button', { name: '새 한글 문서' }).click()
+
+  const view = page.getByRole('dialog', { name: '한글 문서 편집' })
+  await expect(view.locator('.te-title')).toContainText(/새 문서 · 1쪽/, { timeout: 60_000 })
+  const studio = page.frameLocator('[data-testid=hwp-host] iframe')
+  const canvas = studio.locator('canvas').first()
+  await expect(canvas).toBeVisible()
+  const box = (await canvas.boundingBox())!
+  await page.mouse.click(box.x + box.width / 2, box.y + 120)
+  await page.keyboard.type('새 문서 작성 확인')
+
+  const [hwpx] = await Promise.all([page.waitForEvent('download'), view.getByRole('button', { name: 'HWPX로 저장' }).click()])
+  expect(hwpx.suggestedFilename()).toBe('새 문서.hwpx')
+  expect(zipEntry(readFileSync(await hwpx.path()), 'Contents/section0.xml')).toContain('새 문서 작성 확인')
+
+  await view.getByRole('button', { name: /페이지 목록/ }).click()
+  await expect(view).toBeHidden()
+})

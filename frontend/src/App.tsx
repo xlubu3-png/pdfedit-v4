@@ -50,6 +50,7 @@ import {
   FileLock,
   FileOutput,
   FilePlus,
+  FilePen,
   FolderOpen,
   GitCompareArrows,
   Printer,
@@ -123,7 +124,8 @@ function App() {
   const [redactOpen, setRedactOpen] = useState(false)
   const [compareOpen, setCompareOpen] = useState(false)
   /** A Hangul document open in the HWP editor, or null. */
-  const [hwpFile, setHwpFile] = useState<File | null>(null)
+  /** The Hangul document open in the HWP editor: a file, or a new empty document (file null); null when none is. */
+  const [hwpDoc, setHwpDoc] = useState<{ file: File | null; key: string } | null>(null)
   /** The page the redaction areas are being drawn on, or null. */
   const [drawKey, setDrawKey] = useState<string | null>(null)
   /** Export every page as a picture, so nothing of the original (covered-up) text stays in the file. */
@@ -207,7 +209,7 @@ function App() {
     const problems: string[] = []
     if (skipped.length > 0) problems.push(`PDF·한글 문서가 아니라서 건너뛴 파일: ${skipped.join(', ')}`)
     if (hwps.length > 0) {
-      setHwpFile(hwps[0])
+      setHwpDoc({ file: hwps[0], key: `${hwps[0].name}-${hwps[0].lastModified}` })
       if (hwps.length > 1) {
         problems.push(`한글 문서는 한 번에 하나씩 엽니다. 열지 않은 파일: ${hwps.slice(1).map((f) => f.name).join(', ')}`)
       }
@@ -315,7 +317,7 @@ function App() {
   const filesDropped = useRef<(files: File[]) => void>(() => {})
   useEffect(() => {
     filesDropped.current = (files) => {
-      if (editingKey === null && hwpFile === null && !busy) void handleFiles(files)
+      if (editingKey === null && hwpDoc === null && !busy) void handleFiles(files)
     }
   })
   useEffect(() => {
@@ -686,7 +688,7 @@ function App() {
       const ctrl = e.ctrlKey || e.metaKey
       const code = keyCode(e)
       const elsewhere =
-        findOpen || redactOpen || compareOpen || hwpFile !== null || drawKey !== null || editingKey !== null || inField
+        findOpen || redactOpen || compareOpen || hwpDoc !== null || drawKey !== null || editingKey !== null || inField
       // Undo and redo also when every page was taken out of the list: that is when they are wanted most.
       if (!elsewhere && ctrl && !e.altKey && ((code === 'KeyZ' && e.shiftKey) || (code === 'KeyY' && !e.shiftKey))) {
         e.preventDefault()
@@ -798,6 +800,16 @@ function App() {
       </header>
 
       <UploadZone onFiles={handleFiles} busy={busy} />
+      <div className="start-actions">
+        <button
+          type="button"
+          onClick={() => setHwpDoc({ file: null, key: `new-${Date.now()}` })}
+          disabled={busy}
+          title="빈 한글 문서를 만들어 한글 편집 화면에서 엽니다. HWPX·HWP로 저장합니다 (PC 밖으로 나가지 않음)."
+        >
+          <FilePen size={16} aria-hidden="true" /> 새 한글 문서
+        </button>
+      </div>
 
       {restoredNote && (
         <div className="info-banner">
@@ -1133,7 +1145,7 @@ function App() {
         />
       )}
 
-      {hwpFile && <HwpEditor key={`${hwpFile.name}-${hwpFile.lastModified}`} file={hwpFile} onClose={() => setHwpFile(null)} />}
+      {hwpDoc && <HwpEditor key={hwpDoc.key} file={hwpDoc.file} onClose={() => setHwpDoc(null)} />}
 
       {redactOpen && drawKey === null && (
         <RedactDialog

@@ -8,9 +8,13 @@ import { formatOf, HWP_STUDIO_URL, savedName } from '../hwp'
 import type { HwpFormat } from '../hwp'
 
 interface HwpEditorProps {
-  file: File
+  /** The document to open; null starts a new, empty one (saved as "새 문서.hwpx"). */
+  file: File | null
   onClose: () => void
 }
+
+/** The name a new document is saved under until the user renames the saved file. */
+export const NEW_DOCUMENT_NAME = '새 문서.hwpx'
 
 function download(bytes: Uint8Array, fileName: string) {
   downloadBlob(new Blob([new Uint8Array(bytes)], { type: 'application/octet-stream' }), fileName)
@@ -22,6 +26,7 @@ function download(bytes: Uint8Array, fileName: string) {
  * the document leaves the PC.
  */
 export function HwpEditor({ file, onClose }: HwpEditorProps) {
+  const fileName = file?.name ?? NEW_DOCUMENT_NAME
   const host = useRef<HTMLDivElement>(null)
   const editor = useRef<RhwpEditor | null>(null)
   const [pageCount, setPageCount] = useState<number | null>(null)
@@ -42,9 +47,22 @@ export function HwpEditor({ file, onClose }: HwpEditorProps) {
           return
         }
         editor.current = opened
-        const loaded = await opened.loadFile(await file.arrayBuffer(), file.name)
-        if (cancelled) return
-        setPageCount(loaded.pageCount)
+        if (file) {
+          const loaded = await opened.loadFile(await file.arrayBuffer(), file.name)
+          if (cancelled) return
+          setPageCount(loaded.pageCount)
+        } else {
+          // The studio's own "새 문서" (Alt+N); it makes the document a moment after it is asked.
+          await opened.commands.execute('file:new-doc')
+          let pages = 0
+          for (let tries = 0; tries < 50 && pages === 0 && !cancelled; tries++) {
+            pages = await opened.pageCount().catch(() => 0)
+            if (pages === 0) await new Promise((resolve) => setTimeout(resolve, 100))
+          }
+          if (cancelled) return
+          if (pages === 0) throw new Error('새 문서를 만들지 못했습니다. 다시 시도해 주세요.')
+          setPageCount(pages)
+        }
         setStatus(null)
       } catch (e) {
         if (cancelled) return
@@ -53,7 +71,9 @@ export function HwpEditor({ file, onClose }: HwpEditorProps) {
         console.error(e)
         const why = errorText(e, '')
         setError(
-          why
+          !file && why
+            ? why
+            : why
             ? `한글 문서를 열지 못했습니다: ${why}`
             : '한글 문서를 열지 못했습니다. 파일이 손상되었거나 이 편집기가 읽지 못하는 형식일 수 있습니다.',
         )
@@ -72,7 +92,7 @@ export function HwpEditor({ file, onClose }: HwpEditorProps) {
     setSaving(true)
     setError(null)
     try {
-      const name = savedName(file.name, format)
+      const name = savedName(fileName, format)
       download(format === 'hwpx' ? await current.exportHwpx() : await current.exportHwp(), name)
       // The studio keeps a recovery copy until it is told the document was saved.
       await current.notifySaved(name).catch(() => undefined)
@@ -98,7 +118,7 @@ export function HwpEditor({ file, onClose }: HwpEditorProps) {
     onClose()
   }
 
-  const own = formatOf(file.name)
+  const own = formatOf(fileName)
   const other: HwpFormat = own === 'hwp' ? 'hwpx' : 'hwp'
   const ready = pageCount !== null
 
@@ -109,8 +129,8 @@ export function HwpEditor({ file, onClose }: HwpEditorProps) {
           <button type="button" className="rb-back" onClick={() => void close()} title="페이지 목록으로 돌아갑니다">
             <ArrowLeft size={16} aria-hidden="true" /> 페이지 목록
           </button>
-          <span className="te-title" title={file.name}>
-            한글 문서 · {file.name}
+          <span className="te-title" title={fileName}>
+            한글 문서 · {file ? fileName : '새 문서'}
             {ready && ` · ${pageCount}쪽`}
           </span>
           <span className="te-spacer" />

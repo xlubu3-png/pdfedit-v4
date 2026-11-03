@@ -1,3 +1,4 @@
+import { LICENSE_LINKS } from '../licenses'
 import { HELP_BASICS, SHORTCUT_GROUPS } from '../shortcuts'
 
 interface HelpDialogProps {
@@ -49,6 +50,20 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
               </div>
             ))}
           </div>
+        </section>
+
+        <section>
+          <h3>오픈소스 라이선스</h3>
+          <p className="help-note">이 프로그램에 들어 있는 오픈소스와 그 라이선스입니다. 새 탭에서 열립니다.</p>
+          <ul className="help-licenses">
+            {LICENSE_LINKS.map((link) => (
+              <li key={link.href}>
+                <a href={link.href} target="_blank" rel="noreferrer">
+                  {link.label}
+                </a>
+              </li>
+            ))}
+          </ul>
         </section>
 
         <div className="find-actions">

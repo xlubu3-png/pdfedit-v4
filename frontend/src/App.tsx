@@ -22,6 +22,7 @@ import { printPdf } from './print'
 import { redactionMessage } from './redaction'
 import { exportFileName } from './exportName'
 import { keptPermissions } from './lock'
+import { LICENSE_LINKS } from './licenses'
 import { DEFAULT_IMAGE_CHOICE, imageExportFileName, imageExportStem } from './imageExport'
 import type { ImageChoice } from './imageExport'
 import { ocrMessage, recognizeAll } from './ocr'
@@ -830,6 +831,16 @@ function App() {
               </button>
             </>
           )}
+          {' · '}
+          <a
+            className="link-button"
+            href={LICENSE_LINKS[0].href}
+            target="_blank"
+            rel="noreferrer"
+            title="이 프로그램에 들어 있는 오픈소스의 목록과 라이선스 원문을 새 탭에서 엽니다"
+          >
+            오픈소스 라이선스
+          </a>
         </p>
       </header>
 

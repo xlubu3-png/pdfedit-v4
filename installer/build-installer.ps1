@@ -39,6 +39,11 @@ Write-Host '== 2/4 staging =='
 if (Test-Path $work) { Remove-Item $work -Recurse -Force }
 New-Item -ItemType Directory -Force -Path (Join-Path $work 'input') | Out-Null
 Copy-Item $jar.FullName (Join-Path $work 'input\WINTECH_PDF.jar')
+# The open source the program holds and its licenses (made by bootJarWindows, see backend\notices.gradle):
+# installed next to the jar, in the program's app folder, as well as shown from inside the app.
+$notices = Join-Path $backend 'build\generated\notices\THIRD-PARTY-NOTICES.txt'
+if (-not (Test-Path $notices)) { throw 'THIRD-PARTY-NOTICES.txt was not made' }
+Copy-Item $notices (Join-Path $work 'input\THIRD-PARTY-NOTICES.txt')
 
 Write-Host '== 3/4 runtime (jlink) =='
 $modules = 'java.base,java.compiler,java.datatransfer,java.desktop,java.instrument,java.logging,' +

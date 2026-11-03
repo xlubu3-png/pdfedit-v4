@@ -2241,3 +2241,17 @@ kbd {
   color: var(--text);
   font-size: 12px;
 }
+
+/* The help's open source licenses. */
+.help-dialog .help-note {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.help-dialog .help-licenses {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.8;
+}

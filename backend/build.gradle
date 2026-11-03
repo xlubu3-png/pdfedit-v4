@@ -91,3 +91,5 @@ tasks.register('bootJarWindows', org.springframework.boot.gradle.tasks.bundling.
     }
     archiveClassifier = 'windows'
 }
+
+apply from: 'notices.gradle'

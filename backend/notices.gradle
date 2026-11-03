@@ -1,0 +1,195 @@
+// THIRD-PARTY-NOTICES.txt: the open source the program holds, with the copyright notices, NOTICE texts and
+// license texts their licenses ask to go along with it. Made from what is actually packed - the Java libraries
+// of runtimeClasspath and the frontend's production packages in package-lock.json - so a library added later
+// is listed by itself; one whose license cannot be told stops the build until it is added below.
+// Hand-kept texts (for parts that carry none) are in ../licenses/texts, see ../licenses/README.md.
+import groovy.json.JsonSlurper
+import java.nio.charset.StandardCharsets
+import java.util.zip.ZipFile
+
+def repoDir = layout.projectDirectory.dir('..').asFile
+def textsDir = new File(repoDir, 'licenses/texts')
+def hwpStudioDir = new File(repoDir, 'frontend/public/hwp-studio')
+def noticesFile = layout.buildDirectory.file('generated/notices/THIRD-PARTY-NOTICES.txt')
+
+// Java libraries whose jar holds no license file: the license the project publishes, and its texts.
+def javaWithoutFiles = [
+    'logback-core'   : ['EPL-1.0 또는 LGPL-2.1 중 EPL-1.0으로 사용', ['logback-LICENSE.txt', 'EPL-1.0.txt']],
+    'logback-classic': ['EPL-1.0 또는 LGPL-2.1 중 EPL-1.0으로 사용', ['logback-LICENSE.txt', 'EPL-1.0.txt']],
+    'onnxruntime'    : ['MIT', ['onnxruntime-LICENSE.txt', 'onnxruntime-ThirdPartyNotices.txt']],
+    'snakeyaml'      : ['Apache-2.0', ['snakeyaml-LICENSE.txt']],
+    'jspecify'       : ['Apache-2.0', ['jspecify-LICENSE.txt']],
+]
+// Frontend packages without a license file of their own.
+def npmWithoutFiles = [
+    '@rhwp/editor': new File(hwpStudioDir, 'LICENSE-rhwp.txt'),
+]
+
+def licenseName = { String raw ->
+    def text = raw.replaceAll(/\s+/, ' ')
+    if (text =~ /Apache License[\s\S]{0,60}Version 2\.0/) return 'Apache-2.0'
+    if (text.contains('Eclipse Public License') && text.contains('2.0')) return 'EPL-2.0 또는 GPL-2.0(Classpath Exception)'
+    if (text.contains('Permission is hereby granted, free of charge')) return 'MIT'
+    if (text.contains('Permission to use, copy, modify, and/or distribute this software')) return 'ISC'
+    return null
+}
+
+tasks.register('thirdPartyNotices') {
+    group = 'build'
+    description = 'Writes THIRD-PARTY-NOTICES.txt: the open source packed into the app and its licenses.'
+    def runtime = configurations.runtimeClasspath
+    inputs.files(runtime)
+    inputs.dir(textsDir)
+    inputs.files(new File(repoDir, 'frontend/package-lock.json'), new File(hwpStudioDir, 'LICENSE-rhwp.txt'),
+            new File(hwpStudioDir, 'VERSION.txt'), new File(hwpStudioDir, 'fonts/SourceHanSerifK-OFL.txt'),
+            file('src/main/resources/application.yml'))
+    outputs.file(noticesFile)
+    if (!project.hasProperty('prebuiltFrontend')) {
+        dependsOn 'npmInstall'
+    }
+
+    doLast {
+        def read = { File f -> new String(f.bytes, StandardCharsets.UTF_8).replace('\r\n', '\n').trim() }
+        def text = { String name -> read(new File(textsDir, name)) }
+        // Each different text once, with what it applies to.
+        def texts = new LinkedHashMap<String, Map>()
+        def addText = { String title, String body, String usedBy ->
+            def key = body.replaceAll(/\s+/, ' ')
+            def entry = texts.computeIfAbsent(key) { [title: title, body: body, users: new LinkedHashSet<String>()] }
+            entry.users << usedBy
+        }
+        def lines = { List<String> list -> list.collect { "  - $it" }.join('\n') }
+
+        // ---- Java libraries (the server) ----
+        def java = []
+        runtime.resolvedConfiguration.resolvedArtifacts.sort { it.moduleVersion.id.name }.each { artifact ->
+            def id = artifact.moduleVersion.id
+            def label = "${id.group}:${id.name} ${id.version}"
+            def license = null
+            new ZipFile(artifact.file).withCloseable { zip ->
+                zip.entries().toList()
+                        .findAll { it.name ==~ /(?i)META-INF\/[^\/]*(LICENSE|NOTICE)[^\/]*/ }
+                        .sort { it.name }
+                        .each { entry ->
+                            def body = new String(zip.getInputStream(entry).bytes, StandardCharsets.UTF_8).replace('\r\n', '\n').trim()
+                            if (body.isEmpty()) return
+                            def file = entry.name.substring('META-INF/'.length())
+                            if (file.toUpperCase().contains('NOTICE')) {
+                                addText("NOTICE (${id.name})", body, label)
+                                return
+                            }
+                            // The library's own license is in LICENSE(.txt/.md); others (FastDoubleParser-LICENSE) are of parts it holds.
+                            def own = file ==~ /(?i)LICENSE(\.\w+)?/
+                            if (own) license = licenseName(body)
+                            addText(own ? (licenseName(body) ?: "LICENSE (${id.name})") : "${licenseName(body) ?: 'LICENSE'} (${id.name}: ${file})", body, label)
+                        }
+            }
+            def known = javaWithoutFiles[id.name]
+            if (license == null && known != null) {
+                license = known[0]
+                known[1].each { addText(it.replace('.txt', ''), text(it), label) }
+            }
+            if (license == null) {
+                throw new GradleException("오픈소스 고지: ${label}의 라이선스를 알 수 없습니다. backend/notices.gradle의 javaWithoutFiles에 추가하세요.")
+            }
+            java << "$label — $license"
+        }
+
+        // ---- Frontend packages (the screen) ----
+        def lock = new JsonSlurper().parse(new File(repoDir, 'frontend/package-lock.json'))
+        def web = []
+        lock.packages.findAll { path, info -> path.startsWith('node_modules/') && !info.dev && !info.devOptional }
+                .sort { it.key }
+                .each { path, info ->
+                    def name = path.substring(path.lastIndexOf('node_modules/') + 'node_modules/'.length())
+                    def dir = new File(repoDir, "frontend/$path")
+                    def files = dir.isDirectory() ? (dir.listFiles().findAll { it.name ==~ /(?i)(LICEN[CS]E|NOTICE|COPYING).*/ }.sort { it.name }) : []
+                    if (files.isEmpty() && npmWithoutFiles[name] != null) files = [npmWithoutFiles[name]]
+                    if (files.isEmpty()) {
+                        throw new GradleException("오픈소스 고지: frontend/$path 에 라이선스 파일이 없습니다. npm ci를 하거나 backend/notices.gradle의 npmWithoutFiles에 추가하세요.")
+                    }
+                    def label = "$name ${info.version}"
+                    files.each { addText(info.license ?: it.name, read(it), label) }
+                    web << "$label — ${info.license}"
+                }
+
+        // ---- The Hangul editor (rhwp-studio), its fonts, the OCR models, the Java runtime ----
+        def rhwp = read(new File(hwpStudioDir, 'VERSION.txt')).readLines().first()
+        addText('MIT (rhwp)', read(new File(hwpStudioDir, 'LICENSE-rhwp.txt')), 'rhwp-studio')
+        addText('BSD-3-Clause (Skia / CanvasKit)', text('skia-LICENSE.txt'), 'canvaskit-wasm (rhwp-studio에 포함)')
+        addText('SIL Open Font License 1.1', text('OFL-1.1.txt'), '한글 편집기의 OFL 글꼴')
+        addText('SIL Open Font License 1.1 (Source Han Serif K)', read(new File(hwpStudioDir, 'fonts/SourceHanSerifK-OFL.txt')),
+                'Source Han Serif K Old Hangul subset')
+        addText('LaTeX Project Public License 1.3c', text('LPPL-1.3c.txt'), 'Latin Modern Math (GUST Font License)')
+        addText('Apache-2.0 (PaddleOCR)', text('PaddleOCR-LICENSE.txt'), 'PaddleOCR PP-OCRv5 모델')
+        addText('Apache-2.0 (RapidOCR)', text('RapidOCR-LICENSE.txt'), 'RapidOCR ONNX 변환 모델')
+
+        def version = (file('src/main/resources/application.yml').text =~ /(?m)^\s*version:\s*"?([0-9.]+)/)[0][1]
+        def out = new StringBuilder()
+        out << """WINTECH 문서편집기 오픈소스 고지 (THIRD-PARTY NOTICES)
+=====================================================
+프로그램 버전 ${version}
+
+이 프로그램은 회사 안에서 쓰기 위해 만든 프로그램이며, 아래의 오픈소스 소프트웨어를 포함합니다.
+각 라이선스가 요구하는 대로 저작권 표시, 고지(NOTICE) 내용, 라이선스 원문을 이 파일에 싣습니다.
+오픈소스 부분의 사용·복제·배포는 각 라이선스의 조건을 따릅니다.
+
+목차
+  1. 구성 요소 목록
+  2. 라이선스 원문과 고지(NOTICE) 내용
+
+
+1. 구성 요소 목록
+-----------------
+
+[한글 문서 편집기 - 앱 안의 hwp-studio 폴더]
+  - ${rhwp} — MIT, Copyright (c) 2025-2026 Edward Kim (https://github.com/edwardkim/rhwp)
+  - canvaskit-wasm (Skia) — BSD-3-Clause, Copyright (c) 2011 Google Inc.
+  - rhwp가 포함한 Rust·npm 구성 요소와 그 라이선스: hwp-studio/THIRD_PARTY_LICENSES.md
+  - 글꼴 (목록: hwp-studio/fonts/FONTS.md)
+    · Pretendard, Noto Sans KR, Noto Serif KR, 나눔고딕, 나눔명조, 나눔고딕코딩, 고운바탕, 고운돋움, D2Coding,
+      스포카 한 산스, Source Han Serif K — SIL Open Font License 1.1
+    · Latin Modern Math — GUST Font License (LPPL 1.3c에 글꼴 이름을 바꿔 달라는 권고를 더한 것)
+    · 카페24 써라운드, 카페24 슈퍼매직 — 카페24 무료 글꼴 (https://fonts.cafe24.com)
+    · 행복고딕 — 행복나눔재단 무료 글꼴
+
+[화면 (JavaScript)]
+${lines(web)}
+
+[서버 (Java 라이브러리)]
+${lines(java)}
+
+[글자 인식(OCR) 모델 - PaddleOCR PP-OCRv5를 RapidOCR v3.10.0이 ONNX로 바꾼 것]
+  - det.onnx (ch_PP-OCRv5_det_mobile), rec-korean.onnx (korean_PP-OCRv5_rec_mobile) — Apache-2.0
+    (https://github.com/PaddlePaddle/PaddleOCR, https://github.com/RapidAI/RapidOCR)
+
+[Java 실행 환경]
+  - OpenJDK (Eclipse Temurin) — GPL-2.0 with Classpath Exception 및 그 밖의 라이선스.
+    원문은 설치 폴더의 runtime\\legal 폴더에 모듈별로 들어 있습니다.
+
+
+2. 라이선스 원문과 고지(NOTICE) 내용
+-----------------------------------
+"""
+        texts.values().eachWithIndex { entry, i ->
+            out << "\n\n===== [${i + 1}] ${entry.title} =====\n"
+            out << "적용: ${entry.users.join(', ')}\n\n"
+            out << entry.body << '\n'
+        }
+        def target = noticesFile.get().asFile
+        target.parentFile.mkdirs()
+        // With a byte order mark, so a browser and Notepad both read the Korean as UTF-8.
+        target.setBytes(('﻿' + out.toString().replace('\n', '\r\n')).getBytes(StandardCharsets.UTF_8))
+        logger.lifecycle("오픈소스 고지: Java ${java.size()}개, 화면 ${web.size()}개, 원문 ${texts.size()}개 -> ${target}")
+    }
+}
+
+// Inside the app (shown from the help: /THIRD-PARTY-NOTICES.txt) as well as next to it in the installed folder.
+['bootJar', 'bootJarWindows'].each { name ->
+    tasks.named(name) {
+        dependsOn 'thirdPartyNotices'
+        from(noticesFile) {
+            into 'BOOT-INF/classes/static'
+        }
+    }
+}

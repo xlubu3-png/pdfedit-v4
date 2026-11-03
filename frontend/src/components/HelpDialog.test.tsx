@@ -50,4 +50,12 @@ describe('editor tip', () => {
 
     expect(editorTipSeen()).toBe(true)
   })
+
+  it('links to the open source licenses', () => {
+    render(<HelpDialog onClose={() => {}} />)
+
+    const link = screen.getByRole('link', { name: /오픈소스 고지 전체/ })
+    expect(link.getAttribute('href')).toBe('/THIRD-PARTY-NOTICES.txt')
+    expect(screen.getByRole('link', { name: /rhwp 라이선스/ }).getAttribute('href')).toBe('/hwp-studio/LICENSE-rhwp.txt')
+  })
 })

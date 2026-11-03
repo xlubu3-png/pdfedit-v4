@@ -5,6 +5,7 @@ import {
   createBlankDocument,
   deleteDocument,
   duplicatePage,
+  exportImages,
   exportPdf,
   fetchAppInfo,
   fetchDocumentInfo,
@@ -21,6 +22,8 @@ import { printPdf } from './print'
 import { redactionMessage } from './redaction'
 import { exportFileName } from './exportName'
 import { keptPermissions } from './lock'
+import { DEFAULT_IMAGE_CHOICE, imageExportFileName, imageExportStem } from './imageExport'
+import type { ImageChoice } from './imageExport'
 import { ocrMessage, recognizeAll } from './ocr'
 import { keyCode } from './keys'
 import { dragHasFiles, pickPdfs } from './pdfFiles'
@@ -29,6 +32,7 @@ import { readSkippedVersion, shouldAnnounce, skipVersion } from './updateNotice'
 import { CompareView } from './components/CompareView'
 import { FindReplaceDialog } from './components/FindReplaceDialog'
 import { HwpEditor } from './components/HwpEditor'
+import { ImageExportDialog } from './components/ImageExportDialog'
 import { LockDialog } from './components/LockDialog'
 import { PasswordDialog } from './components/PasswordDialog'
 import { RetentionDialog } from './components/RetentionDialog'
@@ -59,6 +63,7 @@ import {
   RotateCw,
   ScanText,
   Search,
+  ImageDown,
   Shrink,
   SquareCheck,
   Trash,
@@ -114,6 +119,9 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   const [passwordAsk, setPasswordAsk] = useState<PasswordAsk | null>(null)
   const [lockAsk, setLockAsk] = useState<LockAsk | null>(null)
+  /** The pages "사진으로 내보내기" is asking about (picked: the selection rather than all), and the last choice. */
+  const [imageAsk, setImageAsk] = useState<{ pages: PageItem[]; picked: boolean } | null>(null)
+  const [imageChoice, setImageChoice] = useState<ImageChoice>(DEFAULT_IMAGE_CHOICE)
   /** Just-opened documents that look scanned: the screen offers to recognize their text. */
   const [scanSuggest, setScanSuggest] = useState<{ files: string[]; pages: PageItem[] } | null>(null)
   /** How far a text recognition run is; null when none runs. */
@@ -514,6 +522,32 @@ function App() {
     }
   }
 
+  /** 사진으로 내보내기: asks how, for the given pages, else the selected ones, else all. */
+  function askImageExport(target?: PageItem[]) {
+    if (busy) return
+    const picked = target === undefined && selectedKeys.size > 0
+    const chosen = target ?? (picked ? pages.filter((p) => selectedKeys.has(p.key)) : pages)
+    if (chosen.length > 0) setImageAsk({ pages: chosen, picked })
+  }
+
+  async function handleImageExport(target: PageItem[], choice: ImageChoice) {
+    setImageAsk(null)
+    setImageChoice(choice)
+    setBusy(true)
+    setError(null)
+    try {
+      const stem = imageExportStem(target, pages)
+      const { blob, redaction } = await exportImages(target, stem, choice.format, choice.dpi)
+      downloadBlob(blob, imageExportFileName(stem, target.length, choice.format))
+      const saved = target.length === 1 ? '사진 1장으로 저장했습니다.' : `사진 ${target.length}장을 ZIP 파일로 저장했습니다.`
+      setNotice([saved, redactionMessage(redaction)].filter(Boolean).join(' '))
+    } catch (e) {
+      setError(errorText(e, '사진으로 내보내지 못했습니다'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   /** @param locked from "암호 걸어 내보내기": ask for a password even when no page came protected */
   async function handleExport(locked = false) {
     if (pages.length === 0 || busy) return
@@ -678,7 +712,7 @@ function App() {
   const shortcut = useRef<(e: KeyboardEvent) => void>(() => {})
   useEffect(() => {
     shortcut.current = (e) => {
-      if (e.isComposing || e.keyCode === 229 || passwordAsk !== null || lockAsk !== null) return
+      if (e.isComposing || e.keyCode === 229 || passwordAsk !== null || lockAsk !== null || imageAsk !== null) return
       const el = e.target instanceof HTMLElement ? e.target : null
       // A page's tick box is not somewhere to type: Ctrl+D or Delete right after ticking one acts on the selection.
       const inField =
@@ -1055,6 +1089,17 @@ function App() {
                   disabled={busy}
                 />
                 <RibbonButton
+                  icon={<ImageDown />}
+                  label="사진으로 내보내기"
+                  title={
+                    selectedKeys.size > 0
+                      ? `선택한 ${selectedKeys.size}쪽을 JPG·PNG 사진으로 저장합니다`
+                      : '모든 페이지를 JPG·PNG 사진으로 저장합니다 (여러 쪽은 ZIP 파일 하나로)'
+                  }
+                  onClick={() => askImageExport()}
+                  disabled={busy}
+                />
+                <RibbonButton
                   icon={<FileLock />}
                   label="암호 걸어 내보내기"
                   title="열 때 암호를 묻는 PDF로 내려받습니다 (AES-256). 암호가 걸려 있던 문서는 원래의 인쇄·복사 제한도 다시 걸립니다."
@@ -1092,6 +1137,10 @@ function App() {
             onPrint={(key) => {
               const page = pages.find((p) => p.key === key)
               if (page) void handlePrint([page])
+            }}
+            onSaveImage={(key) => {
+              const page = pages.find((p) => p.key === key)
+              if (page) askImageExport([page])
             }}
           />
         </>
@@ -1181,6 +1230,17 @@ function App() {
           onLock={(password) => lockAsk.resolve({ password })}
           onPlain={() => lockAsk.resolve('plain')}
           onCancel={() => lockAsk.resolve(null)}
+        />
+      )}
+
+      {imageAsk && (
+        <ImageExportDialog
+          pageCount={imageAsk.pages.length}
+          picked={imageAsk.picked}
+          fromProtected={keptPermissions(imageAsk.pages) !== undefined}
+          initial={imageChoice}
+          onExport={(choice) => void handleImageExport(imageAsk.pages, choice)}
+          onCancel={() => setImageAsk(null)}
         />
       )}
     </div>

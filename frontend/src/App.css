@@ -2219,3 +2219,25 @@ kbd {
   opacity: 0.5;
   cursor: default;
 }
+
+/* 사진으로 내보내기: the kind of picture and how sharp. */
+.image-dialog .image-options {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.image-dialog legend {
+  padding: 0 4px;
+  font-size: 13px;
+  color: var(--text-h);
+}
+
+.image-dialog .image-note {
+  color: var(--text);
+  font-size: 12px;
+}

@@ -28,6 +28,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.pdfedit.dto.ExportRequest;
+import com.pdfedit.dto.ImageExportRequest;
 import com.pdfedit.dto.UploadResponse;
 import com.pdfedit.ocr.PageOcr;
 import com.pdfedit.redact.Redaction;
@@ -35,6 +36,7 @@ import com.pdfedit.redact.Redactor;
 import com.pdfedit.service.InvalidEditException;
 import com.pdfedit.service.PageCopies;
 import com.pdfedit.service.PageEdits;
+import com.pdfedit.service.PageImages;
 import com.pdfedit.service.PageRotationBaker;
 import com.pdfedit.service.PasswordRequiredException;
 import com.pdfedit.service.PdfProtector;
@@ -227,18 +229,44 @@ public class PdfController {
         byte[] pdf = request.password() == null || request.password().isBlank() ? result.pdf()
                 : PdfProtector.lock(result.pdf(), request.password(), request.permissions());
 
-        PdfExportService.RedactionReport redaction = result.redaction();
         return ResponseEntity.ok()
                 // filename*=UTF-8''... as well, so a Korean file name arrives intact instead of as question marks.
                 .header(HttpHeaders.CONTENT_DISPOSITION,
                         ContentDisposition.attachment().filename(fileName, StandardCharsets.UTF_8).build().toString())
-                // e.g. "areas=3;removed=41;pictures=2,5": what the screen reports after the download.
-                .header(REDACTION_HEADER, "areas=" + redaction.areas() + ";removed=" + redaction.glyphsRemoved()
-                        + ";pictures=" + redaction.picturePages().stream().map(String::valueOf)
-                                .collect(Collectors.joining(",")))
+                .header(REDACTION_HEADER, redactionReport(result.redaction()))
                 .header(SHRINK_HEADER, "pictures=" + result.shrink().pictures() + ";before=" + result.shrink().before()
                         + ";after=" + result.shrink().after())
                 .contentType(MediaType.APPLICATION_PDF)
                 .body(pdf);
+    }
+
+    /**
+     * 사진으로 내보내기: the pages as they would be exported (edits, redaction, rotation) drawn as pictures - one
+     * picture for one page, a ZIP of them for more.
+     */
+    @PostMapping("/export/images")
+    public ResponseEntity<byte[]> exportImages(@RequestBody ImageExportRequest request) throws IOException {
+        if (request.pages() == null || request.pages().isEmpty()) {
+            throw new InvalidEditException("내보낼 페이지가 없습니다.");
+        }
+        PdfExportService.Exported result = exportService.exportWithReport(request.pages(), false, false);
+        // The name goes into the ZIP's entries as well: no folders, nothing Windows refuses in a file name.
+        String requested = request.fileName() == null ? ""
+                : request.fileName().replaceAll("[\\p{Cntrl}\"\\\\/:*?<>|]", "_").replaceAll("(?i)\\.pdf$", "").trim();
+        String stem = requested.isEmpty() || requested.chars().allMatch(c -> c == '.') ? "pages" : requested;
+        PageImages.Images images = PageImages.render(result.pdf(), PageImages.Format.of(request.format()),
+                request.dpi() == null ? PageImages.DEFAULT_DPI : request.dpi(), stem);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
+                        .filename(images.fileName(), StandardCharsets.UTF_8).build().toString())
+                .header(REDACTION_HEADER, redactionReport(result.redaction()))
+                .contentType(MediaType.parseMediaType(images.contentType()))
+                .body(images.content());
+    }
+
+    /** e.g. "areas=3;removed=41;pictures=2,5": what the screen reports after the download. */
+    private static String redactionReport(PdfExportService.RedactionReport redaction) {
+        return "areas=" + redaction.areas() + ";removed=" + redaction.glyphsRemoved() + ";pictures="
+                + redaction.picturePages().stream().map(String::valueOf).collect(Collectors.joining(","));
     }
 }

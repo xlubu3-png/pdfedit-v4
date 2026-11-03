@@ -486,3 +486,32 @@ export async function exportPdf(
     shrink: parseShrinkReport(response.headers.get('X-Shrink-Report')),
   }
 }
+
+/**
+ * 사진으로 내보내기: the pages as they would be exported (edits, redaction, rotation) as pictures - one picture
+ * for one page, a ZIP of them for more. `stem` is the name without an extension.
+ */
+export async function exportImages(
+  pages: PageItem[],
+  stem: string,
+  format: 'jpg' | 'png',
+  dpi: number,
+): Promise<{ blob: Blob; redaction: RedactionReport | null }> {
+  const response = await call(`${BASE}/export/images`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      pages: pages.map((p) => ({ documentId: p.documentId, pageIndex: p.pageIndex, rotation: p.rotation })),
+      fileName: stem,
+      format,
+      dpi,
+    }),
+  })
+  if (!response.ok) {
+    throw await failure(response, '사진으로 내보내지 못했습니다')
+  }
+  return {
+    blob: await response.blob(),
+    redaction: parseRedactionReport(response.headers.get('X-Redaction-Report')),
+  }
+}

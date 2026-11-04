@@ -3,6 +3,8 @@ package com.pdfedit.controller;
 import java.io.IOException;
 import java.util.List;
 
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.pdmodel.PDDocument;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -16,9 +18,11 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.pdfedit.dto.PageTextDto;
 import com.pdfedit.dto.TextEditItem;
+import com.pdfedit.service.InvalidEditException;
 import com.pdfedit.service.PdfDocumentStore;
 import com.pdfedit.service.TextEditService;
 import com.pdfedit.text.AddedText;
+import com.pdfedit.text.RulingLines;
 
 /** In-place text editing of one page of an uploaded document. */
 @RestController
@@ -37,6 +41,20 @@ public class TextEditController {
     public PageTextDto textRuns(@PathVariable String documentId, @PathVariable int pageIndex) throws IOException {
         return textEditService.describePage(store.getContent(documentId), pageIndex,
                 store.pageEditsSnapshot(documentId, pageIndex));
+    }
+
+    /**
+     * The page's table borders (straight lines drawn on it), in points from the top-left of its visible area: with
+     * them, text copied from a table goes back into its cells ("표 모양으로 복사").
+     */
+    @GetMapping("/rulings")
+    public RulingLines.Lines rulings(@PathVariable String documentId, @PathVariable int pageIndex) throws IOException {
+        try (PDDocument document = Loader.loadPDF(store.getContent(documentId))) {
+            if (pageIndex < 0 || pageIndex >= document.getNumberOfPages()) {
+                throw new InvalidEditException("페이지 번호가 잘못되었습니다.");
+            }
+            return RulingLines.of(document.getPage(pageIndex));
+        }
     }
 
     @PutMapping("/text-edits")

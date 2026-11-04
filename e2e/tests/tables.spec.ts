@@ -72,3 +72,20 @@ test('Ctrl+C on cells dragged over in text selection carries the table for Excel
   expect(html).toMatch(/>19,770<\/td>/)
   expect(html).not.toContain('>NO<')
 })
+
+test('in the editor, Ctrl+C with nothing picked copies the page with its table, and a picked line goes out as text', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await openTable(page)
+
+  await page.locator('.te-layer').click({ position: { x: 5, y: 5 } })
+  await page.keyboard.press('Control+c')
+  await expect(page.locator('.te-status')).toContainText('엑셀에 붙이면')
+  const all = await clipboard(page)
+  expect(all.html).toContain('colspan="3"')
+  expect(all.text.replace(/\r\n/g, '\n')).toContain('2\t1-B\t\t19,770')
+
+  // A picked line: copied in the app (Ctrl+V pastes the line) and to the computer's clipboard as its letters.
+  await page.locator('.te-box', { hasText: '220,300' }).first().click()
+  await page.keyboard.press('Control+c')
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('220,300')
+})

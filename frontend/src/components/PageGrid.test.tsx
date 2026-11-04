@@ -29,6 +29,7 @@ function renderGrid({ busy = false, selected = [] as string[] } = {}) {
     onOcr: vi.fn(),
     onPrint: vi.fn(),
     onSaveImage: vi.fn(),
+    onSaveExcel: vi.fn(),
   }
   const view = render(<PageGrid pages={pages} selectedKeys={new Set(selected)} busy={busy} {...handlers} />)
   const card = (i: number) => view.container.querySelectorAll('.page-card')[i]
@@ -48,7 +49,7 @@ describe('PageGrid right-click menu', () => {
   })
 
   it('does what was picked to that page, and closes', () => {
-    const { card, onRotate, onEditText, onRedact, onOcr, onPrint, onSaveImage } = renderGrid()
+    const { card, onRotate, onEditText, onRedact, onOcr, onPrint, onSaveImage, onSaveExcel } = renderGrid()
 
     const pick = (i: number, name: RegExp) => {
       fireEvent.contextMenu(card(i))
@@ -60,6 +61,7 @@ describe('PageGrid right-click menu', () => {
     pick(1, /글자 인식/)
     pick(1, /이 페이지 인쇄/)
     pick(0, /사진으로 저장/)
+    pick(1, /엑셀 파일로 저장/)
 
     expect(onRotate).toHaveBeenCalledWith('doc-1-1', 90)
     expect(onEditText).toHaveBeenCalledWith('doc-1-0')
@@ -67,6 +69,7 @@ describe('PageGrid right-click menu', () => {
     expect(onOcr).toHaveBeenCalledWith('doc-1-1')
     expect(onPrint).toHaveBeenCalledWith('doc-1-1')
     expect(onSaveImage).toHaveBeenCalledWith('doc-1-0')
+    expect(onSaveExcel).toHaveBeenCalledWith('doc-1-1')
     expect(screen.queryByRole('menu')).toBeNull()
   })
 
@@ -137,6 +140,7 @@ describe('PageGrid moving pages', () => {
         onOcr={noop}
         onPrint={noop}
         onSaveImage={noop}
+        onSaveExcel={noop}
       />,
     )
     const cards = Array.from(view.container.querySelectorAll<HTMLElement>('.page-card'))

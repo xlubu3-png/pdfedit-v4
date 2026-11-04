@@ -150,3 +150,16 @@ export function asLines(cells: PlacedText[]): string {
     .map((c) => c.text.trim())
     .join('\n')
 }
+
+/** The recognized lines a text box rewrites (its cover lies over their middle): the box's text stands for them. */
+export function rewrittenLines(ocrLines: OcrText[], added: AddedText[]): Set<number> {
+  const covers = added.flatMap((b) => (b.cover ? [b.cover] : []))
+  return new Set(
+    ocrLines.flatMap((line, i) => {
+      const mx = line.x + line.width / 2
+      const my = line.y + line.height / 2
+      const covered = covers.some((c) => mx >= c.x && mx <= c.x + c.width && my >= c.y && my <= c.y + c.height)
+      return covered ? [i] : []
+    }),
+  )
+}

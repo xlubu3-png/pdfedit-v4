@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 import { tablePdf } from './fixtures'
@@ -88,4 +89,28 @@ test('in the editor, Ctrl+C with nothing picked copies the page with its table, 
   await page.locator('.te-box', { hasText: '220,300' }).first().click()
   await page.keyboard.press('Control+c')
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('220,300')
+})
+
+test('the page is saved as an Excel file laid out as the page: from the editor and from the page list', async ({ page }) => {
+  await openTable(page)
+
+  const [fromEditor] = await Promise.all([
+    page.waitForEvent('download'),
+    page.locator('.te-layer').click({ button: 'right', position: { x: 300, y: 700 } }).then(() =>
+      page.getByRole('menuitem', { name: /엑셀 파일로 저장/ }).click(),
+    ),
+  ])
+  expect(fromEditor.suggestedFilename()).toBe('quote.xlsx')
+  const editorFile = readFileSync((await fromEditor.path())!)
+  expect(editorFile.subarray(0, 2).toString('latin1')).toBe('PK')
+  // Stored, not compressed: the sheet's XML is readable in the file.
+  const sheet = editorFile.toString('utf8')
+  expect(sheet).toContain('<mergeCell ref="B4:D4"/>')
+  expect(sheet).toContain('<v>220300</v>')
+  expect(sheet).toContain('>1-A</t>')
+
+  await page.locator('.rb-back').click()
+  const [fromList] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: '엑셀로 내보내기' }).click()])
+  expect(fromList.suggestedFilename()).toBe('quote.xlsx')
+  await expect(page.locator('.info-banner')).toContainText('quote.xlsx로 저장했습니다')
 })

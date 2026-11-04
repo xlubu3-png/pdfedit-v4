@@ -29,3 +29,37 @@ export async function copyText(text: string): Promise<boolean> {
   field.remove()
   return copied
 }
+
+/**
+ * Puts text on the clipboard in two forms: HTML for programs that take tables (Excel, Hangul, Word - a table
+ * pastes into its cells) and plain text for the rest (Notepad). Whether it worked.
+ */
+export async function copyRich(plain: string, html: string): Promise<boolean> {
+  if (window.isSecureContext && navigator.clipboard && typeof ClipboardItem !== 'undefined') {
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/plain': new Blob([plain], { type: 'text/plain' }),
+          'text/html': new Blob([html], { type: 'text/html' }),
+        }),
+      ])
+      return true
+    } catch {
+      // refused: try the old way
+    }
+  }
+  // The old way: a copy the page answers itself, with both forms.
+  const put = (e: ClipboardEvent) => {
+    e.clipboardData?.setData('text/plain', plain)
+    e.clipboardData?.setData('text/html', html)
+    e.preventDefault()
+  }
+  document.addEventListener('copy', put, true)
+  try {
+    return document.execCommand('copy')
+  } catch {
+    return false
+  } finally {
+    document.removeEventListener('copy', put, true)
+  }
+}

@@ -22,6 +22,7 @@ import type {
 import { isKorean } from './errors'
 import { parseRedactionReport, type RedactionReport } from './redaction'
 import { parseShrinkReport, type ShrinkReport } from './shrink'
+import type { Rulings } from './tableGrid'
 
 const BASE = '/api/v1/pdf'
 
@@ -250,6 +251,15 @@ export async function fetchPageText(documentId: string, pageIndex: number): Prom
   const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/text-runs`)
   if (!response.ok) {
     throw await failure(response, '텍스트를 불러오지 못했습니다')
+  }
+  return response.json()
+}
+
+/** The page's table borders (points from its top-left), to copy a table into a spreadsheet's cells. */
+export async function fetchRulings(documentId: string, pageIndex: number): Promise<Rulings> {
+  const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/rulings`)
+  if (!response.ok) {
+    throw await failure(response, '표의 선을 읽지 못했습니다')
   }
   return response.json()
 }

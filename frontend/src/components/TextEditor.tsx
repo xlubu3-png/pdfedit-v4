@@ -18,6 +18,7 @@ import {
   saveAddedTexts,
   saveTextEdits,
   uploadImage,
+  fetchRulings,
 } from '../api'
 import type { TextEditPayload } from '../api'
 import { fontBaseName, missingFontNames, otherFormatFamily, reloadMessage } from '../fontHelp'
@@ -25,11 +26,13 @@ import { editorTipSeen, markEditorTipSeen } from '../editorTip'
 import { foreignChars, SIMILAR_ENOUGH } from '../fontMix'
 import { History } from '../history'
 import { keyCode } from '../keys'
-import { copyText } from '../clipboard'
+import { copyRich, copyText } from '../clipboard'
 import { ocrMessage, recognizeAll } from '../ocr'
 import { lineOfCover, refitted } from '../refit'
 import { asLines, asTable, selectableLines } from '../textSelect'
 import type { PlacedText } from '../textSelect'
+import { findTables, hasTable, layout, toHtml, toTsv } from '../tableGrid'
+import type { Table } from '../tableGrid'
 import { FITTING } from '../types'
 import { BLOCKED_NOTE, useRightClick } from '../rightClick'
 import { ContextMenu } from './ContextMenu'
@@ -404,6 +407,46 @@ export function TextEditor({
       cancelled = true
     }
   }, [documentId, pageIndex, reloadToken, putStates, putAdded, putImages])
+
+  /** The page's tables, from the lines drawn on it: copied text goes back into their cells (표 모양으로 복사). */
+  const [pageTables, setPageTables] = useState<{ page: string; tables: Table[] }>({ page: '', tables: [] })
+  const tablesPage = `${documentId}/${pageIndex}`
+  const tables = pageTables.page === tablesPage ? pageTables.tables : []
+  useEffect(() => {
+    let cancelled = false
+    fetchRulings(documentId, pageIndex)
+      .then((rulings) => {
+        if (!cancelled) setPageTables({ page: `${documentId}/${pageIndex}`, tables: findTables(rulings) })
+      })
+      // Without them a table is copied as rows of text parted by tabs, as before.
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [documentId, pageIndex])
+
+  // Ctrl+C on text dragged over in a table: the browser's copy (the letters, for Notepad) gets the table as HTML
+  // as well, so pasting into Excel puts each piece in its cell, with the borders and merged cells.
+  const tableOnCopy = useRef<(e: ClipboardEvent) => void>(() => {})
+  useEffect(() => {
+    tableOnCopy.current = (e) => {
+      const selection = window.getSelection()
+      if (e.defaultPrevented || !selection || selection.isCollapsed || !e.clipboardData) return
+      const at = selection.anchorNode?.parentElement
+      if (!at?.closest('.te-textlayer, .te-ocr-line')) return
+      const table = tableCopy(pickedText(selection), true)
+      if (!table) return
+      e.clipboardData.setData('text/plain', selection.toString())
+      e.clipboardData.setData('text/html', table.html)
+      e.preventDefault()
+      setStatus('고른 글자를 복사했습니다 · 엑셀에 붙이면 표 모양 그대로 들어갑니다')
+    }
+  })
+  useEffect(() => {
+    const listener = (e: ClipboardEvent) => tableOnCopy.current(e)
+    document.addEventListener('copy', listener)
+    return () => document.removeEventListener('copy', listener)
+  }, [])
 
   /** Bumped after every page was recognized: this page's lines are fetched again. */
   const [ocrToken, setOcrToken] = useState(0)
@@ -1257,7 +1300,36 @@ export function TextEditor({
       left: l.left,
       top: l.top,
       height: l.height,
+      width: l.width,
     }))
+  }
+
+  /**
+   * The text as the page's tables hold it, for a spreadsheet: HTML (merged cells, borders, widths) and the same as
+   * tab-separated text. Null when none of it is in a table drawn with lines.
+   *
+   * @param onlyPicked the text dragged over: the tables cut down to the cells it is in
+   */
+  function tableCopy(cells: PlacedText[], onlyPicked: boolean): { tsv: string; html: string } | null {
+    if (tables.length === 0) return null
+    const blocks = layout(cells, tables, onlyPicked)
+    return hasTable(blocks) ? { tsv: toTsv(blocks), html: toHtml(blocks) } : null
+  }
+
+  /** Copies the text as a table: into the page's table cells when it has lines drawn, else rows parted by tabs. */
+  async function copyTable(cells: PlacedText[], onlyPicked: boolean, what: string) {
+    const table = tableCopy(cells, onlyPicked)
+    if (!table) return copyPlain(asTable(cells), what)
+    const copied = await copyRich(table.tsv, table.html)
+    setStatus(copied ? `${what}을(를) 복사했습니다 · 엑셀에 붙이면 칸·테두리가 그대로 들어갑니다` : '복사하지 못했습니다')
+  }
+
+  /** Copies the text dragged over: as lines, and (when it is in a table) as the table too, for a spreadsheet. */
+  async function copyPicked(cells: PlacedText[]) {
+    const table = tableCopy(cells, true)
+    if (!table) return copyPlain(asLines(cells), '고른 글자')
+    const copied = await copyRich(asLines(cells), table.html)
+    setStatus(copied ? '고른 글자를 복사했습니다 · 엑셀에 붙이면 표 모양 그대로 들어갑니다' : '복사하지 못했습니다')
   }
 
   /** The text dragged over (on the recognized lines, or in text selection), each line's part with where it is. */
@@ -1271,8 +1343,17 @@ export function TextEditor({
         part.selectNodeContents(span)
         if (picked.compareBoundaryPoints(Range.START_TO_START, part) > 0) part.setStart(picked.startContainer, picked.startOffset)
         if (picked.compareBoundaryPoints(Range.END_TO_END, part) < 0) part.setEnd(picked.endContainer, picked.endOffset)
+        // In points from the page's top-left corner, as the page's text and table lines are measured.
         const rect = span.getBoundingClientRect()
-        return { text: part.toString(), left: rect.left, top: rect.top, height: rect.height }
+        const page = document.querySelector('.te-canvas img')?.getBoundingClientRect()
+        const unit = scale > 0 ? scale : 1
+        return {
+          text: part.toString(),
+          left: (rect.left - (page?.left ?? 0)) / unit,
+          top: (rect.top - (page?.top ?? 0)) / unit,
+          height: rect.height / unit,
+          width: rect.width / unit,
+        }
       })
   }
 
@@ -1381,8 +1462,8 @@ export function TextEditor({
       return {
         label: '고른 글자',
         entries: [
-          { label: '복사', shortcut: 'Ctrl+C', onSelect: () => void copyPlain(asLines(cells), '고른 글자') },
-          { label: '표 모양으로 복사 (엑셀)', onSelect: () => void copyPlain(asTable(cells), '고른 글자를 표 모양으로') },
+          { label: '복사', shortcut: 'Ctrl+C', onSelect: () => void copyPicked(cells) },
+          { label: '표 모양으로 복사 (엑셀)', onSelect: () => void copyTable(cells, true, '고른 글자를 표 모양으로') },
           { label: `‘${first.length > 12 ? first.slice(0, 12) + '…' : first}’ 찾기`, onSelect: () => onOpenFind(first.trim()) },
           { label: '이 부분 가리기 (개인정보)', onSelect: () => void redactOnScreen(pickedRects(pickedSelection)) },
           'separator',
@@ -1403,7 +1484,7 @@ export function TextEditor({
           { label: '이 줄 가리기 (개인정보)', onSelect: () => void redactOnScreen([ocrLine.getBoundingClientRect()]) },
           'separator',
           { label: '이 쪽 글자 모두 복사', onSelect: () => void copyPlain(asLines(pageText()), '이 쪽 글자') },
-          { label: '표 모양으로 모두 복사 (엑셀)', onSelect: () => void copyPlain(asTable(pageText()), '이 쪽 글자를 표 모양으로') },
+          { label: '표 모양으로 모두 복사 (엑셀)', onSelect: () => void copyTable(pageText(), false, '이 쪽 글자를 표 모양으로') },
         ],
       }
     }
@@ -1489,7 +1570,7 @@ export function TextEditor({
         'separator',
         { label: selecting ? '글자 선택 끝내기' : '글자 선택', shortcut: 'S', onSelect: () => toggleSelecting() },
         { label: '이 쪽 글자 모두 복사', onSelect: () => void copyPlain(asLines(pageText()), '이 쪽 글자') },
-        { label: '표 모양으로 모두 복사 (엑셀)', onSelect: () => void copyPlain(asTable(pageText()), '이 쪽 글자를 표 모양으로') },
+        { label: '표 모양으로 모두 복사 (엑셀)', onSelect: () => void copyTable(pageText(), false, '이 쪽 글자를 표 모양으로') },
         ...fix,
         'separator',
         { label: '실행 취소', shortcut: 'Ctrl+Z', disabled: history.undo === 0, onSelect: () => undo() },

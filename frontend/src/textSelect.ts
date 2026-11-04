@@ -121,6 +121,8 @@ export interface PlacedText {
   left: number
   top: number
   height: number
+  /** How long it is across; unknown for a text box (then only where it starts counts). */
+  width?: number
 }
 
 /**

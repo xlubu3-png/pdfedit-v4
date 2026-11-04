@@ -1035,6 +1035,13 @@ export function TextEditor({
     clipboard = { kind: 'text', look, from: { documentId, pageIndex } }
     pasteCount.current = 0
     setStatus('줄을 복사했습니다 (Ctrl+V로 붙여넣기)')
+    // The letters go to the computer's clipboard too, for Excel or Notepad; Ctrl+V in here still pastes the line.
+    const text = look.text.trim()
+    if (text !== '') {
+      void copyText(text).then((copied) => {
+        if (copied) setStatus('줄을 복사했습니다 (여기서 Ctrl+V는 줄째로, 엑셀·메모장에는 글자로 붙습니다)')
+      })
+    }
   }
 
   function pasteClipboard() {
@@ -1983,6 +1990,12 @@ export function TextEditor({
       if (ctrl && code === 'KeyC' && selected && !inField && !(box && textSelected)) {
         e.preventDefault()
         copySelection()
+        return
+      }
+      // Nothing picked: Ctrl+C copies the page's text, its tables as tables, so Ctrl+V in Excel puts it in cells.
+      if (ctrl && code === 'KeyC' && !selected && ocrPicked === null && !inField && !box && !textSelected) {
+        e.preventDefault()
+        void copyTable(pageText(), false, '이 쪽 글자를 표 모양으로')
         return
       }
       if (ctrl && code === 'KeyV' && !inField && !box) {

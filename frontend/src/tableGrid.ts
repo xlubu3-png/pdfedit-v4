@@ -403,62 +403,168 @@ function cellAlign(cell: TableCell): 'left' | 'center' | 'right' {
 }
 
 const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-/** Points to the pixels Excel counts widths in. */
+/** Points to the pixels Excel counts widths and heights in. */
 const px = (pt: number) => Math.max(1, Math.round((pt * 96) / 72))
 const BORDER = '.5pt solid #000'
+/** A line of text's box is this much taller than its font size. */
+const BOX_PER_FONT = 1.3
 
-/**
- * The blocks as HTML a spreadsheet pastes as cells (Excel, Google Sheets, Hangul): tables with their merged cells,
- * borders, column widths and row heights, text kept as text, lines inside a cell kept in the cell.
- */
-export function toHtml(blocks: Block[]): string {
-  const parts: string[] = []
-  let loose: string[] = []
-  const flush = () => {
-    if (loose.length > 0) parts.push(`<table>${loose.join('')}</table>`)
-    loose = []
-  }
-  for (const block of blocks) {
-    if (block.kind === 'row') {
-      loose.push(`<tr>${block.texts.map((t) => td(t.text.trim(), '')).join('')}</tr>`)
-      continue
-    }
-    flush()
-    parts.push(tableHtml(block.table))
-  }
-  flush()
-  return (
-    '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">' +
-    `<head><meta charset="utf-8"></head><body>${parts.join('')}</body></html>`
-  )
+/** A cell of the sheet the copied part becomes: where it is, what it says and how it looks. */
+interface SheetCell {
+  row: number
+  col: number
+  rowSpan: number
+  colSpan: number
+  lines: string[]
+  borders: TableCell['borders'] | null
+  align: 'left' | 'center' | 'right'
+  /** Font size in points, from the text's height on the page; null for an empty cell. */
+  size: number | null
 }
 
-function tableHtml(table: Table): string {
-  const cols = table.xs
-    .slice(1)
-    .map((x, i) => `<col width="${px(x - table.xs[i])}">`)
-    .join('')
-  const trs = table.ys.slice(1).map((y, r) => {
-    const tds = table.cells
-      .filter((cell) => cell.row === r)
-      .sort((a, b) => a.col - b.col)
-      .map((cell) => {
-        const style = [
-          cell.borders.top ? `border-top:${BORDER}` : '',
-          cell.borders.right ? `border-right:${BORDER}` : '',
-          cell.borders.bottom ? `border-bottom:${BORDER}` : '',
-          cell.borders.left ? `border-left:${BORDER}` : '',
-          `text-align:${cellAlign(cell)}`,
-          'vertical-align:middle',
-        ]
-          .filter(Boolean)
-          .join(';')
-        const span = `${cell.colSpan > 1 ? ` colspan="${cell.colSpan}"` : ''}${cell.rowSpan > 1 ? ` rowspan="${cell.rowSpan}"` : ''}`
-        return td(cellLines(cell).join('\n'), style, span)
+/** The copied part as one sheet: column widths and row heights (points), and its cells. */
+interface Sheet {
+  widths: number[]
+  heights: number[]
+  cells: SheetCell[]
+}
+
+/**
+ * The font size (points) for text this tall on the page. Heights near the page's usual one are taken as it: a PDF
+ * gives lines of the same size slightly different heights, and the sheet would show rows in different sizes.
+ */
+const fontSize = (texts: PlacedText[], usual: number): number | null => {
+  if (texts.length === 0) return null
+  const tallest = Math.max(...texts.map((t) => t.height))
+  const height = tallest >= usual * 0.8 && tallest <= usual * 1.25 ? usual : tallest
+  return Math.min(24, Math.max(6, Math.round((height / BOX_PER_FONT) * 2) / 2))
+}
+
+/**
+ * The blocks laid out on one grid, as the page has them: the columns are the tables' column borders (tables that
+ * share a border share the sheet column) and the edges of the copied part, so each table sits where it is on the
+ * page and a line outside the tables starts in the column it starts in on the page. One grid instead of a table
+ * per block: Excel puts every table in the same columns, and their widths would fight.
+ */
+function toSheet(blocks: Block[]): Sheet {
+  const tables = blocks.flatMap((b) => (b.kind === 'table' ? [b.table] : []))
+  const loose = blocks.flatMap((b) => (b.kind === 'row' ? b.texts : []))
+  const lefts = [...tables.map((t) => t.xs[0]), ...loose.map((t) => t.left)]
+  const rights = [...tables.map((t) => t.xs[t.xs.length - 1]), ...loose.map((t) => t.left + (t.width ?? 0))]
+  const xs = clusters([Math.min(...lefts), ...tables.flatMap((t) => t.xs), Math.max(...rights)])
+  /** The sheet column border nearest to a table's border. */
+  const border = (x: number) => {
+    let best = 0
+    xs.forEach((b, i) => {
+      if (Math.abs(b - x) < Math.abs(xs[best] - x)) best = i
+    })
+    return best
+  }
+  /** The sheet column a line of text starting at x starts in. */
+  const columnAt = (x: number) => {
+    let k = 0
+    while (k + 1 < xs.length - 1 && xs[k + 1] <= x + 1) k++
+    return k
+  }
+  const all = [...tables.flatMap((t) => t.cells.flatMap((c) => c.texts)), ...loose].map((t) => t.height).sort((a, b) => a - b)
+  const usual = all.length > 0 ? all[Math.floor(all.length / 2)] : 0
+  const heights: number[] = []
+  const cells: SheetCell[] = []
+  for (const block of blocks) {
+    const top = heights.length
+    if (block.kind === 'table') {
+      const { table } = block
+      table.ys.slice(1).forEach((y, r) => heights.push(y - table.ys[r]))
+      for (const cell of table.cells) {
+        const col = border(table.xs[cell.col])
+        const end = Math.max(col + 1, border(table.xs[cell.col + cell.colSpan]))
+        cells.push({
+          row: top + cell.row,
+          col,
+          rowSpan: cell.rowSpan,
+          colSpan: end - col,
+          lines: cellLines(cell),
+          borders: cell.borders,
+          align: cellAlign(cell),
+          size: fontSize(cell.texts, usual),
+        })
+      }
+      continue
+    }
+    heights.push(Math.max(...block.texts.map((t) => t.height)) + 2)
+    // Pieces starting in one column go together; a long one runs on over the empty columns after it, as in Excel.
+    const byColumn = new Map<number, PlacedText[]>()
+    for (const t of [...block.texts].sort((a, b) => a.left - b.left)) {
+      const visible = t.left + ((t.text.length - t.text.trimStart().length) / Math.max(1, t.text.length)) * (t.width ?? 0)
+      const k = columnAt(visible)
+      byColumn.set(k, [...(byColumn.get(k) ?? []), t])
+    }
+    for (const [col, texts] of byColumn) {
+      cells.push({
+        row: top,
+        col,
+        rowSpan: 1,
+        colSpan: 1,
+        lines: [texts.map((t) => t.text.trim()).join(' ')],
+        borders: null,
+        align: 'left',
+        size: fontSize(texts, usual),
       })
-    return `<tr height="${px(y - table.ys[r])}">${tds.join('')}</tr>`
+    }
+  }
+  return { widths: xs.slice(1).map((x, i) => x - xs[i]), heights, cells }
+}
+
+/**
+ * The blocks as HTML a spreadsheet pastes as cells (Excel, Google Sheets, Hangul), laid out as on the page: one
+ * grid with the page's column widths and row heights, the tables' merged cells and borders, the text's size and
+ * alignment, text kept as text (no dates made of "1-A"), lines inside a cell kept in the cell, and no wrapping of
+ * a one-line cell.
+ */
+export function toHtml(blocks: Block[]): string {
+  const head =
+    '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">' +
+    '<head><meta charset="utf-8"></head><body>'
+  if (blocks.length === 0) return `${head}</body></html>`
+  const sheet = toSheet(blocks)
+  const columns = sheet.widths.length
+  const taken = sheet.heights.map(() => new Array<boolean>(columns).fill(false))
+  const at = new Map(sheet.cells.map((c) => [`${c.row}:${c.col}`, c] as const))
+  const cols = sheet.widths.map((w) => `<col width="${px(w)}" style="width:${w.toFixed(1)}pt">`).join('')
+  const trs = sheet.heights.map((h, r) => {
+    const tds: string[] = []
+    for (let c = 0; c < columns; c++) {
+      if (taken[r][c]) continue
+      const cell = at.get(`${r}:${c}`)
+      if (!cell) {
+        tds.push('<td></td>')
+        continue
+      }
+      for (let i = r; i < Math.min(r + cell.rowSpan, taken.length); i++) {
+        for (let k = c; k < Math.min(c + cell.colSpan, columns); k++) taken[i][k] = true
+      }
+      const b = cell.borders
+      const style = [
+        b?.top ? `border-top:${BORDER}` : '',
+        b?.right ? `border-right:${BORDER}` : '',
+        b?.bottom ? `border-bottom:${BORDER}` : '',
+        b?.left ? `border-left:${BORDER}` : '',
+        `text-align:${cell.align}`,
+        'vertical-align:middle',
+        cell.size ? `font-size:${cell.size}pt` : '',
+        cell.lines.length > 1 ? '' : 'white-space:nowrap',
+      ]
+        .filter(Boolean)
+        .join(';')
+      const span = `${cell.colSpan > 1 ? ` colspan="${cell.colSpan}"` : ''}${cell.rowSpan > 1 ? ` rowspan="${cell.rowSpan}"` : ''}`
+      tds.push(td(cell.lines.join('\n'), style, span))
+    }
+    return `<tr height="${px(h)}" style="height:${h.toFixed(1)}pt">${tds.join('')}</tr>`
   })
-  return `<table style="border-collapse:collapse">${cols}${trs.join('')}</table>`
+  // The page's widths, not the browser's: a program that lays tables out itself (Hangul, Word) keeps the columns.
+  const width = sheet.widths.reduce((a, w) => a + w, 0)
+  const table = `<table style="border-collapse:collapse;table-layout:fixed;width:${width.toFixed(1)}pt" width="${px(width)}">`
+  return `${head}${table}${cols}${trs.join('')}</table></body></html>`
 }
 
 function td(text: string, style: string, span = ''): string {
@@ -472,21 +578,14 @@ function td(text: string, style: string, span = ''): string {
 }
 
 /**
- * The blocks as tab-separated text (what a spreadsheet takes when there is no HTML): a table's cells in their
- * columns, empty cells kept, a merged cell's text in its first cell, lines inside a cell quoted.
+ * The blocks as tab-separated text (what a spreadsheet takes when there is no HTML), on the same grid as the HTML:
+ * each text in its column, empty cells kept, a merged cell's text in its first cell, lines inside a cell quoted.
  */
 export function toTsv(blocks: Block[]): string {
+  if (blocks.length === 0) return ''
+  const sheet = toSheet(blocks)
   const quote = (s: string) => (/[\t\n"]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s)
-  const lines: string[] = []
-  for (const block of blocks) {
-    if (block.kind === 'row') {
-      lines.push(block.texts.map((t) => t.text.trim()).join('\t'))
-      continue
-    }
-    const { table } = block
-    const grid = table.ys.slice(1).map(() => new Array<string>(table.xs.length - 1).fill(''))
-    for (const cell of table.cells) grid[cell.row][cell.col] = quote(cellLines(cell).join('\n'))
-    for (const row of grid) lines.push(row.join('\t').replace(/\t+$/, ''))
-  }
-  return lines.join('\n')
+  const grid = sheet.heights.map(() => new Array<string>(sheet.widths.length).fill(''))
+  for (const cell of sheet.cells) grid[cell.row][cell.col] = quote(cell.lines.join('\n'))
+  return grid.map((row) => row.join('\t').replace(/\t+$/, '')).join('\n')
 }

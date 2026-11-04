@@ -22,6 +22,8 @@ export interface TableCell {
   texts: PlacedText[]
   /** How its text sits, when known from how the area was split (else worked out from where the text is). */
   align?: 'left' | 'center' | 'right'
+  /** A cell with another table drawn inside it: its text belongs to that table or to no table, not to this cell. */
+  container?: boolean
 }
 
 /** A table: the positions of its column and row borders (points), and its cells. */
@@ -68,7 +70,43 @@ export function findTables(rulings: Rulings): Table[] {
     if (xs.length < 2 || ys.length < 2) continue
     tables.push(buildTable(xs, ys, lines.h, lines.v))
   }
-  return tables.sort((a, b) => a.ys[0] - b.ys[0])
+  return withoutFrames(tables).sort((a, b) => a.ys[0] - b.ys[0])
+}
+
+/**
+ * Another table drawn inside a cell (a border round the whole sheet, or a box with a gap where a table sits, as
+ * Excel prints them) would take all that table's text into the one cell. A cell as wide as its table is cut out:
+ * the rows above and below it are tables of their own (a border round the sheet leaves nothing). A narrower one
+ * is kept but takes no text.
+ */
+function withoutFrames(tables: Table[]): Table[] {
+  const inside = (cell: TableCell, inner: Table) =>
+    inner.xs[0] >= cell.left - NEAR &&
+    inner.xs[inner.xs.length - 1] <= cell.right + NEAR &&
+    inner.ys[0] >= cell.top - NEAR &&
+    inner.ys[inner.ys.length - 1] <= cell.bottom + NEAR
+  let current = tables
+  for (let round = 0; round < 20; round++) {
+    let changed = false
+    const next: Table[] = []
+    for (const table of current) {
+      const others = current.filter((t) => t !== table)
+      const frame = table.cells.find(
+        (c) => !c.container && c.colSpan === table.xs.length - 1 && others.some((t) => inside(c, t)),
+      )
+      if (frame) {
+        changed = true
+        const above = cropTo(table, 0, frame.row, 0, table.xs.length - 1)
+        const below = cropTo(table, frame.row + frame.rowSpan, table.ys.length - 1, 0, table.xs.length - 1)
+        next.push(...[above, below].filter((t) => t.ys.length > 1 && t.cells.length > 0))
+        continue
+      }
+      next.push({ ...table, cells: table.cells.map((c) => (others.some((t) => inside(c, t)) ? { ...c, container: true } : c)) })
+    }
+    current = next
+    if (!changed) break
+  }
+  return current
 }
 
 /** The values, with those within {@link NEAR} of the one before taken as one (their middle). */
@@ -141,13 +179,13 @@ function buildTable(xs: number[], ys: number[], h: Rulings['horizontal'], v: Rul
 export function layout(texts: PlacedText[], tables: Table[], onlyPicked: boolean): Block[] {
   const filled = tables.map((t) => ({ ...t, cells: t.cells.map((c) => ({ ...c, texts: [] as PlacedText[] })) }))
   const loose: PlacedText[] = []
-  for (const text of texts) {
+  const cellAt = (x: number, y: number) =>
+    filled.flatMap((t) => t.cells).find((c) => !c.container && x >= c.left && x <= c.right && y >= c.top && y <= c.bottom)
+  for (const text of texts.flatMap((t) => splitAtBorders(t, cellAt))) {
     if (text.text.trim() === '') continue
     const x = text.left + (text.width ?? 0) / 2
     const y = text.top + text.height / 2
-    const cell = filled
-      .flatMap((t) => t.cells)
-      .find((c) => x >= c.left && x <= c.right && y >= c.top && y <= c.bottom)
+    const cell = cellAt(x, y)
     if (cell) cell.texts.push(text)
     else loose.push(text)
   }
@@ -259,23 +297,70 @@ function splitAreas(table: Table): Table {
   return { xs: table.xs, ys, cells }
 }
 
+/**
+ * A piece of text that runs over a column border (a program wrote "규격 수량" or "75T  1" as one piece) cut into
+ * the cells its letters are in. Text whose letters' places are unknown stays whole.
+ */
+function splitAtBorders(text: PlacedText, cellAt: (x: number, y: number) => TableCell | undefined): PlacedText[] {
+  const chars = text.chars
+  if (!chars || chars.length !== text.text.length) return [text]
+  const y = text.top + text.height / 2
+  const end = text.left + (text.width ?? 0)
+  // Each letter's cell (a space goes with the letter before it); a letter outside any table is null.
+  const cells: (TableCell | null)[] = []
+  for (let i = 0; i < chars.length; i++) {
+    const next = i + 1 < chars.length ? chars[i + 1] : end
+    const middle = (chars[i] + Math.max(next, chars[i])) / 2
+    cells.push(text.text[i].trim() === '' && i > 0 ? cells[i - 1] : (cellAt(middle, y) ?? null))
+  }
+  if (new Set(cells.filter((_, i) => text.text[i].trim() !== '')).size <= 1) return [text]
+  const out: PlacedText[] = []
+  let from = 0
+  for (let i = 1; i <= chars.length; i++) {
+    if (i < chars.length && cells[i] === cells[from]) continue
+    const right = i < chars.length ? chars[i] : end
+    out.push({
+      text: text.text.slice(from, i),
+      left: chars[from],
+      top: text.top,
+      height: text.height,
+      width: Math.max(0, right - chars[from]),
+      chars: chars.slice(from, i),
+    })
+    from = i
+  }
+  return out
+}
+
 /** The table cut down to the rows and columns the given cells take. */
 function crop(table: Table, used: TableCell[]): Table {
   const r0 = Math.min(...used.map((c) => c.row))
   const r1 = Math.max(...used.map((c) => c.row + c.rowSpan))
   const c0 = Math.min(...used.map((c) => c.col))
   const c1 = Math.max(...used.map((c) => c.col + c.colSpan))
+  return cropTo(table, r0, r1, c0, c1)
+}
+
+/** The table's rows r0 to r1 and columns c0 to c1 (ends not included), cells cut at the edges. */
+function cropTo(table: Table, r0: number, r1: number, c0: number, c1: number): Table {
+  if (r1 <= r0 || c1 <= c0) return { xs: table.xs.slice(c0, c0 + 1), ys: table.ys.slice(r0, r0 + 1), cells: [] }
   const cells = table.cells
     .filter((c) => c.row < r1 && c.row + c.rowSpan > r0 && c.col < c1 && c.col + c.colSpan > c0)
     .map((c) => {
       const row = Math.max(c.row, r0)
       const col = Math.max(c.col, c0)
+      const rowEnd = Math.min(c.row + c.rowSpan, r1)
+      const colEnd = Math.min(c.col + c.colSpan, c1)
       return {
         ...c,
         row: row - r0,
         col: col - c0,
-        rowSpan: Math.min(c.row + c.rowSpan, r1) - row,
-        colSpan: Math.min(c.col + c.colSpan, c1) - col,
+        rowSpan: rowEnd - row,
+        colSpan: colEnd - col,
+        top: table.ys[row],
+        bottom: table.ys[rowEnd],
+        left: table.xs[col],
+        right: table.xs[colEnd],
       }
     })
   return { xs: table.xs.slice(c0, c1 + 1), ys: table.ys.slice(r0, r1 + 1), cells }
@@ -300,10 +385,16 @@ function cellAlign(cell: TableCell): 'left' | 'center' | 'right' {
   if (cell.texts.some((t) => !t.width)) return 'left'
   // Where the letters are, without the spaces a program pads a number with to push it right ("     44,060").
   const visible = (t: PlacedText) => {
-    const each = (t.width ?? 0) / Math.max(1, t.text.length)
     const lead = t.text.length - t.text.trimStart().length
     const trail = t.text.length - t.text.trimEnd().length
-    return { from: t.left + lead * each, to: t.left + (t.width ?? 0) - trail * each }
+    const end = t.left + (t.width ?? 0)
+    if (t.chars && t.chars.length === t.text.length && lead < t.text.length) {
+      // The letters' own places: the last letter ends where the next character (a space) starts.
+      const last = t.text.length - trail
+      return { from: t.chars[lead], to: last < t.chars.length ? t.chars[last] : end }
+    }
+    const each = (t.width ?? 0) / Math.max(1, t.text.length)
+    return { from: t.left + lead * each, to: end - trail * each }
   }
   const left = Math.min(...cell.texts.map((t) => visible(t).from)) - cell.left
   const right = cell.right - Math.max(...cell.texts.map((t) => visible(t).to))

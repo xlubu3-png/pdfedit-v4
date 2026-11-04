@@ -1308,6 +1308,7 @@ export function TextEditor({
       top: l.top,
       height: l.height,
       width: l.width,
+      chars: l.chars,
     }))
   }
 
@@ -1343,6 +1344,10 @@ export function TextEditor({
   function pickedText(selection: globalThis.Selection): PlacedText[] {
     if (selection.rangeCount === 0) return []
     const picked = selection.getRangeAt(0)
+    // The page's lines with where their letters are (points), to cut a picked line at a table's column borders.
+    const lines = new Map(
+      data ? selectableLines(data, runStates, ocrLines, rewritten, added, 1).map((l) => [l.key, l] as const) : [],
+    )
     return Array.from(document.querySelectorAll<HTMLElement>('.te-ocr-text, .te-textlayer span[data-line]'))
       .filter((span) => selection.containsNode(span, true))
       .map((span) => {
@@ -1354,13 +1359,25 @@ export function TextEditor({
         const rect = span.getBoundingClientRect()
         const page = document.querySelector('.te-canvas img')?.getBoundingClientRect()
         const unit = scale > 0 ? scale : 1
-        return {
+        const placed: PlacedText = {
           text: part.toString(),
           left: (rect.left - (page?.left ?? 0)) / unit,
           top: (rect.top - (page?.top ?? 0)) / unit,
           height: rect.height / unit,
           width: rect.width / unit,
         }
+        // The picked letters' own places, when the line's are known: a part of a line over a column border splits too.
+        const line = span.dataset.key === undefined ? undefined : lines.get(span.dataset.key)
+        const textNode = span.firstChild
+        if (line?.chars && textNode && line.text === span.textContent) {
+          const from = part.startContainer === textNode ? part.startOffset : 0
+          const to = part.endContainer === textNode ? part.endOffset : line.text.length
+          if (to > from) {
+            const end = to < line.chars.length ? line.chars[to] : line.left + line.width
+            return { ...placed, left: line.chars[from], width: end - line.chars[from], chars: line.chars.slice(from, to) }
+          }
+        }
+        return placed
       })
   }
 

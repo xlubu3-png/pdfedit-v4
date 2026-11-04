@@ -75,6 +75,7 @@ export function TextSelectLayer({ lines }: TextSelectLayerProps) {
         <Fragment key={line.key}>
           <span
             data-line=""
+            data-key={line.key}
             data-length={line.length ?? 0}
             data-turn={line.turn ?? 0}
             data-vertical={line.vertical ? '1' : '0'}

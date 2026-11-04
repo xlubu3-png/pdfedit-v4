@@ -16,6 +16,8 @@ export interface SelectableLine {
   vertical?: boolean
   /** Degrees the line is turned, counter-clockwise as PDF counts, about its top-left corner. */
   turn?: number
+  /** Where each character of `text` starts across the page (pixels), when known: a line over a table's column border is split there when copied. */
+  chars?: number[]
 }
 
 /** A line this much taller than wide runs down the page (as the recognition tells it). */
@@ -57,6 +59,10 @@ export function selectableLines(
       size: height * LETTER_SHARE,
       // Its letters as long as on the page; a line typed over has other letters and keeps its own length.
       length: text === run.text ? run.width * scale : undefined,
+      chars:
+        text === run.text && run.charX && run.charX.length === text.length
+          ? run.charX.map((x) => left(x + (state?.dx ?? 0)))
+          : undefined,
     })
   }
   ocrLines.forEach((line, i) => {
@@ -123,6 +129,8 @@ export interface PlacedText {
   height: number
   /** How long it is across; unknown for a text box (then only where it starts counts). */
   width?: number
+  /** Where each character of `text` starts across, when known: it is split where it runs over a table's column border. */
+  chars?: number[]
 }
 
 /**

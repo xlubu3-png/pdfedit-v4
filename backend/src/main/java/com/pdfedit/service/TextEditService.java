@@ -173,12 +173,43 @@ public class TextEditService {
                                     run.sourceFont().getCOSObject(), k -> fontMatcher.isMissing(run.sourceFont())),
                             existing != null && cutOut.contains(i),
                             Double.isNaN(match.similarity) ? null : (float) match.similarity,
-                            existing == null ? List.of() : existing.spans()));
+                            existing == null ? List.of() : existing.spans(), charPositions(run)));
                 }
             }
             return new PageTextDto(crop.getWidth(), crop.getHeight(), crop.getLowerLeftX(),
                     crop.getLowerLeftY(), rotated, dtos, saved.added(), saved.imageBoxes());
         }
+    }
+
+    /**
+     * Where each character of the run's text starts (x, PDF user space), from its glyphs; a character the text has
+     * that no glyph draws (a space put between words) starts where the next glyph does. Null when the run's
+     * characters were not described one by one, or do not match its text.
+     */
+    static List<Float> charPositions(TextRun run) {
+        List<Glyph> glyphs = run.glyphs();
+        String text = run.text();
+        if (glyphs.isEmpty() || text.isEmpty()) {
+            return null;
+        }
+        Float[] out = new Float[text.length()];
+        int g = 0;
+        int i = 0;
+        while (i < text.length()) {
+            String unicode = g < glyphs.size() ? glyphs.get(g).unicode() : null;
+            if (unicode != null && !unicode.isEmpty() && text.startsWith(unicode, i)) {
+                for (int k = 0; k < unicode.length(); k++) {
+                    out[i + k] = glyphs.get(g).x();
+                }
+                i += unicode.length();
+                g++;
+            } else {
+                // A character no glyph draws: where the next glyph starts (or the run's end).
+                out[i] = g < glyphs.size() ? glyphs.get(g).x() : run.x() + run.width();
+                i++;
+            }
+        }
+        return g == glyphs.size() ? List.of(out) : null;
     }
 
     /**

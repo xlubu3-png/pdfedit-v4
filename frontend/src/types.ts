@@ -176,6 +176,8 @@ export interface TextRun {
    * judged from the glyphs because the font has no name to go by; null otherwise.
    */
   matchSimilarity: number | null
+  /** Where each character of `text` starts (PDF x); null when unknown. Splits a line over a table's columns when copied. */
+  charX?: number[] | null
   /** What the user chose for this line so far; null means "as the original". */
   editFontFamily: string | null
   editFontSize: number | null

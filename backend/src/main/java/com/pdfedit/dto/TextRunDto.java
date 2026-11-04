@@ -26,6 +26,9 @@ import com.pdfedit.text.RunEdit;
  * @param editSpans      the parts of the user's text with a look of their own (bold, colour); empty when none
  * @param ownChars       the characters this run's own fonts already draw on the page; a typed character
  *                       outside them cannot take the original glyph and is drawn in an installed font
+ * @param charX          where each character of {@code text} starts (PDF user space x), so a line that runs over
+ *                       a table's column border can be split into its cells when copied; null when the
+ *                       characters could not be told apart
  */
 public record TextRunDto(int index, String text, String currentText, boolean edited,
                          float x, float y, float width, float height, float fontSize,
@@ -33,5 +36,6 @@ public record TextRunDto(int index, String text, String currentText, boolean edi
                          String sourceFont, String color, boolean glyphReuse,
                          String editFontFamily, Float editFontSize, Boolean editBold, String editColor,
                          float dx, float dy, String ownChars, boolean sourceFontMissing,
-                         boolean originalRemoved, Float matchSimilarity, List<RunEdit.Span> editSpans) {
+                         boolean originalRemoved, Float matchSimilarity, List<RunEdit.Span> editSpans,
+                         List<Float> charX) {
 }

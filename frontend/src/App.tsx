@@ -23,6 +23,7 @@ import { redactionMessage } from './redaction'
 import { exportFileName } from './exportName'
 import { keptPermissions } from './lock'
 import { LICENSE_LINKS } from './licenses'
+import { pagesToXlsx, workbookName } from './excelExport'
 import { DEFAULT_IMAGE_CHOICE, imageExportFileName, imageExportStem } from './imageExport'
 import type { ImageChoice } from './imageExport'
 import { ocrMessage, recognizeAll } from './ocr'
@@ -65,6 +66,7 @@ import {
   ScanText,
   Search,
   ImageDown,
+  FileSpreadsheet,
   Shrink,
   SquareCheck,
   Trash,
@@ -544,6 +546,30 @@ function App() {
       setNotice([saved, redactionMessage(redaction)].filter(Boolean).join(' '))
     } catch (e) {
       setError(errorText(e, '사진으로 내보내지 못했습니다'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /**
+   * Saves the pages (given, else the selected ones, else all) as an Excel workbook, a sheet for each page laid out as
+   * the page is: its tables with their column widths, merged cells and borders.
+   */
+  async function handleExcel(target?: PageItem[]) {
+    if (busy) return
+    const chosen = target ?? (selectedKeys.size > 0 ? pages.filter((p) => selectedKeys.has(p.key)) : pages)
+    if (chosen.length === 0) return
+    setBusy(true)
+    setError(null)
+    try {
+      const sources = new Set(chosen.map((p) => p.sourceFileName))
+      const base = sources.size === 1 ? [...sources][0] : '합친 문서'
+      const one = chosen.length === 1 && pages.length > 1 ? pages.findIndex((p) => p.key === chosen[0].key) + 1 : undefined
+      const name = workbookName(base, one)
+      downloadBlob(await pagesToXlsx(chosen, pages), name)
+      setNotice(`${name}로 저장했습니다 (${chosen.length === 1 ? '1쪽' : `${chosen.length}쪽, 쪽마다 시트 한 장`}).`)
+    } catch (e) {
+      setError(errorText(e, '엑셀 파일로 저장하지 못했습니다'))
     } finally {
       setBusy(false)
     }
@@ -1111,6 +1137,17 @@ function App() {
                   disabled={busy}
                 />
                 <RibbonButton
+                  icon={<FileSpreadsheet />}
+                  label="엑셀로 내보내기"
+                  title={
+                    selectedKeys.size > 0
+                      ? `선택한 ${selectedKeys.size}쪽을 엑셀 파일(.xlsx)로 저장합니다. 쪽마다 시트 한 장, 표는 PDF와 같은 모양으로`
+                      : '모든 페이지를 엑셀 파일(.xlsx)로 저장합니다. 쪽마다 시트 한 장, 표는 PDF와 같은 모양으로'
+                  }
+                  onClick={() => void handleExcel()}
+                  disabled={busy}
+                />
+                <RibbonButton
                   icon={<FileLock />}
                   label="암호 걸어 내보내기"
                   title="열 때 암호를 묻는 PDF로 내려받습니다 (AES-256). 암호가 걸려 있던 문서는 원래의 인쇄·복사 제한도 다시 걸립니다."
@@ -1152,6 +1189,10 @@ function App() {
             onSaveImage={(key) => {
               const page = pages.find((p) => p.key === key)
               if (page) askImageExport([page])
+            }}
+            onSaveExcel={(key) => {
+              const page = pages.find((p) => p.key === key)
+              if (page) void handleExcel([page])
             }}
           />
         </>

@@ -377,7 +377,7 @@ function cellLines(cell: TableCell): string[] {
 }
 
 /** A number as a spreadsheet reads it ("1,234", "-5.5"); anything else is kept as text so it is not made a date. */
-const NUMBER = /^[-+]?(\d{1,3}(,\d{3})+|0|[1-9]\d*)(\.\d+)?$/
+export const NUMBER = /^[-+]?(\d{1,3}(,\d{3})+|0|[1-9]\d*)(\.\d+)?$/
 
 function cellAlign(cell: TableCell): 'left' | 'center' | 'right' {
   if (cell.align) return cell.align
@@ -410,7 +410,7 @@ const BORDER = '.5pt solid #000'
 const BOX_PER_FONT = 1.3
 
 /** A cell of the sheet the copied part becomes: where it is, what it says and how it looks. */
-interface SheetCell {
+export interface SheetCell {
   row: number
   col: number
   rowSpan: number
@@ -423,7 +423,7 @@ interface SheetCell {
 }
 
 /** The copied part as one sheet: column widths and row heights (points), and its cells. */
-interface Sheet {
+export interface Sheet {
   widths: number[]
   heights: number[]
   cells: SheetCell[]
@@ -446,7 +446,7 @@ const fontSize = (texts: PlacedText[], usual: number): number | null => {
  * page and a line outside the tables starts in the column it starts in on the page. One grid instead of a table
  * per block: Excel puts every table in the same columns, and their widths would fight.
  */
-function toSheet(blocks: Block[]): Sheet {
+export function toSheet(blocks: Block[]): Sheet {
   const tables = blocks.flatMap((b) => (b.kind === 'table' ? [b.table] : []))
   const loose = blocks.flatMap((b) => (b.kind === 'row' ? b.texts : []))
   const lefts = [...tables.map((t) => t.xs[0]), ...loose.map((t) => t.left)]
@@ -552,7 +552,9 @@ export function toHtml(blocks: Block[]): string {
         `text-align:${cell.align}`,
         'vertical-align:middle',
         cell.size ? `font-size:${cell.size}pt` : '',
-        cell.lines.length > 1 ? '' : 'white-space:nowrap',
+        // Text in a table wraps inside its cell when the sheet's column is narrower than the page's (Excel keeps
+        // its own column widths on a paste); text outside the tables runs on over the empty cells beside it.
+        cell.borders || cell.lines.length > 1 ? 'white-space:normal' : 'white-space:nowrap',
       ]
         .filter(Boolean)
         .join(';')

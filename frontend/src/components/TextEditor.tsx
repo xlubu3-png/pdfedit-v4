@@ -27,9 +27,12 @@ import { foreignChars, SIMILAR_ENOUGH } from '../fontMix'
 import { History } from '../history'
 import { keyCode } from '../keys'
 import { copyRich, copyText } from '../clipboard'
+import { downloadBlob } from '../download'
+import { sheetWith, workbookName } from '../excelExport'
+import { sheetsToXlsx } from '../xlsx'
 import { ocrMessage, recognizeAll } from '../ocr'
 import { lineOfCover, refitted } from '../refit'
-import { asLines, asTable, selectableLines } from '../textSelect'
+import { asLines, asTable, rewrittenLines, selectableLines } from '../textSelect'
 import type { PlacedText } from '../textSelect'
 import { findTables, hasTable, layout, toHtml, toTsv } from '../tableGrid'
 import type { Table } from '../tableGrid'
@@ -65,6 +68,7 @@ import {
   Files,
   FileDown,
   FileImage,
+  FileSpreadsheet,
   FileSearch,
   ImagePlus,
   MoveHorizontal,
@@ -1184,17 +1188,7 @@ export function TextEditor({
   }
 
   /** Recognized lines a text box rewrites (its cover lies over their middle): their outline gives way to the box. */
-  const rewritten = useMemo(() => {
-    const covers = added.flatMap((b) => (b.cover ? [b.cover] : []))
-    return new Set(
-      ocrLines.flatMap((line, i) => {
-        const mx = line.x + line.width / 2
-        const my = line.y + line.height / 2
-        const covered = covers.some((c) => mx >= c.x && mx <= c.x + c.width && my >= c.y && my <= c.y + c.height)
-        return covered ? [i] : []
-      }),
-    )
-  }, [added, ocrLines])
+  const rewritten = useMemo(() => rewrittenLines(ocrLines, added), [added, ocrLines])
 
   /** Copies the picked recognized line, or with none picked every line of the page, top to bottom. */
   async function copyRecognized() {
@@ -1330,6 +1324,16 @@ export function TextEditor({
     if (!table) return copyPlain(asTable(cells), what)
     const copied = await copyRich(table.tsv, table.html)
     setStatus(copied ? `${what}을(를) 복사했습니다 · 엑셀에 붙이면 칸·테두리가 그대로 들어갑니다` : '복사하지 못했습니다')
+  }
+
+  /**
+   * Saves this page as an Excel file laid out as the page is (its tables with their column widths, merged cells and
+   * borders), which a paste cannot give: Excel keeps its own column widths when something is pasted.
+   */
+  function saveExcel() {
+    const name = workbookName(page.sourceFileName, total > 1 ? position + 1 : undefined)
+    downloadBlob(sheetsToXlsx([{ name: `${position + 1}쪽`, sheet: sheetWith(pageText(), tables) }]), name)
+    setStatus(`${name}로 저장했습니다`)
   }
 
   /** Copies the text dragged over: as lines, and (when it is in a table) as the table too, for a spreadsheet. */
@@ -1509,6 +1513,7 @@ export function TextEditor({
           'separator',
           { label: '이 쪽 글자 모두 복사', onSelect: () => void copyPlain(asLines(pageText()), '이 쪽 글자') },
           { label: '표 모양으로 모두 복사 (엑셀)', onSelect: () => void copyTable(pageText(), false, '이 쪽 글자를 표 모양으로') },
+          { label: '이 쪽을 엑셀 파일로 저장 (.xlsx)', onSelect: () => saveExcel() },
         ],
       }
     }
@@ -1595,6 +1600,7 @@ export function TextEditor({
         { label: selecting ? '글자 선택 끝내기' : '글자 선택', shortcut: 'S', onSelect: () => toggleSelecting() },
         { label: '이 쪽 글자 모두 복사', onSelect: () => void copyPlain(asLines(pageText()), '이 쪽 글자') },
         { label: '표 모양으로 모두 복사 (엑셀)', onSelect: () => void copyTable(pageText(), false, '이 쪽 글자를 표 모양으로') },
+        { label: '이 쪽을 엑셀 파일로 저장 (.xlsx)', onSelect: () => saveExcel() },
         ...fix,
         'separator',
         { label: '실행 취소', shortcut: 'Ctrl+Z', disabled: history.undo === 0, onSelect: () => undo() },
@@ -2293,6 +2299,12 @@ export function TextEditor({
                 title="모든 페이지를 수정 내용과 함께 PDF로 내려받습니다 (Ctrl+S)"
                 onClick={() => void exportAll()}
                 disabled={busy}
+              />
+              <RibbonButton
+                icon={<FileSpreadsheet />}
+                label="엑셀 저장"
+                title="이 페이지를 엑셀 파일(.xlsx)로 저장합니다. 표의 열 너비·합친 칸·테두리가 PDF와 같게 들어갑니다"
+                onClick={() => saveExcel()}
               />
               <RibbonButton
                 icon={<FileImage />}

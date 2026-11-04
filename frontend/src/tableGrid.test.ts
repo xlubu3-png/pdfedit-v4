@@ -72,7 +72,8 @@ describe('findTables and layout', () => {
 
     expect(html).toContain('<td colspan="3"')
     expect(html).toContain('<col width="40"') // 30 points
-    expect(html).toContain('white-space:nowrap')
+    // A table's text wraps in its cell rather than being cut off when Excel's column is narrower.
+    expect(html).toContain('white-space:normal')
     expect(html).toContain('border-top:.5pt solid #000')
     // "1-A" would turn into a date without this; a number stays a number.
     expect(html).toMatch(/mso-number-format:'\\@'[^>]*>1-A</)

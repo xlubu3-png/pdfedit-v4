@@ -27,6 +27,8 @@ interface PageGridProps {
   onPrint: (key: string) => void
   /** Saves the page as a picture (사진으로 내보내기). */
   onSaveImage: (key: string) => void
+  /** Saves the page as an Excel file, its tables as on the page. */
+  onSaveExcel: (key: string) => void
 }
 
 /** How far (pixels) the pointer moves with the button down before a press on a card becomes a drag. */
@@ -77,6 +79,7 @@ export function PageGrid({
   onOcr,
   onPrint,
   onSaveImage,
+  onSaveExcel,
 }: PageGridProps) {
   /** The page whose right-click menu is open, and where it was asked for. */
   const [menu, setMenu] = useState<{ key: string; x: number; y: number; note?: string } | null>(null)
@@ -226,6 +229,7 @@ export function PageGrid({
       { label: '뒤에 빈 페이지 삽입', disabled: busy, onSelect: () => onInsertBlankAfter(key) },
       { label: '이 페이지만 추출 (PDF로 저장)', disabled: busy, onSelect: () => onExtract(key) },
       { label: '이 페이지 사진으로 저장…', disabled: busy, onSelect: () => onSaveImage(key) },
+      { label: '이 페이지 엑셀 파일로 저장', disabled: busy, onSelect: () => onSaveExcel(key) },
       { label: '이 페이지 인쇄', disabled: busy, onSelect: () => onPrint(key) },
       'separator',
       { label: selected ? '선택 해제' : '선택', disabled: busy, onSelect: () => onToggleSelect(key) },

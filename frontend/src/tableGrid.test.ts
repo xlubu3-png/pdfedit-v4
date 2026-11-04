@@ -71,7 +71,8 @@ describe('findTables and layout', () => {
     const html = toHtml(layout(texts, findTables(rulings), false))
 
     expect(html).toContain('<td colspan="3"')
-    expect(html).toContain('<col width="40">') // 30 points
+    expect(html).toContain('<col width="40"') // 30 points
+    expect(html).toContain('white-space:nowrap')
     expect(html).toContain('border-top:.5pt solid #000')
     // "1-A" would turn into a date without this; a number stays a number.
     expect(html).toMatch(/mso-number-format:'\\@'[^>]*>1-A</)
@@ -90,7 +91,8 @@ describe('findTables and layout', () => {
     const two = [at('부산시', 30, 90, 20, 30), at('강서구', 30, 90, 30, 40), at('NO', 0, 30, 0, 20), at('제목', 300, 340, -40, -30)]
     const blocks = layout(two, findTables(rulings), true)
 
-    expect(toTsv(blocks).split('\n')[0]).toBe('제목')
+    // 제목 starts right of the picked cells, so it keeps its place: two columns over.
+    expect(toTsv(blocks).split('\n')[0]).toBe('\t\t제목')
     expect(toTsv(blocks)).toContain('"부산시\n강서구"')
     expect(toHtml(blocks)).toContain('부산시<br style="mso-data-placement:same-cell">강서구')
   })
@@ -145,7 +147,7 @@ describe('a border round the page', () => {
     const texts = [at('금액', 50, 100, 100, 120), at('5,300,000', 100, 200, 100, 120), at('견적서', 200, 300, 30, 50)]
 
     expect(tables).toHaveLength(1)
-    expect(toTsv(layout(texts, tables, false)).split('\n')).toEqual(['견적서', '금액\t5,300,000', ''])
+    expect(toTsv(layout(texts, tables, false)).split('\n')).toEqual(['\t\t견적서', '금액\t5,300,000', ''])
   })
 })
 
@@ -203,10 +205,12 @@ describe('a box with a gap where another table sits', () => {
     ]
 
     expect(toTsv(layout(texts, tables, false)).split('\n')).toEqual([
-      '품명\t금액',
-      'AIR\t4,700,000',
+      // One grid for all: the items table's borders (0, 100, 300) and the detail table's (50, 150, 250) make the
+      // sheet columns 0-50-100-150-250-300, so each table keeps its place and width.
+      '품명\t\t금액',
+      'AIR\t\t4,700,000',
       '세부사양',
-      'Fan\t1',
+      '\tFan\t\t1',
       '',
       '계',
     ])

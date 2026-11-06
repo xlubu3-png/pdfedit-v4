@@ -179,3 +179,71 @@ test('a scanned table (lines only in the picture) is recognized and saved to Exc
   expect(Number(owner![2]) - Number(model![2])).toBe(2)
   expect(sheet).toContain('<v>1865</v>')
 })
+
+test('a table scanned 2 degrees askew is turned straight and saved to Excel in its cells', async ({ page }) => {
+  await page.goto('/')
+  const dataUrl = await page.evaluate(() => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 1654
+    canvas.height = 2339
+    const g = canvas.getContext('2d')!
+    g.fillStyle = '#fff'
+    g.fillRect(0, 0, canvas.width, canvas.height)
+    // The sheet fed askew: everything on it turned 2 degrees anticlockwise.
+    g.translate(827, 1170)
+    g.rotate((-2 * Math.PI) / 180)
+    g.translate(-827, -1170)
+    g.strokeStyle = '#222'
+    g.lineWidth = 3
+    const xs = [200, 600, 1000, 1400]
+    const ys = [300, 400, 500, 600]
+    for (const y of ys) {
+      g.beginPath()
+      g.moveTo(xs[0], y)
+      g.lineTo(xs[3], y)
+      g.stroke()
+    }
+    for (const x of xs) {
+      g.beginPath()
+      g.moveTo(x, ys[0])
+      g.lineTo(x, ys[3])
+      g.stroke()
+    }
+    g.fillStyle = '#000'
+    g.font = '44px sans-serif'
+    const cells = [
+      ['MODEL', 'K8', '2021'],
+      ['ENGINE', 'G4KN', '2497'],
+      ['OWNER', 'WINTECH', '1865'],
+    ]
+    cells.forEach((row, r) => row.forEach((text, c) => g.fillText(text, xs[c] + 30, ys[r] + 66)))
+    return canvas.toDataURL('image/jpeg', 0.92)
+  })
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'askew.pdf',
+    mimeType: 'application/pdf',
+    buffer: scannedPdf(Buffer.from(dataUrl.split(',')[1], 'base64'), 1654, 2339),
+  })
+  await page.getByRole('button', { name: '나중에' }).click()
+  await page.locator('button[title="텍스트 편집"]').first().click()
+  await page.locator('.te-ocr-ask').getByRole('button', { name: '글자 인식' }).click()
+  await expect(page.locator('.te-ocr-line').first()).toBeVisible({ timeout: 60_000 })
+
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.locator('.te-layer').click({ button: 'right', position: { x: 5, y: 5 } }).then(() =>
+      page.getByRole('menuitem', { name: /엑셀 파일로 저장/ }).click(),
+    ),
+  ])
+  const sheet = readFileSync((await download.path())!).toString('utf8')
+  const cell = (text: string) => new RegExp(`<c r="([A-Z]+)(\\d+)"[^>]*t="inlineStr"><is><t[^>]*>${text}</t>`).exec(sheet)
+  const model = cell('M ?ODEL')
+  const owner = cell('OW ?NER')
+  const k8 = cell('K8')
+  expect(model && owner && k8).toBeTruthy()
+  // Each in its own column and row, as in the table: the slant did not merge or shift them.
+  expect(owner![1]).toBe(model![1])
+  expect(k8![1]).not.toBe(model![1])
+  expect(k8![2]).toBe(model![2])
+  expect(sheet).toContain('<v>1865</v>')
+})

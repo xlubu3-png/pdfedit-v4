@@ -52,17 +52,26 @@ class RulingLinesTest {
     }
 
     @Test
-    void thinFilledBarsAsExcelDrawsBordersAreLinesButShadedBoxesAreNot() throws IOException {
+    void thinFilledBarsAsExcelDrawsBordersAreLinesAndAShadedCellGivesItsEdges() throws IOException {
         RulingLines.Lines lines = linesOf(cs -> {
+            cs.setNonStrokingColor(1f, 1f, 1f);
             cs.addRect(0, 0, 200, 300); // the white page
-            cs.addRect(20, 100, 80, 40); // a shaded cell
+            cs.fill();
+            cs.setNonStrokingColor(0f, 0f, 0f);
             cs.addRect(20, 140, 80, 0.75f); // a border under a row
-            cs.addRect(20, 100, 0.75f, 40); // a border left of a column
+            cs.addRect(120, 100, 0.75f, 40); // a border left of a column
+            cs.fill();
+            cs.setNonStrokingColor(0.85f, 0.85f, 0.85f);
+            cs.addRect(20, 200, 80, 30); // a grey header cell, no line drawn round it
+            cs.fill();
+            cs.setNonStrokingColor(0.98f, 0.98f, 0.98f);
+            cs.addRect(20, 20, 80, 30); // a near-white box: paper, not a cell
             cs.fill();
         });
 
-        assertThat(lines.horizontal()).singleElement().satisfies(h -> assertThat(h.y()).isCloseTo(300 - 140.375, within(0.01)));
-        assertThat(lines.vertical()).singleElement().satisfies(v -> assertThat(v.x()).isCloseTo(20.375, within(0.01)));
+        assertThat(lines.horizontal()).extracting(h -> Math.round(h.y()))
+                .containsExactlyInAnyOrder(Math.round(300 - 140.375), 70L, 100L);
+        assertThat(lines.vertical()).extracting(v -> Math.round(v.x())).containsExactlyInAnyOrder(120L, 20L, 100L);
     }
 
     @Test

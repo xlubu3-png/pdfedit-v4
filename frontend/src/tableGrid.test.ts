@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { findTables, hasTable, layout, toHtml, toTsv } from './tableGrid'
+import { findTables, hasTable, layout, straighten, toHtml, toTsv } from './tableGrid'
 import type { Rulings } from './tableGrid'
 import type { PlacedText } from './textSelect'
 
@@ -240,5 +240,26 @@ describe('tables side by side', () => {
     ]
 
     expect(toTsv(layout(texts, tables, false)).split('\n')).toEqual(['길이\t5015\t\t연월일\t2023', '높이\t\t\t\t2024'])
+  })
+})
+
+describe('a scan turned straight', () => {
+  it('turns the text the same way, so it lands in the cells of the straightened lines', () => {
+    // The lines were found with the page turned 2 degrees clockwise about (300, 400); a text at the right end of
+    // a row sat higher on the page as scanned.
+    const turn = { degrees: 2, x: 300, y: 400 }
+    const r = (2 * Math.PI) / 180
+    // A text whose middle, turned, is at (450, 110): where it was on the scan.
+    const mx = 450 - 300
+    const my = 110 - 400
+    const back = { x: 300 + mx * Math.cos(-r) - my * Math.sin(-r), y: 400 + mx * Math.sin(-r) + my * Math.cos(-r) }
+    const text: PlacedText = { text: '2023', left: back.x - 10, top: back.y - 5, height: 10, width: 20, chars: [back.x - 10] }
+
+    const [moved] = straighten([text], turn)
+
+    expect(moved.left + 10).toBeCloseTo(450, 5)
+    expect(moved.top + 5).toBeCloseTo(110, 5)
+    expect(moved.chars![0]).toBeCloseTo(440, 5)
+    expect(straighten([text], null)[0]).toBe(text)
   })
 })

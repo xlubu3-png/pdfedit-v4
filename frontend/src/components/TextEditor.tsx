@@ -34,8 +34,8 @@ import { ocrMessage, recognizeAll } from '../ocr'
 import { lineOfCover, refitted } from '../refit'
 import { asLines, asTable, placed, rewrittenLines, selectableLines } from '../textSelect'
 import type { PlacedText } from '../textSelect'
-import { findTables, hasTable, layout, toHtml, toTsv } from '../tableGrid'
-import type { Table } from '../tableGrid'
+import { findTables, hasTable, layout, straighten, toHtml, toTsv, turnOf } from '../tableGrid'
+import type { Table, Turn } from '../tableGrid'
 import { FITTING } from '../types'
 import { BLOCKED_NOTE, useRightClick } from '../rightClick'
 import { ContextMenu } from './ContextMenu'
@@ -415,16 +415,24 @@ export function TextEditor({
   }, [documentId, pageIndex, reloadToken, putStates, putAdded, putImages])
 
   /** The page's tables, from the lines drawn on it: copied text goes back into their cells (표 모양으로 복사). */
-  const [pageTables, setPageTables] = useState<{ page: string; tables: Table[] }>({ page: '', tables: [] })
+  const [pageTables, setPageTables] = useState<{ page: string; tables: Table[]; turn: Turn | null }>({
+    page: '',
+    tables: [],
+    turn: null,
+  })
   const tablesPage = `${documentId}/${pageIndex}`
   const tables = pageTables.page === tablesPage ? pageTables.tables : []
+  /** How a scan was turned straight to find its tables' lines: its text is turned the same way to fit them. */
+  const tablesTurn = pageTables.page === tablesPage ? pageTables.turn : null
   // Asked again once a scan's text is recognized: the server then tells a table's borders from letters' strokes.
   const recognized = ocrLines.length > 0
   useEffect(() => {
     let cancelled = false
     fetchRulings(documentId, pageIndex)
       .then((rulings) => {
-        if (!cancelled) setPageTables({ page: `${documentId}/${pageIndex}`, tables: findTables(rulings) })
+        if (!cancelled) {
+          setPageTables({ page: `${documentId}/${pageIndex}`, tables: findTables(rulings), turn: turnOf(rulings) })
+        }
       })
       // Without them a table is copied as rows of text parted by tabs, as before.
       .catch(() => {})
@@ -1311,7 +1319,7 @@ export function TextEditor({
    */
   function tableCopy(cells: PlacedText[], onlyPicked: boolean): { tsv: string; html: string } | null {
     if (tables.length === 0) return null
-    const blocks = layout(cells, tables, onlyPicked)
+    const blocks = layout(straighten(cells, tablesTurn), tables, onlyPicked)
     return hasTable(blocks) ? { tsv: toTsv(blocks), html: toHtml(blocks) } : null
   }
 
@@ -1327,9 +1335,17 @@ export function TextEditor({
    * Saves this page as an Excel file laid out as the page is (its tables with their column widths, merged cells and
    * borders), which a paste cannot give: Excel keeps its own column widths when something is pasted.
    */
-  function saveExcel() {
+  async function saveExcel() {
     const name = workbookName(page.sourceFileName, total > 1 ? position + 1 : undefined)
-    downloadBlob(sheetsToXlsx([{ name: `${position + 1}쪽`, sheet: sheetWith(pageText(), tables) }]), name)
+    // The page's lines as they are now: once a scan's text is recognized, its letters are told from borders.
+    let sheet = sheetWith(straighten(pageText(), tablesTurn), tables)
+    try {
+      const rulings = await fetchRulings(documentId, pageIndex)
+      sheet = sheetWith(straighten(pageText(), turnOf(rulings)), findTables(rulings))
+    } catch {
+      // the lines found when the page opened will do
+    }
+    downloadBlob(sheetsToXlsx([{ name: `${position + 1}쪽`, sheet }]), name)
     setStatus(`${name}로 저장했습니다`)
   }
 
@@ -1510,7 +1526,7 @@ export function TextEditor({
           'separator',
           { label: '이 쪽 글자 모두 복사', onSelect: () => void copyPlain(asLines(pageText()), '이 쪽 글자') },
           { label: '표 모양으로 모두 복사 (엑셀)', onSelect: () => void copyTable(pageText(), false, '이 쪽 글자를 표 모양으로') },
-          { label: '이 쪽을 엑셀 파일로 저장 (.xlsx)', onSelect: () => saveExcel() },
+          { label: '이 쪽을 엑셀 파일로 저장 (.xlsx)', onSelect: () => void saveExcel() },
         ],
       }
     }
@@ -1597,7 +1613,7 @@ export function TextEditor({
         { label: selecting ? '글자 선택 끝내기' : '글자 선택', shortcut: 'S', onSelect: () => toggleSelecting() },
         { label: '이 쪽 글자 모두 복사', onSelect: () => void copyPlain(asLines(pageText()), '이 쪽 글자') },
         { label: '표 모양으로 모두 복사 (엑셀)', onSelect: () => void copyTable(pageText(), false, '이 쪽 글자를 표 모양으로') },
-        { label: '이 쪽을 엑셀 파일로 저장 (.xlsx)', onSelect: () => saveExcel() },
+        { label: '이 쪽을 엑셀 파일로 저장 (.xlsx)', onSelect: () => void saveExcel() },
         ...fix,
         'separator',
         { label: '실행 취소', shortcut: 'Ctrl+Z', disabled: history.undo === 0, onSelect: () => undo() },
@@ -2301,7 +2317,7 @@ export function TextEditor({
                 icon={<FileSpreadsheet />}
                 label="엑셀 저장"
                 title="이 페이지를 엑셀 파일(.xlsx)로 저장합니다. 표의 열 너비·합친 칸·테두리가 PDF와 같게 들어갑니다"
-                onClick={() => saveExcel()}
+                onClick={() => void saveExcel()}
               />
               <RibbonButton
                 icon={<FileImage />}

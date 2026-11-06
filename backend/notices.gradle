@@ -121,6 +121,7 @@ tasks.register('thirdPartyNotices') {
         addText('SIL Open Font License 1.1 (Source Han Serif K)', read(new File(hwpStudioDir, 'fonts/SourceHanSerifK-OFL.txt')),
                 'Source Han Serif K Old Hangul subset')
         addText('LaTeX Project Public License 1.3c', text('LPPL-1.3c.txt'), 'Latin Modern Math (GUST Font License)')
+        addText('MIT (kordoc)', text('kordoc-LICENSE.txt'), 'kordoc - 스캔한 표의 선 찾기 기준과 기울기 보정 방식 (ScanRulings, Deskew)')
         addText('Apache-2.0 (PaddleOCR)', text('PaddleOCR-LICENSE.txt'), 'PaddleOCR PP-OCRv5 모델')
         addText('Apache-2.0 (RapidOCR)', text('RapidOCR-LICENSE.txt'), 'RapidOCR ONNX 변환 모델')
 
@@ -162,6 +163,10 @@ ${lines(java)}
 [글자 인식(OCR) 모델 - PaddleOCR PP-OCRv5를 RapidOCR v3.10.0이 ONNX로 바꾼 것]
   - det.onnx (ch_PP-OCRv5_det_mobile), rec-korean.onnx (korean_PP-OCRv5_rec_mobile) — Apache-2.0
     (https://github.com/PaddlePaddle/PaddleOCR, https://github.com/RapidAI/RapidOCR)
+
+[참고한 오픈소스 코드]
+  - kordoc (https://github.com/chrisryugj/kordoc) — MIT, Copyright (c) 2026 chrisryugj
+    스캔한 표의 선 찾기 기준(잉크 밝기·선 두께·점선·칠한 칸 경계)과 기울기 보정 방식을 따랐습니다.
 
 [Java 실행 환경]
   - OpenJDK (Eclipse Temurin) — GPL-2.0 with Classpath Exception 및 그 밖의 라이선스.

@@ -20,6 +20,7 @@ WINTECH 문서편집기는 **회사 안에서 쓰는 프로그램**입니다. �
 | 한글 편집기 글꼴 (나눔·Noto·Pretendard·D2Coding 등) | SIL OFL 1.1 | 라이선스와 저작권 표시를 함께 둘 것, **글꼴만 따로 팔지 말 것** | 고지 파일, `hwp-studio/fonts/FONTS.md` |
 | Latin Modern Math | GUST Font License (LPPL 1.3c) | 라이선스 사본, 고치면 이름 바꾸기 권고 | 고지 파일 (`texts/LPPL-1.3c.txt`) |
 | 카페24 써라운드·슈퍼매직, 행복고딕 | 각 배포처의 무료 글꼴 약관 | 배포처 안내로는 기업도 무료로 쓸 수 있고, 글꼴 파일 자체를 팔거나 고쳐 배포하면 안 됨 | 고치거나 따로 배포하지 않음 |
+| kordoc (스캔 표 선 찾기·기울기 보정 방식 참고) | MIT | 저작권 표시와 전문 | 고지 파일 (`texts/kordoc-LICENSE.txt`), 해당 소스 머리 주석 |
 | Java 실행 환경 (OpenJDK, Eclipse Temurin) | GPL-2.0 + Classpath Exception | 라이선스 사본, 소스 안내 | 설치 폴더 `runtime\legal` (jlink가 자동으로 넣음). 고쳐 쓰지 않음 |
 
 이 가운데 **소스 공개 의무가 있는 것(GPL·LGPL·EPL의 수정본)은 고쳐 쓰지 않으므로** 우리 프로그램의 소스를 공개할 의무는 없습니다.
@@ -56,4 +57,5 @@ WINTECH 문서편집기는 **회사 안에서 쓰는 프로그램**입니다. �
 | `jspecify-LICENSE.txt` | github.com/jspecify/jspecify v1.0.0 |
 | `snakeyaml-LICENSE.txt` | github.com/snakeyaml/snakeyaml |
 | `skia-LICENSE.txt` | github.com/google/skia (CanvasKit) |
+| `kordoc-LICENSE.txt` | github.com/chrisryugj/kordoc |
 | `PaddleOCR-LICENSE.txt`, `RapidOCR-LICENSE.txt` | github.com/PaddlePaddle/PaddleOCR, github.com/RapidAI/RapidOCR |

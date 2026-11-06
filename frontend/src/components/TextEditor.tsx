@@ -418,6 +418,8 @@ export function TextEditor({
   const [pageTables, setPageTables] = useState<{ page: string; tables: Table[] }>({ page: '', tables: [] })
   const tablesPage = `${documentId}/${pageIndex}`
   const tables = pageTables.page === tablesPage ? pageTables.tables : []
+  // Asked again once a scan's text is recognized: the server then tells a table's borders from letters' strokes.
+  const recognized = ocrLines.length > 0
   useEffect(() => {
     let cancelled = false
     fetchRulings(documentId, pageIndex)
@@ -429,7 +431,7 @@ export function TextEditor({
     return () => {
       cancelled = true
     }
-  }, [documentId, pageIndex])
+  }, [documentId, pageIndex, recognized])
 
   // Ctrl+C on text dragged over in a table: the browser's copy (the letters, for Notepad) gets the table as HTML
   // as well, so pasting into Excel puts each piece in its cell, with the borders and merged cells.

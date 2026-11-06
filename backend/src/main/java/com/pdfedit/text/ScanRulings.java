@@ -1,7 +1,6 @@
 package com.pdfedit.text;
 
 import java.awt.image.BufferedImage;
-import java.awt.image.Raster;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -22,12 +21,28 @@ public final class ScanRulings {
 
     /** Resolution the page is looked at: enough to tell a 1-pixel line, quick even for A3. */
     static final float DPI = 120;
-    /** Darker than this (0 black - 255 white) is ink. */
-    private static final int INK = 150;
+    /**
+     * Darker than this (0 black - 255 white) is ink. Light: a thin border falls between two pixels and comes out
+     * as two light grey ones; shaded cells, darker still, are told from borders by their thickness.
+     */
+    private static final int INK = 190;
+    /** A pixel whose channels differ by this much is coloured (a stamp's red), not black or grey ink. */
+    private static final int COLOURED = 90;
     /** A run of ink at least this long (pixels) can be part of a border; shorter ones are letters. */
-    private static final int MIN_RUN = 18;
-    /** A border is at least this long (points). */
-    private static final float MIN_LINE = 28;
+    private static final int MIN_RUN = 14;
+    /** A border is at least this long (points): one side of a small cell. */
+    private static final float MIN_LINE = 10;
+    /**
+     * A border this long (points) or longer is taken as it is; a shorter one only when both its ends meet a border
+     * across it, as a cell's sides do. A large letter's stroke (a title) does not.
+     */
+    private static final float LONG_LINE = 50;
+    /** How near (points) a line's end must come to a border across it to meet it. */
+    private static final float MEET = 4;
+    /** A stroke this far (points) inside a recognized word's box is part of a letter. */
+    private static final float WORD_EDGE = 1.5f;
+    /** A line thicker than this (pixels, on average) is a shaded area or a blot, not a border. */
+    private static final float MAX_THICKNESS = 5;
     /** Runs this close across the line (pixels) belong to one line: its thickness, or its drift when askew. */
     private static final float DRIFT = 2.5f;
     /** A break this short (pixels) in a line is a speck of the scan, not the line's end. */
@@ -38,23 +53,36 @@ public final class ScanRulings {
     private ScanRulings() {
     }
 
-    public static RulingLines.Lines of(PDDocument document, int pageIndex) throws IOException {
+    /**
+     * @param words the boxes of the text recognized on the page ({left, top, width, height}, points from the
+     *              top-left): a short stroke inside one is part of a letter, not a border; empty when none
+     */
+    public static RulingLines.Lines of(PDDocument document, int pageIndex, List<float[]> words) throws IOException {
         float dpi = com.pdfedit.service.RenderLimits.cappedDpi(document.getPage(pageIndex).getCropBox(), DPI);
-        BufferedImage image = new PDFRenderer(document).renderImageWithDPI(pageIndex, dpi, ImageType.GRAY);
-        return of(image, 72f / dpi);
+        BufferedImage image = new PDFRenderer(document).renderImageWithDPI(pageIndex, dpi, ImageType.RGB);
+        return of(image, 72f / dpi, words);
     }
 
     /** The lines in a page picture, scaled to points by {@code pointsPerPixel}. */
     static RulingLines.Lines of(BufferedImage image, float pointsPerPixel) {
+        return of(image, pointsPerPixel, List.of());
+    }
+
+    static RulingLines.Lines of(BufferedImage image, float pointsPerPixel, List<float[]> words) {
         int w = image.getWidth();
         int h = image.getHeight();
         boolean[] ink = new boolean[w * h];
-        Raster raster = image.getRaster();
         int[] row = new int[w];
         for (int y = 0; y < h; y++) {
-            raster.getSamples(0, y, w, 1, 0, row);
+            image.getRGB(0, y, w, 1, row, 0, w);
             for (int x = 0; x < w; x++) {
-                ink[y * w + x] = row[x] < INK;
+                int r = (row[x] >> 16) & 0xff;
+                int g = (row[x] >> 8) & 0xff;
+                int b = row[x] & 0xff;
+                // Dark and without colour: a red stamp or a coloured mark is not a table's border.
+                int grey = (r * 299 + g * 587 + b * 114) / 1000;
+                int colour = Math.max(r, Math.max(g, b)) - Math.min(r, Math.min(g, b));
+                ink[y * w + x] = grey < INK && colour < COLOURED;
             }
         }
         List<RulingLines.Horizontal> horizontal = new ArrayList<>();
@@ -70,7 +98,36 @@ public final class ScanRulings {
         float min = MIN_LINE;
         horizontal.removeIf(l -> l.x2() - l.x1() < min);
         vertical.removeIf(l -> l.y2() - l.y1() < min);
+        // Short lines only where they meet borders at both ends (against the lines as found, not as kept).
+        List<RulingLines.Horizontal> hs = List.copyOf(horizontal);
+        List<RulingLines.Vertical> vs = List.copyOf(vertical);
+        horizontal.removeIf(l -> l.x2() - l.x1() < LONG_LINE
+                && (!(meetsVertical(vs, l.x1(), l.y()) && meetsVertical(vs, l.x2(), l.y()))
+                        || inWord(words, (l.x1() + l.x2()) / 2, l.y())));
+        vertical.removeIf(l -> l.y2() - l.y1() < LONG_LINE
+                && (!(meetsHorizontal(hs, l.y1(), l.x()) && meetsHorizontal(hs, l.y2(), l.x()))
+                        || inWord(words, l.x(), (l.y1() + l.y2()) / 2)));
         return new RulingLines.Lines(horizontal, vertical);
+    }
+
+    /** Whether the point lies well inside one of the recognized words' boxes. */
+    private static boolean inWord(List<float[]> words, double x, double y) {
+        for (float[] w : words) {
+            if (x > w[0] + WORD_EDGE && x < w[0] + w[2] - WORD_EDGE && y > w[1] && y < w[1] + w[3]) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether a vertical border passes near the point (x, y). */
+    private static boolean meetsVertical(List<RulingLines.Vertical> lines, double x, double y) {
+        return lines.stream().anyMatch(v -> Math.abs(v.x() - x) <= MEET && y >= v.y1() - MEET && y <= v.y2() + MEET);
+    }
+
+    /** Whether a horizontal border passes near the point (x, y), given as (y, x). */
+    private static boolean meetsHorizontal(List<RulingLines.Horizontal> lines, double y, double x) {
+        return lines.stream().anyMatch(h -> Math.abs(h.y() - y) <= MEET && x >= h.x1() - MEET && x <= h.x2() + MEET);
     }
 
     /** A line being followed: where it runs along (from - to) and the positions across of its runs. */
@@ -140,6 +197,8 @@ public final class ScanRulings {
                 open.removeIf(l -> l.to + GAP < at);
             }
         }
+        // A shaded area is ink in many rows at once: on average far thicker than a border.
+        lines.removeIf(l -> l.count > MAX_THICKNESS * (l.to - l.from + 1));
         return lines;
     }
 }

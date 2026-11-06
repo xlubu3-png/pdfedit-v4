@@ -148,7 +148,7 @@ describe('a border round the page', () => {
     const texts = [at('금액', 50, 100, 100, 120), at('5,300,000', 100, 200, 100, 120), at('견적서', 200, 300, 30, 50)]
 
     expect(tables).toHaveLength(1)
-    expect(toTsv(layout(texts, tables, false)).split('\n')).toEqual(['\t\t견적서', '금액\t5,300,000', ''])
+    expect(toTsv(layout(texts, tables, false)).split('\n')).toEqual(['\t\t견적서', '', '금액\t5,300,000', '']) // the gap between them stays as an empty row
   })
 })
 
@@ -210,11 +210,35 @@ describe('a box with a gap where another table sits', () => {
       // sheet columns 0-50-100-150-250-300, so each table keeps its place and width.
       '품명\t\t금액',
       'AIR\t\t4,700,000',
+      '',
       '세부사양',
+      '',
       '\tFan\t\t1',
+      '',
       '',
       '계',
     ])
   })
 })
 
+
+describe('tables side by side', () => {
+  it('share the sheet rows, as on the page', () => {
+    const left = grid([0, 50, 100], [0, 20, 40])
+    const right = grid([150, 200, 250], [0, 20, 40])
+    const tables = findTables({
+      horizontal: [...left.horizontal, ...right.horizontal],
+      vertical: [...left.vertical, ...right.vertical],
+    })
+    const texts = [
+      at('길이', 0, 50, 0, 20),
+      at('5015', 50, 100, 0, 20),
+      at('연월일', 150, 200, 0, 20),
+      at('2023', 200, 250, 0, 20),
+      at('높이', 0, 50, 20, 40),
+      at('2024', 200, 250, 20, 40),
+    ]
+
+    expect(toTsv(layout(texts, tables, false)).split('\n')).toEqual(['길이\t5015\t\t연월일\t2023', '높이\t\t\t\t2024'])
+  })
+})

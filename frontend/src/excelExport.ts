@@ -2,7 +2,7 @@ import { fetchPageOcr, fetchPageText, fetchRulings } from './api'
 import { findTables, layout, toSheet } from './tableGrid'
 import type { PlacedText } from './textSelect'
 import type { Sheet, Table } from './tableGrid'
-import { rewrittenLines, selectableLines } from './textSelect'
+import { placed, rewrittenLines, selectableLines } from './textSelect'
 import type { PageItem } from './types'
 import { sheetsToXlsx } from './xlsx'
 
@@ -37,7 +37,7 @@ async function pageSheet(page: PageItem): Promise<Sheet> {
   ])
   const lines = selectableLines(data, new Map(), ocr.lines, rewrittenLines(ocr.lines, data.added ?? []), data.added ?? [], 1)
   return sheetOf(
-    lines.map((l) => ({ text: l.text, left: l.left, top: l.top, height: l.height, width: l.width, chars: l.chars })),
+    lines.map(placed),
     rulings,
   )
 }

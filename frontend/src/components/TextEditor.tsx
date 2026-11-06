@@ -32,7 +32,7 @@ import { sheetWith, workbookName } from '../excelExport'
 import { sheetsToXlsx } from '../xlsx'
 import { ocrMessage, recognizeAll } from '../ocr'
 import { lineOfCover, refitted } from '../refit'
-import { asLines, asTable, rewrittenLines, selectableLines } from '../textSelect'
+import { asLines, asTable, placed, rewrittenLines, selectableLines } from '../textSelect'
 import type { PlacedText } from '../textSelect'
 import { findTables, hasTable, layout, toHtml, toTsv } from '../tableGrid'
 import type { Table } from '../tableGrid'
@@ -1298,14 +1298,7 @@ export function TextEditor({
   /** The page's text with where it is (points down the page), to copy as lines or as a table. */
   function pageText(): PlacedText[] {
     if (!data) return []
-    return selectableLines(data, runStates, ocrLines, rewritten, added, 1).map((l) => ({
-      text: l.text,
-      left: l.left,
-      top: l.top,
-      height: l.height,
-      width: l.width,
-      chars: l.chars,
-    }))
+    return selectableLines(data, runStates, ocrLines, rewritten, added, 1).map(placed)
   }
 
   /**

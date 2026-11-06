@@ -121,6 +121,8 @@ export interface OcrText {
   width: number
   height: number
   score: number
+  /** For every character, where along the line (0 to 1) it was seen; absent for lines kept before this was recorded. */
+  centers?: number[] | null
 }
 
 export interface OcrResult {

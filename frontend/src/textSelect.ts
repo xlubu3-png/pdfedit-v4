@@ -69,9 +69,19 @@ export function selectableLines(
     if (rewritten.has(i) || !line.text.trim()) return
     const vertical = line.height >= VERTICAL * line.width
     const across = (vertical ? line.width : line.height) * scale
+    // Where each letter starts, from where along the line the recognition saw it (half way from the one before).
+    const c = line.centers
+    const chars =
+      !vertical && c && c.length === line.text.length && c.length > 0
+        ? c.map((at, k) => {
+            const start = k === 0 ? Math.max(0, at - (c.length > 1 ? (c[1] - at) / 2 : at)) : (c[k - 1] + at) / 2
+            return left(line.x + line.width * start)
+          })
+        : undefined
     out.push({
       key: `ocr:${i}`,
       text: vertical ? line.text.replace(/\s+/g, '') : line.text,
+      chars,
       left: left(line.x),
       top: top(line.y + line.height),
       width: line.width * scale,
@@ -131,6 +141,21 @@ export interface PlacedText {
   width?: number
   /** Where each character of `text` starts across, when known: it is split where it runs over a table's column border. */
   chars?: number[]
+  /** How tall a line of its letters is, when not its height (a recognized line running down the page). */
+  letters?: number
+}
+
+/** A line as text to copy or save: what it says and where, with the height of its letters (a line running down the page is tall, its letters are not). */
+export function placed(line: SelectableLine): PlacedText {
+  return {
+    text: line.text,
+    left: line.left,
+    top: line.top,
+    height: line.height,
+    width: line.width,
+    chars: line.chars,
+    letters: line.size / LETTER_SHARE,
+  }
 }
 
 /**

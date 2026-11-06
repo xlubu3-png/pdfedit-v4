@@ -23,6 +23,7 @@ import com.pdfedit.service.PdfDocumentStore;
 import com.pdfedit.service.TextEditService;
 import com.pdfedit.text.AddedText;
 import com.pdfedit.text.RulingLines;
+import com.pdfedit.text.ScanRulings;
 
 /** In-place text editing of one page of an uploaded document. */
 @RestController
@@ -53,7 +54,15 @@ public class TextEditController {
             if (pageIndex < 0 || pageIndex >= document.getNumberOfPages()) {
                 throw new InvalidEditException("페이지 번호가 잘못되었습니다.");
             }
-            return RulingLines.of(document.getPage(pageIndex));
+            RulingLines.Lines drawn = RulingLines.of(document.getPage(pageIndex));
+            // No table drawn with lines: a scan's table is only in the picture, its borders are looked for there.
+            if (drawn.horizontal().size() < 2 || drawn.vertical().size() < 2) {
+                RulingLines.Lines scanned = ScanRulings.of(document, pageIndex);
+                if (scanned.horizontal().size() >= 2 && scanned.vertical().size() >= 2) {
+                    return scanned;
+                }
+            }
+            return drawn;
         }
     }
 

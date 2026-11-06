@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { tablePdf } from './fixtures'
+import { scannedPdf, tablePdf } from './fixtures'
 
 const QUOTE = [
   ['NO', 'Part', 'Qty', 'Amount'],
@@ -113,4 +113,69 @@ test('the page is saved as an Excel file laid out as the page: from the editor a
   const [fromList] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: '엑셀로 내보내기' }).click()])
   expect(fromList.suggestedFilename()).toBe('quote.xlsx')
   await expect(page.locator('.info-banner')).toContainText('quote.xlsx로 저장했습니다')
+})
+
+test('a scanned table (lines only in the picture) is recognized and saved to Excel in its cells', async ({ page }) => {
+  await page.goto('/')
+  // A 200 dpi scan of a 3-column table: its borders and text are pixels only.
+  const dataUrl = await page.evaluate(() => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 1654
+    canvas.height = 2339
+    const g = canvas.getContext('2d')!
+    g.fillStyle = '#fff'
+    g.fillRect(0, 0, canvas.width, canvas.height)
+    g.strokeStyle = '#222'
+    g.lineWidth = 3
+    const xs = [200, 600, 1000, 1400]
+    const ys = [300, 400, 500, 600]
+    for (const y of ys) {
+      g.beginPath()
+      g.moveTo(xs[0], y)
+      g.lineTo(xs[3], y)
+      g.stroke()
+    }
+    for (const x of xs) {
+      g.beginPath()
+      g.moveTo(x, ys[0])
+      g.lineTo(x, ys[3])
+      g.stroke()
+    }
+    g.fillStyle = '#000'
+    g.font = '44px sans-serif'
+    const cells = [
+      ['MODEL', 'K8', '2021'],
+      ['ENGINE', 'G4KN', '2497'],
+      ['OWNER', 'WINTECH', '1865'],
+    ]
+    cells.forEach((row, r) => row.forEach((text, c) => g.fillText(text, xs[c] + 30, ys[r] + 66)))
+    return canvas.toDataURL('image/jpeg', 0.92)
+  })
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'form.pdf',
+    mimeType: 'application/pdf',
+    buffer: scannedPdf(Buffer.from(dataUrl.split(',')[1], 'base64'), 1654, 2339),
+  })
+  await page.getByRole('button', { name: '나중에' }).click()
+  await page.locator('button[title="텍스트 편집"]').first().click()
+  await page.locator('.te-ocr-ask').getByRole('button', { name: '글자 인식' }).click()
+  await expect(page.locator('.te-ocr-line').first()).toBeVisible({ timeout: 60_000 })
+
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.locator('.te-layer').click({ button: 'right', position: { x: 5, y: 5 } }).then(() =>
+      page.getByRole('menuitem', { name: /엑셀 파일로 저장/ }).click(),
+    ),
+  ])
+  const sheet = readFileSync((await download.path())!).toString('utf8')
+  // The table's three columns are three sheet columns: each value in the cell of its column, with borders.
+  const cell = (text: string) => new RegExp(`<c r="([A-Z]+)(\\d+)"[^>]*t="inlineStr"><is><t[^>]*>${text}</t>`).exec(sheet)
+  const model = cell('M ?ODEL') // recognition may put a space inside a word
+  const k8 = cell('K8')
+  const owner = cell('OW ?NER')
+  expect(model && k8 && owner).toBeTruthy()
+  expect(k8![1]).not.toBe(model![1])
+  expect(owner![1]).toBe(model![1])
+  expect(Number(owner![2]) - Number(model![2])).toBe(2)
+  expect(sheet).toContain('<v>1865</v>')
 })

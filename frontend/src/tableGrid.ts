@@ -326,6 +326,7 @@ function splitAtBorders(text: PlacedText, cellAt: (x: number, y: number) => Tabl
       height: text.height,
       width: Math.max(0, right - chars[from]),
       chars: chars.slice(from, i),
+      letters: text.letters,
     })
     from = i
   }
@@ -435,7 +436,7 @@ export interface Sheet {
  */
 const fontSize = (texts: PlacedText[], usual: number): number | null => {
   if (texts.length === 0) return null
-  const tallest = Math.max(...texts.map((t) => t.height))
+  const tallest = Math.max(...texts.map((t) => t.letters ?? t.height))
   const height = tallest >= usual * 0.8 && tallest <= usual * 1.25 ? usual : tallest
   return Math.min(24, Math.max(6, Math.round((height / BOX_PER_FONT) * 2) / 2))
 }
@@ -466,7 +467,9 @@ export function toSheet(blocks: Block[]): Sheet {
     while (k + 1 < xs.length - 1 && xs[k + 1] <= x + 1) k++
     return k
   }
-  const all = [...tables.flatMap((t) => t.cells.flatMap((c) => c.texts)), ...loose].map((t) => t.height).sort((a, b) => a - b)
+  const all = [...tables.flatMap((t) => t.cells.flatMap((c) => c.texts)), ...loose]
+    .map((t) => t.letters ?? t.height)
+    .sort((a, b) => a - b)
   const usual = all.length > 0 ? all[Math.floor(all.length / 2)] : 0
   const heights: number[] = []
   const cells: SheetCell[] = []
@@ -491,7 +494,7 @@ export function toSheet(blocks: Block[]): Sheet {
       }
       continue
     }
-    heights.push(Math.max(...block.texts.map((t) => t.height)) + 2)
+    heights.push(Math.max(...block.texts.map((t) => t.letters ?? t.height)) + 2)
     // Pieces starting in one column go together; a long one runs on over the empty columns after it, as in Excel.
     const byColumn = new Map<number, PlacedText[]>()
     for (const t of [...block.texts].sort((a, b) => a.left - b.left)) {

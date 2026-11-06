@@ -5,6 +5,7 @@ import java.util.List;
 
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -57,7 +58,13 @@ public class TextEditController {
             RulingLines.Lines drawn = RulingLines.of(document.getPage(pageIndex));
             // No table drawn with lines: a scan's table is only in the picture, its borders are looked for there.
             if (drawn.horizontal().size() < 2 || drawn.vertical().size() < 2) {
-                RulingLines.Lines scanned = ScanRulings.of(document, pageIndex);
+                // Where text was recognized, a short straight stroke is part of a letter, not a cell's side.
+                PDRectangle crop = document.getPage(pageIndex).getCropBox();
+                List<float[]> words = store.ocr(documentId, pageIndex).stream()
+                        .map(t -> new float[] {t.x() - crop.getLowerLeftX(), crop.getUpperRightY() - (t.y() + t.height()),
+                                t.width(), t.height()})
+                        .toList();
+                RulingLines.Lines scanned = ScanRulings.of(document, pageIndex, words);
                 if (scanned.horizontal().size() >= 2 && scanned.vertical().size() >= 2) {
                     return scanned;
                 }

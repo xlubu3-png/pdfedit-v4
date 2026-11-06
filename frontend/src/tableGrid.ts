@@ -471,49 +471,92 @@ export function toSheet(blocks: Block[]): Sheet {
     .map((t) => t.letters ?? t.height)
     .sort((a, b) => a - b)
   const usual = all.length > 0 ? all[Math.floor(all.length / 2)] : 0
-  const heights: number[] = []
+  // Rows: the tables' row borders (tables side by side share them), and the lines of text outside every table.
+  // A line beside a table takes the table's row it is in, as in Excel.
+  const rowsOf = blocks.flatMap((b) => (b.kind === 'row' ? [b.texts] : []))
+  const extent = (texts: PlacedText[]) => ({
+    top: Math.min(...texts.map((t) => t.top)),
+    bottom: Math.max(...texts.map((t) => t.top + t.height)),
+  })
+  const besideTable = (middle: number) => tables.some((t) => middle >= t.ys[0] && middle <= t.ys[t.ys.length - 1])
+  const outside = rowsOf.filter((texts) => {
+    const e = extent(texts)
+    return !besideTable((e.top + e.bottom) / 2)
+  })
+  const ys = clusters([
+    ...tables.flatMap((t) => t.ys),
+    ...outside.flatMap((texts) => {
+      const e = extent(texts)
+      return [e.top, e.bottom]
+    }),
+  ])
+  const nearestRow = (y: number) => {
+    let best = 0
+    ys.forEach((b, i) => {
+      if (Math.abs(b - y) < Math.abs(ys[best] - y)) best = i
+    })
+    return best
+  }
+  const rowAt = (y: number) => {
+    let k = 0
+    while (k + 1 < ys.length - 1 && ys[k + 1] <= y) k++
+    return k
+  }
   const cells: SheetCell[] = []
-  for (const block of blocks) {
-    const top = heights.length
-    if (block.kind === 'table') {
-      const { table } = block
-      table.ys.slice(1).forEach((y, r) => heights.push(y - table.ys[r]))
-      for (const cell of table.cells) {
-        const col = border(table.xs[cell.col])
-        const end = Math.max(col + 1, border(table.xs[cell.col + cell.colSpan]))
-        cells.push({
-          row: top + cell.row,
-          col,
-          rowSpan: cell.rowSpan,
-          colSpan: end - col,
-          lines: cellLines(cell),
-          borders: cell.borders,
-          align: cellAlign(cell),
-          size: fontSize(cell.texts, usual),
-        })
-      }
-      continue
-    }
-    heights.push(Math.max(...block.texts.map((t) => t.letters ?? t.height)) + 2)
-    // Pieces starting in one column go together; a long one runs on over the empty columns after it, as in Excel.
-    const byColumn = new Map<number, PlacedText[]>()
-    for (const t of [...block.texts].sort((a, b) => a.left - b.left)) {
-      const visible = t.left + ((t.text.length - t.text.trimStart().length) / Math.max(1, t.text.length)) * (t.width ?? 0)
-      const k = columnAt(visible)
-      byColumn.set(k, [...(byColumn.get(k) ?? []), t])
-    }
-    for (const [col, texts] of byColumn) {
+  for (const table of tables) {
+    for (const cell of table.cells) {
+      // A cell another table sits in gives way to it.
+      if (cell.container) continue
+      const col = border(table.xs[cell.col])
+      const end = Math.max(col + 1, border(table.xs[cell.col + cell.colSpan]))
+      const row = nearestRow(table.ys[cell.row])
+      const rowEnd = Math.max(row + 1, nearestRow(table.ys[cell.row + cell.rowSpan]))
       cells.push({
-        row: top,
+        row,
         col,
-        rowSpan: 1,
-        colSpan: 1,
-        lines: [texts.map((t) => t.text.trim()).join(' ')],
-        borders: null,
-        align: 'left',
-        size: fontSize(texts, usual),
+        rowSpan: rowEnd - row,
+        colSpan: end - col,
+        lines: cellLines(cell),
+        borders: cell.borders,
+        align: cellAlign(cell),
+        size: fontSize(cell.texts, usual),
       })
     }
+  }
+  // Pieces of a line starting in one column go together; a long one runs on over the empty columns after it.
+  const looseCells = new Map<string, { row: number; col: number; texts: PlacedText[] }>()
+  for (const texts of rowsOf) {
+    const e = extent(texts)
+    const middle = (e.top + e.bottom) / 2
+    const row = besideTable(middle) ? rowAt(middle) : nearestRow(e.top)
+    for (const t of [...texts].sort((a, b) => a.left - b.left)) {
+      const visible = t.left + ((t.text.length - t.text.trimStart().length) / Math.max(1, t.text.length)) * (t.width ?? 0)
+      const col = columnAt(visible)
+      const key = `${row}:${col}`
+      if (!looseCells.has(key)) looseCells.set(key, { row, col, texts: [] })
+      looseCells.get(key)!.texts.push(t)
+    }
+  }
+  for (const { row, col, texts } of looseCells.values()) {
+    cells.push({
+      row,
+      col,
+      rowSpan: 1,
+      colSpan: 1,
+      lines: [texts.map((t) => t.text.trim()).join(' ')],
+      borders: null,
+      align: 'left',
+      size: fontSize(texts, usual),
+    })
+  }
+  const heights = ys.slice(1).map((y, i) => Math.max(1, y - ys[i]))
+  // The text fits its cell's height as on the page: a cell of several lines (a paragraph, "생년월일 (법인등록번호)")
+  // gets smaller letters rather than lines running over the rows below.
+  for (const cell of cells) {
+    if (cell.size === null) continue
+    const tall = heights.slice(cell.row, cell.row + cell.rowSpan).reduce((a, h) => a + h, 0)
+    const fits = Math.floor((tall / (cell.lines.length * BOX_PER_FONT)) * 2) / 2
+    cell.size = Math.max(6, Math.min(cell.size, fits))
   }
   return { widths: xs.slice(1).map((x, i) => x - xs[i]), heights, cells }
 }

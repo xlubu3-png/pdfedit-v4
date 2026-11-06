@@ -2255,3 +2255,17 @@ kbd {
   font-size: 13px;
   line-height: 1.8;
 }
+
+/* "글자를 인식할까요?" on a page with no text (a scan). */
+.te-ocr-ask {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 12px;
+}
+
+.te-ocr-ask-buttons {
+  display: inline-flex;
+  gap: 6px;
+}

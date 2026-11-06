@@ -272,6 +272,8 @@ export function TextEditor({
   const [ocrLines, setOcrLines] = useState<OcrText[]>([])
   const [showOcr, setShowOcr] = useState(true)
   const [ocrBusy, setOcrBusy] = useState(false)
+  /** The page whose "글자를 인식할까요?" offer was closed: it is not offered there again. */
+  const [ocrAskClosed, setOcrAskClosed] = useState<string | null>(null)
   const [ocrNote, setOcrNote] = useState<string | null>(null)
   /** The recognized line clicked on (its index in `ocrLines`): Ctrl+C copies it, Enter or a double click rewrites it. */
   const [ocrPicked, setOcrPicked] = useState<number | null>(null)
@@ -2685,10 +2687,32 @@ export function TextEditor({
           </p>
         )}
         {data && !data.rotated && data.runs.length === 0 && ocrLines.length === 0 && (
-          <p className="te-notice">
-            이 페이지에는 고칠 수 있는 기존 글자가 없습니다 (빈 페이지이거나 스캔 이미지일 수 있습니다). 위의 ‘텍스트 추가’로
-            글자를 넣을 수 있고, 스캔한 쪽이면 ‘글자 인식(OCR)’으로 내보낸 PDF에서 글자를 검색할 수 있게 합니다.
-          </p>
+          // A scan has no text to pick until it is recognized (Edge does that by itself when it opens one): ask.
+          <div className="te-notice te-ocr-ask" role="status">
+            {ocrBusy ? (
+              <span>글자를 인식하는 중입니다… (쪽당 약 2초)</span>
+            ) : ocrAskClosed === pageKey ? (
+              <span>
+                이 페이지에는 글자 정보가 없습니다. 위의 ‘텍스트 추가’로 글자를 넣거나, ‘글자 인식(OCR)’으로 스캔한 글자를 읽을 수
+                있습니다.
+              </span>
+            ) : (
+              <>
+                <span>
+                  이 페이지에는 글자 정보가 없습니다 (스캔한 문서이거나 빈 페이지). <b>글자를 인식할까요?</b> 인식하면 글자를
+                  선택·복사하고, 찾기와 엑셀 저장에도 쓸 수 있습니다.
+                </span>
+                <span className="te-ocr-ask-buttons">
+                  <button type="button" className="primary" onClick={() => void recognizeThisPage()} disabled={busy}>
+                    글자 인식
+                  </button>
+                  <button type="button" onClick={() => setOcrAskClosed(pageKey)}>
+                    닫기
+                  </button>
+                </span>
+              </>
+            )}
+          </div>
         )}
         {data && !data.rotated && (
           <div className="te-canvas">

@@ -28,6 +28,8 @@ public final class RulingLines {
     private static final double SAME = 1.5;
     /** Lines whose ends are this close (points) along their length are one line. */
     private static final double JOIN = 2;
+    /** A fill lighter than this (0 - 255) is paper (white or nearly); darker is a shaded cell. */
+    private static final int PAPER = 240;
     /** A page drawn with more lines than this is a drawing, not a table: no lines are given. */
     private static final int MAX_LINES = 20_000;
 
@@ -39,8 +41,18 @@ public final class RulingLines {
     public record Vertical(double x, double y1, double y2) {
     }
 
-    public record Lines(List<Horizontal> horizontal, List<Vertical> vertical) {
+    /**
+     * @param turn   degrees the lines were found turned by (a scan straightened first: the page turned clockwise
+     *               about ({@code pivotX}, {@code pivotY}), points from the top-left); 0 when not turned. Text
+     *               placed on the page is turned the same way to be laid against them.
+     */
+    public record Lines(List<Horizontal> horizontal, List<Vertical> vertical, double turn, double pivotX,
+                        double pivotY) {
         public static final Lines NONE = new Lines(List.of(), List.of());
+
+        public Lines(List<Horizontal> horizontal, List<Vertical> vertical) {
+            this(horizontal, vertical, 0, 0, 0);
+        }
     }
 
     private RulingLines() {
@@ -212,11 +224,37 @@ public final class RulingLines {
         @Override
         public void fillPath(int windingRule) {
             finishSubpath();
-            // A thin filled rectangle is a line (a cell border); a wide one is a shaded box, not a border.
+            // A thin filled rectangle is a line (a cell border). A wider one in a colour is a shaded cell (a grey
+            // header row), whose edges part it from the cells beside it even with no line drawn; a white one, or one
+            // as big as the page, is the paper.
+            boolean shaded = shaded();
             for (Point2D[] r : rectangles) {
-                addThinRectangle(r);
+                if (!addThinRectangle(r) && shaded && !pageSized(r)) {
+                    for (int i = 0; i < 4; i++) {
+                        addLine(r[i], r[(i + 1) % 4]);
+                    }
+                }
             }
             clear();
+        }
+
+        /** Whether the fill colour is darker than paper (a shade, not white). */
+        private boolean shaded() {
+            try {
+                int rgb = getGraphicsState().getNonStrokingColor().toRGB();
+                int luma = (((rgb >> 16) & 0xff) * 299 + ((rgb >> 8) & 0xff) * 587 + (rgb & 0xff) * 114) / 1000;
+                return luma < PAPER;
+            } catch (IOException | RuntimeException e) {
+                return false;
+            }
+        }
+
+        /** Whether the rectangle covers most of the page: a background, not a cell. */
+        private boolean pageSized(Point2D[] r) {
+            PDRectangle box = getPage().getCropBox();
+            double width = Math.abs(r[2].getX() - r[0].getX());
+            double height = Math.abs(r[2].getY() - r[0].getY());
+            return width * height >= 0.6 * box.getWidth() * box.getHeight();
         }
 
         @Override
@@ -242,21 +280,25 @@ public final class RulingLines {
             subpath.clear();
         }
 
-        private void addThinRectangle(Point2D[] r) {
+        /** Adds the rectangle as a line when it is a thin one; whether it was. */
+        private boolean addThinRectangle(Point2D[] r) {
             double minX = Math.min(Math.min(r[0].getX(), r[1].getX()), Math.min(r[2].getX(), r[3].getX()));
             double maxX = Math.max(Math.max(r[0].getX(), r[1].getX()), Math.max(r[2].getX(), r[3].getX()));
             double minY = Math.min(Math.min(r[0].getY(), r[1].getY()), Math.min(r[2].getY(), r[3].getY()));
             double maxY = Math.max(Math.max(r[0].getY(), r[1].getY()), Math.max(r[2].getY(), r[3].getY()));
             if (!axisAligned(r)) {
-                return;
+                return false;
             }
             double width = maxX - minX;
             double height = maxY - minY;
             if (height <= THIN && width >= MIN_LENGTH) {
                 add(horizontal, new double[] {(minY + maxY) / 2, minX, maxX});
+                return true;
             } else if (width <= THIN && height >= MIN_LENGTH) {
                 add(vertical, new double[] {(minX + maxX) / 2, minY, maxY});
+                return true;
             }
+            return width <= THIN || height <= THIN;
         }
 
         private static boolean axisAligned(Point2D[] r) {

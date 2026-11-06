@@ -12,20 +12,29 @@ import org.apache.pdfbox.rendering.PDFRenderer;
 
 /**
  * A scanned table's borders, found in the picture of the page: a scan has no lines drawn as lines, only dark
- * pixels, so long straight dark strokes across or down the page are taken as the borders. Letters' strokes are
- * far shorter than a cell's side and are left out; a sheet scanned a little askew is followed as its lines drift
- * by a pixel at a time. Positions are in points from the top-left corner of the page's visible area, as
- * {@link RulingLines} gives them.
+ * pixels. A page scanned askew is turned straight first ({@link Deskew}). Then three kinds of border are looked for:
+ * <ul>
+ * <li>long thin straight runs of dark, colourless ink (a red stamp is not a border);</li>
+ * <li>dotted or dashed lines: rows of short dots close together, where they meet a solid border;</li>
+ * <li>the edges of shaded areas (a grey header row), which have no line drawn round them.</li>
+ * </ul>
+ * Letters' strokes are far shorter than a cell's side, thicker strokes (a bold title) and slivers of white inside a
+ * shaded band are left out, and a short line is kept only where both its ends meet borders across it and it is not
+ * inside a recognized word. Positions are in points from the top-left corner of the page's visible area, as
+ * {@link RulingLines} gives them (in the straightened page's frame when it was turned).
+ * <p>
+ * The thresholds and the defences against false lines follow kordoc's ocr/ruling-lines.ts (MIT, Copyright (c) 2026
+ * chrisryugj), measured there on many real scanned forms.
  */
 public final class ScanRulings {
 
     /** Resolution the page is looked at: enough to tell a 1-pixel line, quick even for A3. */
     static final float DPI = 120;
     /**
-     * Darker than this (0 black - 255 white) is ink. Light: a thin border falls between two pixels and comes out
-     * as two light grey ones; shaded cells, darker still, are told from borders by their thickness.
+     * Darker than this (0 black - 255 white) is ink. Light: a thin border falling between two pixels comes out as
+     * two light grey ones (192 - 207); shaded cells, darker still, are told from borders by their thickness.
      */
-    private static final int INK = 190;
+    private static final int INK = 205;
     /** A pixel whose channels differ by this much is coloured (a stamp's red), not black or grey ink. */
     private static final int COLOURED = 90;
     /** A run of ink at least this long (pixels) can be part of a border; shorter ones are letters. */
@@ -41,14 +50,31 @@ public final class ScanRulings {
     private static final float MEET = 4;
     /** A stroke this far (points) inside a recognized word's box is part of a letter. */
     private static final float WORD_EDGE = 1.5f;
-    /** A line thicker than this (pixels, on average) is a shaded area or a blot, not a border. */
-    private static final float MAX_THICKNESS = 5;
+    /** A border is at most this thick (points, on average): thicker is a bold stroke, a band of text or a fill. */
+    private static final float MAX_THICKNESS_PT = 2.5f;
     /** Runs this close across the line (pixels) belong to one line: its thickness, or its drift when askew. */
     private static final float DRIFT = 2.5f;
     /** A break this short (pixels) in a line is a speck of the scan, not the line's end. */
     private static final int GAP = 4;
     /** Lines stop a little short of the borders they meet: they are made this much longer at each end (points). */
     private static final float REACH = 1.5f;
+    /** A line with this share of ink just beside it on both sides is a sliver inside a shaded band, not a border. */
+    private static final double SURROUNDED = 0.35;
+
+    /** A dot or dash of a dotted line is at most this long (points); the gaps between at most this. */
+    private static final float DOT_MAX_DASH_PT = 4;
+    private static final float DOT_MAX_GAP_PT = 1.3f;
+    /** At least this many dots in a row make a dotted line (fewer is a row of full stops). */
+    private static final int DOT_MIN_COUNT = 8;
+    /** A dotted line meeting a border at one end only must be at least this long (points). */
+    private static final float DOT_ONE_SIDE_PT = 60;
+
+    /** A shaded area is this much darker (0 - 255) than the page around it. */
+    private static final int FILL_DELTA = 10;
+    /** ... and goes on inward at least this far (points) from its edge. */
+    private static final float FILL_DEPTH_PT = 4;
+
+    private enum Kind { SOLID, DOTTED, FILL }
 
     private ScanRulings() {
     }
@@ -60,7 +86,27 @@ public final class ScanRulings {
     public static RulingLines.Lines of(PDDocument document, int pageIndex, List<float[]> words) throws IOException {
         float dpi = com.pdfedit.service.RenderLimits.cappedDpi(document.getPage(pageIndex).getCropBox(), DPI);
         BufferedImage image = new PDFRenderer(document).renderImageWithDPI(pageIndex, dpi, ImageType.RGB);
-        return of(image, 72f / dpi, words);
+        return straightened(image, 72f / dpi, words);
+    }
+
+    /** The lines of a page picture turned straight first when it was scanned askew. */
+    static RulingLines.Lines straightened(BufferedImage image, float pointsPerPixel, List<float[]> words) {
+        double turn = Deskew.angle(image);
+        if (turn == 0) {
+            return of(image, pointsPerPixel, words);
+        }
+        double px = image.getWidth() * pointsPerPixel / 2;
+        double py = image.getHeight() * pointsPerPixel / 2;
+        double r = Math.toRadians(turn);
+        List<float[]> turnedWords = words.stream().map(w -> {
+            double cx = w[0] + w[2] / 2 - px;
+            double cy = w[1] + w[3] / 2 - py;
+            double x = px + cx * Math.cos(r) - cy * Math.sin(r);
+            double y = py + cx * Math.sin(r) + cy * Math.cos(r);
+            return new float[] {(float) (x - w[2] / 2), (float) (y - w[3] / 2), w[2], w[3]};
+        }).toList();
+        RulingLines.Lines lines = of(Deskew.turned(image, turn), pointsPerPixel, turnedWords);
+        return new RulingLines.Lines(lines.horizontal(), lines.vertical(), turn, px, py);
     }
 
     /** The lines in a page picture, scaled to points by {@code pointsPerPixel}. */
@@ -71,7 +117,9 @@ public final class ScanRulings {
     static RulingLines.Lines of(BufferedImage image, float pointsPerPixel, List<float[]> words) {
         int w = image.getWidth();
         int h = image.getHeight();
+        int[] grey = new int[w * h];
         boolean[] ink = new boolean[w * h];
+        int[] histogram = new int[256];
         int[] row = new int[w];
         for (int y = 0; y < h; y++) {
             image.getRGB(0, y, w, 1, row, 0, w);
@@ -79,39 +127,127 @@ public final class ScanRulings {
                 int r = (row[x] >> 16) & 0xff;
                 int g = (row[x] >> 8) & 0xff;
                 int b = row[x] & 0xff;
-                // Dark and without colour: a red stamp or a coloured mark is not a table's border.
-                int grey = (r * 299 + g * 587 + b * 114) / 1000;
+                int luma = (r * 299 + g * 587 + b * 114) / 1000;
                 int colour = Math.max(r, Math.max(g, b)) - Math.min(r, Math.min(g, b));
-                ink[y * w + x] = grey < INK && colour < COLOURED;
+                grey[y * w + x] = luma;
+                // Dark and without colour: a red stamp or a coloured mark is not a table's border.
+                ink[y * w + x] = luma < INK && colour < COLOURED;
+                histogram[luma]++;
             }
         }
+        // The paper: the commonest light shade (white, or the cream of an old form).
+        int paper = 255;
+        for (int v = 200, most = -1; v < 256; v++) {
+            if (histogram[v] > most) {
+                most = histogram[v];
+                paper = v;
+            }
+        }
+        Page page = new Page(w, h, grey, ink, paper, pointsPerPixel);
+
+        List<Found> found = new ArrayList<>();
+        for (boolean alongX : new boolean[] {true, false}) {
+            for (Line line : join(solidRuns(page, alongX))) {
+                if (line.thickness() <= MAX_THICKNESS_PT / pointsPerPixel && !surrounded(page, line, alongX)) {
+                    found.add(new Found(alongX, Kind.SOLID, line));
+                }
+            }
+            for (Line line : join(dottedRuns(page, alongX))) {
+                found.add(new Found(alongX, Kind.DOTTED, line));
+            }
+            for (Line line : join(fillEdgeRuns(page, alongX))) {
+                found.add(new Found(alongX, Kind.FILL, line));
+            }
+        }
+
+        List<Placed> placed = new ArrayList<>();
+        for (Found f : found) {
+            float across = (f.line.across() + 0.5f) * pointsPerPixel;
+            float from = f.line.from * pointsPerPixel - REACH;
+            float to = (f.line.to + 1) * pointsPerPixel + REACH;
+            if (to - from >= MIN_LINE) {
+                placed.add(new Placed(f.alongX, f.kind, across, from, to));
+            }
+        }
+        // Short lines only where they meet borders at both ends, dotted ones where they meet solid borders; against
+        // the lines as found, not as kept.
+        List<Placed> all = List.copyOf(placed);
         List<RulingLines.Horizontal> horizontal = new ArrayList<>();
-        for (Line line : lines(ink, w, h, true)) {
-            horizontal.add(new RulingLines.Horizontal((line.across() + 0.5f) * pointsPerPixel,
-                    line.from * pointsPerPixel - REACH, (line.to + 1) * pointsPerPixel + REACH));
-        }
         List<RulingLines.Vertical> vertical = new ArrayList<>();
-        for (Line line : lines(ink, w, h, false)) {
-            vertical.add(new RulingLines.Vertical((line.across() + 0.5f) * pointsPerPixel,
-                    line.from * pointsPerPixel - REACH, (line.to + 1) * pointsPerPixel + REACH));
+        for (Placed p : placed) {
+            float length = p.to - p.from;
+            // The longest border each end meets (0 for none).
+            float start = meets(all, p, p.from, p.kind == Kind.DOTTED);
+            float end = meets(all, p, p.to, p.kind == Kind.DOTTED);
+            boolean keep = switch (p.kind) {
+                case DOTTED -> (start > 0 && end > 0) || ((start > 0 || end > 0) && length >= DOT_ONE_SIDE_PT);
+                // A short one meets borders at both ends, one of them long: a cell's side meets the table's rows,
+                // while the strokes of a large letter (an E's spine and arms) only meet each other.
+                case SOLID, FILL -> length >= LONG_LINE
+                        || (start > 0 && end > 0 && Math.max(start, end) >= LONG_LINE && !inWord(words, p));
+            };
+            if (!keep) {
+                continue;
+            }
+            if (p.alongX) {
+                horizontal.add(new RulingLines.Horizontal(p.across, p.from, p.to));
+            } else {
+                vertical.add(new RulingLines.Vertical(p.across, p.from, p.to));
+            }
         }
-        float min = MIN_LINE;
-        horizontal.removeIf(l -> l.x2() - l.x1() < min);
-        vertical.removeIf(l -> l.y2() - l.y1() < min);
-        // Short lines only where they meet borders at both ends (against the lines as found, not as kept).
-        List<RulingLines.Horizontal> hs = List.copyOf(horizontal);
-        List<RulingLines.Vertical> vs = List.copyOf(vertical);
-        horizontal.removeIf(l -> l.x2() - l.x1() < LONG_LINE
-                && (!(meetsVertical(vs, l.x1(), l.y()) && meetsVertical(vs, l.x2(), l.y()))
-                        || inWord(words, (l.x1() + l.x2()) / 2, l.y())));
-        vertical.removeIf(l -> l.y2() - l.y1() < LONG_LINE
-                && (!(meetsHorizontal(hs, l.y1(), l.x()) && meetsHorizontal(hs, l.y2(), l.x()))
-                        || inWord(words, l.x(), (l.y1() + l.y2()) / 2)));
         return new RulingLines.Lines(horizontal, vertical);
     }
 
-    /** Whether the point lies well inside one of the recognized words' boxes. */
-    private static boolean inWord(List<float[]> words, double x, double y) {
+    private record Page(int w, int h, int[] grey, boolean[] ink, int paper, float pointsPerPixel) {
+        boolean ink(boolean alongX, int along, int across) {
+            return alongX ? ink[across * w + along] : ink[along * w + across];
+        }
+
+        int grey(boolean alongX, int along, int across) {
+            return alongX ? grey[across * w + along] : grey[along * w + across];
+        }
+
+        int length(boolean alongX) {
+            return alongX ? w : h;
+        }
+
+        int breadth(boolean alongX) {
+            return alongX ? h : w;
+        }
+    }
+
+    private record Run(int across, int from, int to) {
+    }
+
+    private record Found(boolean alongX, Kind kind, Line line) {
+    }
+
+    /** A line in points: {@code across} is its y for a horizontal one, x for a vertical one. */
+    private record Placed(boolean alongX, Kind kind, float across, float from, float to) {
+    }
+
+    /**
+     * The length of the longest line across {@code p} (not dotted, when asked) passing near the point of {@code p}
+     * at {@code along}; 0 when none does.
+     */
+    private static float meets(List<Placed> all, Placed p, float along, boolean solidOnly) {
+        float longest = 0;
+        for (Placed o : all) {
+            if (o.alongX == p.alongX || (solidOnly && o.kind == Kind.DOTTED)) {
+                continue;
+            }
+            if (Math.abs(o.across - along) <= MEET && p.across >= o.from - MEET && p.across <= o.to + MEET) {
+                longest = Math.max(longest, o.to - o.from);
+            }
+        }
+        return longest;
+    }
+
+    /** Whether the line's middle lies well inside one of the recognized words' boxes. */
+    private static boolean inWord(List<float[]> words, Placed p) {
+        double mid = (p.from + p.to) / 2;
+        double x = p.alongX ? mid : p.across;
+        double y = p.alongX ? p.across : mid;
         for (float[] w : words) {
             if (x > w[0] + WORD_EDGE && x < w[0] + w[2] - WORD_EDGE && y > w[1] && y < w[1] + w[3]) {
                 return true;
@@ -120,14 +256,126 @@ public final class ScanRulings {
         return false;
     }
 
-    /** Whether a vertical border passes near the point (x, y). */
-    private static boolean meetsVertical(List<RulingLines.Vertical> lines, double x, double y) {
-        return lines.stream().anyMatch(v -> Math.abs(v.x() - x) <= MEET && y >= v.y1() - MEET && y <= v.y2() + MEET);
+    /** The runs of ink at least {@link #MIN_RUN} long along each row (or column). */
+    private static List<Run> solidRuns(Page page, boolean alongX) {
+        List<Run> runs = new ArrayList<>();
+        int length = page.length(alongX);
+        for (int a = 0; a < page.breadth(alongX); a++) {
+            int start = -1;
+            for (int i = 0; i <= length; i++) {
+                boolean on = i < length && page.ink(alongX, i, a);
+                if (on && start < 0) {
+                    start = i;
+                } else if (!on && start >= 0) {
+                    if (i - start >= MIN_RUN) {
+                        runs.add(new Run(a, start, i - 1));
+                    }
+                    start = -1;
+                }
+            }
+        }
+        return runs;
     }
 
-    /** Whether a horizontal border passes near the point (x, y), given as (y, x). */
-    private static boolean meetsHorizontal(List<RulingLines.Horizontal> lines, double y, double x) {
-        return lines.stream().anyMatch(h -> Math.abs(h.y() - y) <= MEET && x >= h.x1() - MEET && x <= h.x2() + MEET);
+    /** Rows of at least {@link #DOT_MIN_COUNT} short dots with short gaps between, each as one run. */
+    private static List<Run> dottedRuns(Page page, boolean alongX) {
+        float ppp = page.pointsPerPixel();
+        int maxDash = Math.max(1, Math.round(DOT_MAX_DASH_PT / ppp));
+        int maxGap = Math.max(1, Math.round(DOT_MAX_GAP_PT / ppp));
+        List<Run> runs = new ArrayList<>();
+        int length = page.length(alongX);
+        for (int a = 0; a < page.breadth(alongX); a++) {
+            int chainFrom = -1;
+            int chainTo = -1;
+            int dots = 0;
+            int start = -1;
+            for (int i = 0; i <= length; i++) {
+                boolean on = i < length && page.ink(alongX, i, a);
+                if (on && start < 0) {
+                    start = i;
+                } else if (!on && start >= 0) {
+                    int dash = i - start;
+                    if (dash <= maxDash && chainTo >= 0 && start - chainTo - 1 <= maxGap) {
+                        chainTo = i - 1;
+                        dots++;
+                    } else {
+                        if (dots >= DOT_MIN_COUNT) {
+                            runs.add(new Run(a, chainFrom, chainTo));
+                        }
+                        chainFrom = dash <= maxDash ? start : -1;
+                        chainTo = dash <= maxDash ? i - 1 : -1;
+                        dots = dash <= maxDash ? 1 : 0;
+                    }
+                    start = -1;
+                }
+            }
+            if (dots >= DOT_MIN_COUNT) {
+                runs.add(new Run(a, chainFrom, chainTo));
+            }
+        }
+        return runs;
+    }
+
+    /**
+     * The edges of shaded areas: where the paper ends and a shade at least {@link #FILL_DELTA} darker begins and
+     * goes on at least {@link #FILL_DEPTH_PT} inward, on either side. Ink (a drawn border, a letter) is not paper.
+     */
+    private static List<Run> fillEdgeRuns(Page page, boolean alongX) {
+        int depth = Math.max(2, Math.round(FILL_DEPTH_PT / page.pointsPerPixel()));
+        int shade = page.paper() - FILL_DELTA;
+        List<Run> runs = new ArrayList<>();
+        int length = page.length(alongX);
+        int breadth = page.breadth(alongX);
+        for (int a = 1; a < breadth - 1; a++) {
+            for (int side : new int[] {1, -1}) {
+                // The edge pixel is shaded, the one outside it paper, and it stays shaded `depth` inward.
+                int start = -1;
+                for (int i = 0; i <= length; i++) {
+                    boolean edge = false;
+                    int inner = a + side * depth;
+                    if (i < length && inner >= 0 && inner < breadth && page.grey(alongX, i, a - side) > shade
+                            && !page.ink(alongX, i, a - side)) {
+                        // Shade, and no ink, all the way in: the grey fringe round a letter is not a shaded area.
+                        edge = true;
+                        for (int k = a; k != inner + side; k += side) {
+                            if (page.grey(alongX, i, k) > shade || page.ink(alongX, i, k)) {
+                                edge = false;
+                                break;
+                            }
+                        }
+                    }
+                    if (edge && start < 0) {
+                        start = i;
+                    } else if (!edge && start >= 0) {
+                        if (i - start >= MIN_RUN) {
+                            runs.add(new Run(a, start, i - 1));
+                        }
+                        start = -1;
+                    }
+                }
+            }
+        }
+        return runs;
+    }
+
+    /** Whether ink lies just beside the line on both sides over much of its length: a sliver inside a band. */
+    private static boolean surrounded(Page page, Line line, boolean alongX) {
+        int offset = (int) Math.ceil(line.thickness() / 2) + 2;
+        int centre = Math.round(line.across());
+        int before = centre - offset;
+        int after = centre + offset;
+        if (before < 0 || after >= page.breadth(alongX)) {
+            return false;
+        }
+        int inkBefore = 0;
+        int inkAfter = 0;
+        int n = 0;
+        for (int i = line.from; i <= line.to; i++) {
+            inkBefore += page.ink(alongX, i, before) ? 1 : 0;
+            inkAfter += page.ink(alongX, i, after) ? 1 : 0;
+            n++;
+        }
+        return n > 0 && inkBefore >= SURROUNDED * n && inkAfter >= SURROUNDED * n;
     }
 
     /** A line being followed: where it runs along (from - to) and the positions across of its runs. */
@@ -141,37 +389,23 @@ public final class ScanRulings {
         float across() {
             return (float) (sum / count);
         }
+
+        /** Pixels of ink per pixel of length: its average thickness. */
+        float thickness() {
+            return (float) count / (to - from + 1);
+        }
     }
 
     /**
-     * The long runs of ink along rows ({@code alongX}) or columns, joined into lines: a run continues a line when
-     * it starts no more than {@link #GAP} after the line's end (or overlaps it) and lies within {@link #DRIFT}
-     * of the line's last run across.
+     * The runs joined into lines: a run continues a line when it starts no more than {@link #GAP} after the line's
+     * end (or overlaps it) and lies within {@link #DRIFT} of the line's last run across.
      */
-    private static List<Line> lines(boolean[] ink, int w, int h, boolean alongX) {
-        int length = alongX ? w : h;
-        int breadth = alongX ? h : w;
-        record Run(int across, int from, int to) {
-        }
-        List<Run> runs = new ArrayList<>();
-        for (int a = 0; a < breadth; a++) {
-            int start = -1;
-            for (int i = 0; i <= length; i++) {
-                boolean on = i < length && (alongX ? ink[a * w + i] : ink[i * w + a]);
-                if (on && start < 0) {
-                    start = i;
-                } else if (!on && start >= 0) {
-                    if (i - start >= MIN_RUN) {
-                        runs.add(new Run(a, start, i - 1));
-                    }
-                    start = -1;
-                }
-            }
-        }
-        runs.sort(Comparator.comparingInt(Run::from).thenComparingInt(Run::across));
+    private static List<Line> join(List<Run> runs) {
+        List<Run> sorted = new ArrayList<>(runs);
+        sorted.sort(Comparator.comparingInt(Run::from).thenComparingInt(Run::across));
         List<Line> lines = new ArrayList<>();
         List<Line> open = new ArrayList<>();
-        for (Run run : runs) {
+        for (Run run : sorted) {
             Line joined = null;
             for (Line line : open) {
                 if (Math.abs(line.last - run.across()) <= DRIFT && run.from() <= line.to + GAP) {
@@ -197,8 +431,6 @@ public final class ScanRulings {
                 open.removeIf(l -> l.to + GAP < at);
             }
         }
-        // A shaded area is ink in many rows at once: on average far thicker than a border.
-        lines.removeIf(l -> l.count > MAX_THICKNESS * (l.to - l.from + 1));
         return lines;
     }
 }

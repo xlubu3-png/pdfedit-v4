@@ -5,6 +5,40 @@ import type { PlacedText } from './textSelect'
 export interface Rulings {
   horizontal: { y: number; x1: number; x2: number }[]
   vertical: { x: number; y1: number; y2: number }[]
+  /**
+   * Degrees a scan was turned (clockwise, about pivotX, pivotY) to be set straight before its lines were found:
+   * the lines are in the straightened page, and the text is turned the same way to be laid against them.
+   */
+  turn?: number
+  pivotX?: number
+  pivotY?: number
+}
+
+/** How a page was turned straight: degrees clockwise about a point (points from the top-left). */
+export interface Turn {
+  degrees: number
+  x: number
+  y: number
+}
+
+export function turnOf(rulings: Rulings): Turn | null {
+  return rulings.turn ? { degrees: rulings.turn, x: rulings.pivotX ?? 0, y: rulings.pivotY ?? 0 } : null
+}
+
+/** The text moved as the page was turned straight, so it lies in the cells the straightened lines make. */
+export function straighten(texts: PlacedText[], turn: Turn | null): PlacedText[] {
+  if (!turn || turn.degrees === 0) return texts
+  const r = (turn.degrees * Math.PI) / 180
+  const cos = Math.cos(r)
+  const sin = Math.sin(r)
+  return texts.map((t) => {
+    // Where its middle goes; the text keeps its shape (a few degrees), only its place moves.
+    const mx = t.left + (t.width ?? 0) / 2 - turn.x
+    const my = t.top + t.height / 2 - turn.y
+    const dx = turn.x + mx * cos - my * sin - (mx + turn.x)
+    const dy = turn.y + mx * sin + my * cos - (my + turn.y)
+    return { ...t, left: t.left + dx, top: t.top + dy, chars: t.chars?.map((c) => c + dx) }
+  })
 }
 
 /** A cell of a table, merged cells as one: where it is in the grid and on the page, and its text. */

@@ -1,5 +1,5 @@
 import { fetchPageOcr, fetchPageText, fetchRulings } from './api'
-import { findTables, layout, toSheet } from './tableGrid'
+import { findTables, layout, straighten, toSheet, turnOf } from './tableGrid'
 import type { PlacedText } from './textSelect'
 import type { Sheet, Table } from './tableGrid'
 import { placed, rewrittenLines, selectableLines } from './textSelect'
@@ -10,7 +10,7 @@ const EMPTY: Sheet = { widths: [], heights: [], cells: [] }
 
 /** The page's text as one sheet laid out as the page is: its tables in their cells, the rest where it stands. */
 export function sheetOf(texts: PlacedText[], rulings: Parameters<typeof findTables>[0]): Sheet {
-  return sheetWith(texts, findTables(rulings))
+  return sheetWith(straighten(texts, turnOf(rulings)), findTables(rulings))
 }
 
 /** {@link sheetOf} with the page's tables already found. */

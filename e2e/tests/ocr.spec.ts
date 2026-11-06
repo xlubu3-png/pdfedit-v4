@@ -459,3 +459,37 @@ test('taking back the upload of a scan (Ctrl+Z) takes the offer to recognize it 
   await expect(page.locator('.page-card')).toHaveCount(0)
   await expect(offer).toHaveCount(0)
 })
+
+test('a scanned page opened in the editor asks whether to recognize its text, and then its text can be copied', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.goto('/')
+  await page.locator('input[type=file]').setInputFiles({ name: 'scan.pdf', mimeType: 'application/pdf', buffer: await scan(page) })
+  await page.getByRole('button', { name: '나중에' }).click()
+  await page.locator('button[title="텍스트 편집"]').first().click()
+
+  const ask = page.locator('.te-ocr-ask')
+  await expect(ask).toContainText('글자를 인식할까요?')
+  await ask.getByRole('button', { name: '글자 인식' }).click()
+  await expect(page.locator('.te-ocr-line')).toHaveCount(2, { timeout: 60_000 })
+  await expect(ask).toHaveCount(0)
+
+  // Nothing picked: Ctrl+C copies the page's recognized text.
+  await page.locator('.te-layer').click({ position: { x: 5, y: 5 } })
+  await page.keyboard.press('Control+c')
+  await expect.poll(async () => (await page.evaluate(() => navigator.clipboard.readText())).replace(/\s+/g, '')).toContain(
+    '010-2345-6789',
+  )
+})
+
+test('the offer to recognize can be closed for the page', async ({ page }) => {
+  await page.goto('/')
+  await page.locator('input[type=file]').setInputFiles({ name: 'scan.pdf', mimeType: 'application/pdf', buffer: await scan(page) })
+  await page.getByRole('button', { name: '나중에' }).click()
+  await page.locator('button[title="텍스트 편집"]').first().click()
+
+  const ask = page.locator('.te-ocr-ask')
+  await ask.getByRole('button', { name: '닫기' }).click()
+  await expect(ask).not.toContainText('글자를 인식할까요?')
+  await expect(ask).toContainText('글자 정보가 없습니다')
+  await expect(ask.getByRole('button')).toHaveCount(0)
+})

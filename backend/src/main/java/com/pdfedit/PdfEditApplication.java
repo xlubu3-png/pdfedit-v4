@@ -44,6 +44,13 @@ public class PdfEditApplication {
         ConfigurableApplicationContext context =
                 new SpringApplicationBuilder(PdfEditApplication.class).headless(!desktop).run(args);
         String url = "http://localhost:" + port;
+        AotTraining.refreshIfStale(context.getEnvironment().getProperty("app.version", ""));
+        if (AotTraining.requested()) {
+            // The installer build's training run: use the app once as the screen would, then quit.
+            AotTraining.exercise(url);
+            context.close();
+            System.exit(0);
+        }
         if (desktop && !"true".equalsIgnoreCase(System.getenv("PDFEDIT_NO_BROWSER"))) {
             openBrowser(url);
         }

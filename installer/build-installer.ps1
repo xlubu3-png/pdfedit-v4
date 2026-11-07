@@ -38,7 +38,13 @@ $jar = Get-ChildItem (Join-Path $backend 'build\libs') -Filter '*-windows.jar' |
 Write-Host '== 2/4 staging =='
 if (Test-Path $work) { Remove-Item $work -Recurse -Force }
 New-Item -ItemType Directory -Force -Path (Join-Path $work 'input') | Out-Null
-Copy-Item $jar.FullName (Join-Path $work 'input\WINTECH_PDF.jar')
+# Unpacked (the app's jar and lib\ with the libraries) rather than one jar of jars: Java can then keep what it loads
+# in its AOT cache (see backend AotTraining.java), which the jar of jars' own class loader keeps it from doing.
+& java '-Djarmode=tools' -jar $jar.FullName extract --destination (Join-Path $work 'extracted')
+if ($LASTEXITCODE -ne 0) { throw 'extracting the jar failed' }
+$appJar = Get-ChildItem (Join-Path $work 'extracted') -Filter '*.jar' | Select-Object -First 1
+Copy-Item $appJar.FullName (Join-Path $work 'input\WINTECH_PDF.jar')
+Copy-Item (Join-Path $work 'extracted\lib') (Join-Path $work 'input\lib') -Recurse
 # The open source the program holds and its licenses (made by bootJarWindows, see backend\notices.gradle):
 # installed next to the jar, in the program's app folder, as well as shown from inside the app.
 $notices = Join-Path $backend 'build\generated\notices\THIRD-PARTY-NOTICES.txt'
@@ -72,14 +78,20 @@ $common = @(
     '--description', 'WINTECH Document Editor (PDF, HWP, HWPX)',
     '--input', (Join-Path $work 'input'),
     '--main-jar', 'WINTECH_PDF.jar',
-    '--main-class', 'org.springframework.boot.loader.launch.JarLauncher',
+    '--main-class', 'com.pdfedit.PdfEditApplication',
     '--runtime-image', (Join-Path $work 'runtime'),
     '--icon', (Join-Path $PSScriptRoot 'WINTECH_PDF.ico'),
     '--java-options', '-Dspring.profiles.active=installed',
     '--java-options', '-Dfile.encoding=UTF-8',
     # A cap instead of a share of the RAM (50% of a 64 GB PC is 32 GB the app would happily grow into),
     # and an idle collection so the memory used for a big document is given back after a minute.
+    # Starts small and grows when a big document needs it (it started at 1/64 of the RAM: about 100 MB more).
+    '--java-options', '-Xms32m',
     '--java-options', '-Xmx3g',
+    # Java's AOT cache: made on this PC by the app itself after the first start (and after each update), in the
+    # user's own folder (Program Files cannot be written); a start without it is just slower. The launcher fills in
+    # ${USERPROFILE}.
+    '--java-options', '-XX:AOTCache=${USERPROFILE}\WINTECH_PDF\app.aot',
     '--java-options', '-XX:G1PeriodicGCInterval=60000',
     # Text recognition (ONNX Runtime) loads a native library; newer Java versions refuse that unless allowed.
     '--java-options', '--enable-native-access=ALL-UNNAMED'

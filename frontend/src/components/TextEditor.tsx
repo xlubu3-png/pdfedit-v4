@@ -1318,12 +1318,11 @@ export function TextEditor({
 
   /**
    * The text as the page's tables hold it, for a spreadsheet: HTML (merged cells, borders, widths) and the same as
-   * tab-separated text. Null when none of it is in a table drawn with lines.
+   * tab-separated text. Null when none of it is in a table (drawn with lines, or set out in columns without).
    *
    * @param onlyPicked the text dragged over: the tables cut down to the cells it is in
    */
   function tableCopy(cells: PlacedText[], onlyPicked: boolean): { tsv: string; html: string } | null {
-    if (tables.length === 0) return null
     const blocks = layout(straighten(cells, tablesTurn), tables, onlyPicked)
     return hasTable(blocks) ? { tsv: toTsv(blocks), html: toHtml(blocks) } : null
   }

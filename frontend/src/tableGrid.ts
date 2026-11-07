@@ -1,3 +1,4 @@
+import { borderlessTables } from './borderless'
 import { rows } from './textSelect'
 import type { PlacedText } from './textSelect'
 
@@ -65,6 +66,8 @@ export interface Table {
   xs: number[]
   ys: number[]
   cells: TableCell[]
+  /** Found from how its text lines up in columns, not from lines drawn (see borderless.ts). */
+  borderless?: boolean
 }
 
 /** A part of the copied text: a table, or a row of text outside any table. */
@@ -211,18 +214,11 @@ function buildTable(xs: number[], ys: number[], h: Rulings['horizontal'], v: Rul
  * otherwise it is whole, empty cells and all. A table no text falls in is left out.
  */
 export function layout(texts: PlacedText[], tables: Table[], onlyPicked: boolean): Block[] {
-  const filled = tables.map((t) => ({ ...t, cells: t.cells.map((c) => ({ ...c, texts: [] as PlacedText[] })) }))
-  const loose: PlacedText[] = []
-  const cellAt = (x: number, y: number) =>
-    filled.flatMap((t) => t.cells).find((c) => !c.container && x >= c.left && x <= c.right && y >= c.top && y <= c.bottom)
-  for (const text of texts.flatMap((t) => splitAtBorders(t, cellAt))) {
-    if (text.text.trim() === '') continue
-    const x = text.left + (text.width ?? 0) / 2
-    const y = text.top + text.height / 2
-    const cell = cellAt(x, y)
-    if (cell) cell.texts.push(text)
-    else loose.push(text)
-  }
+  const drawn = fill(texts, tables)
+  // The text outside the drawn tables may be set out in columns with no lines: tables of their own.
+  const found = fill(drawn.loose, borderlessTables(drawn.loose))
+  const filled = [...drawn.filled, ...found.filled]
+  const loose = found.loose
   const blocks: Block[] = []
   for (const whole of filled) {
     if (!whole.cells.some((c) => c.texts.length > 0)) continue
@@ -233,6 +229,23 @@ export function layout(texts: PlacedText[], tables: Table[], onlyPicked: boolean
   }
   for (const row of rows(loose)) blocks.push({ kind: 'row', texts: row, top: row[0].top })
   return blocks.sort((a, b) => a.top - b.top)
+}
+
+/** The texts put in the tables' cells (each in the cell its middle is in, cut at borders), and the rest. */
+function fill(texts: PlacedText[], tables: Table[]): { filled: Table[]; loose: PlacedText[] } {
+  const filled = tables.map((t) => ({ ...t, cells: t.cells.map((c) => ({ ...c, texts: [] as PlacedText[] })) }))
+  const loose: PlacedText[] = []
+  const cellAt = (x: number, y: number) =>
+    filled.flatMap((t) => t.cells).find((c) => !c.container && x >= c.left && x <= c.right && y >= c.top && y <= c.bottom)
+  for (const text of texts.flatMap((t) => (filled.length > 0 ? splitAtBorders(t, cellAt) : [t]))) {
+    if (text.text.trim() === '') continue
+    const x = text.left + (text.width ?? 0) / 2
+    const y = text.top + text.height / 2
+    const cell = cellAt(x, y)
+    if (cell) cell.texts.push(text)
+    else loose.push(text)
+  }
+  return { filled, loose }
 }
 
 /**

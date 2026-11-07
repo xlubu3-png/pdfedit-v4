@@ -1,0 +1,134 @@
+name: 자동 시험
+
+# 소스가 올라올 때마다 GitHub의 Linux 서버에서 시험을 돌립니다. 설치 파일은 만들지 않습니다.
+#  - 서버·화면 시험: 백엔드(Java) 단위 시험, 화면(React) 검사·단위 시험·빌드
+#  - 브라우저 시험: 만든 프로그램을 띄워 Chrome으로 실제 화면을 눌러 보는 시험(e2e)
+# 실패하면 Actions 탭의 이 실행에서 어떤 시험이 왜 실패했는지 볼 수 있습니다(브라우저 시험은 화면 사진도 올려 둠).
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # 한글 파일 이름·글자가 깨지지 않게.
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+
+jobs:
+  unit:
+    name: 서버·화면 시험
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 소스 받기
+        uses: actions/checkout@v5
+
+      # 글꼴을 고르는 시험이 한글 글꼴(나눔 고딕·명조·바른고딕)을 씁니다. Windows의 맑은 고딕·바탕 대신입니다.
+      - name: 한글 글꼴 설치
+        run: sudo apt-get update -q && sudo apt-get install -y -q fonts-nanum fonts-nanum-extra
+
+      - name: Java 25 준비
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Node 준비
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Gradle 준비
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: 화면 패키지 설치
+        working-directory: frontend
+        run: npm ci
+
+      - name: 화면 검사(lint)
+        working-directory: frontend
+        run: npm run lint
+
+      - name: 화면 단위 시험
+        working-directory: frontend
+        run: npm test
+
+      - name: 화면 빌드
+        working-directory: frontend
+        run: npm run build
+
+      - name: 서버 단위 시험
+        working-directory: backend
+        run: sh ./gradlew test -PprebuiltFrontend
+
+      - name: 실패한 서버 시험 결과 올리기
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-report
+          path: backend/build/reports/tests/test
+          retention-days: 7
+
+  e2e:
+    name: 브라우저 시험
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: 소스 받기
+        uses: actions/checkout@v5
+
+      - name: 한글 글꼴 설치
+        run: sudo apt-get update -q && sudo apt-get install -y -q fonts-nanum fonts-nanum-extra
+
+      - name: Java 25 준비
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Node 준비
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            e2e/package-lock.json
+
+      - name: Gradle 준비
+        uses: gradle/actions/setup-gradle@v5
+
+      # 화면까지 넣은 프로그램(jar). 시험이 이것을 띄웁니다.
+      - name: 프로그램 빌드
+        working-directory: backend
+        run: sh ./gradlew bootJar
+
+      - name: 시험 도구 설치
+        working-directory: e2e
+        run: npm ci
+
+      # 서버에 이미 있는 Google Chrome을 씁니다(PC에서는 Edge).
+      - name: 브라우저 시험
+        working-directory: e2e
+        env:
+          E2E_BROWSER: chrome
+        run: npx playwright test --trace off
+
+      - name: 실패한 화면 사진 올리기
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          path: e2e/test-results
+          retention-days: 7

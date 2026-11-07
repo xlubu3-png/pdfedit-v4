@@ -72,13 +72,18 @@ class TextSearchServiceTest {
     void replaceKeepsWhatTheUserAlreadyDidToTheLine() throws IOException {
         upload();
         int index = search.find(pages, "Hello", true).get(0).runIndex();
-        store.pageEdits(id, 0).put(index, new RunEdit("Hello World", "Batang", 18f, true, "#336699", 12f, -3f));
+        // A serif family this machine has: Batang on Windows, Nanum Myeongjo on Linux.
+        String family = java.util.stream.Stream.of("Batang", "NanumMyeongjo")
+                .filter(f -> com.pdfedit.text.SystemFonts.system().find(false, f.toLowerCase()).isPresent())
+                .findFirst()
+                .orElseGet(() -> org.junit.jupiter.api.Assumptions.abort("no Korean serif font installed"));
+        store.pageEdits(id, 0).put(index, new RunEdit("Hello World", family, 18f, true, "#336699", 12f, -3f));
 
         search.replace(pages, "Hello", "Howdy", true);
 
         RunEdit edit = store.pageEditsSnapshot(id, 0).runs().get(index);
         assertThat(edit.text()).isEqualTo("Howdy World");
-        assertThat(edit.fontFamily()).isEqualTo("Batang");
+        assertThat(edit.fontFamily()).isEqualTo(family);
         assertThat(edit.fontSize()).isEqualTo(18f);
         assertThat(edit.bold()).isTrue();
         assertThat(edit.color()).isEqualTo("#336699");

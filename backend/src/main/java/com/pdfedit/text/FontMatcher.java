@@ -36,6 +36,10 @@ public class FontMatcher {
     private static final List<String> SANS_FALLBACKS =
             List.of("malgungothic", "nanumgothic", "dotum", "undotum", "gulim", "nanumbarungothic");
 
+    /** The family names this matcher gives the page's fonts (see {@link #exactFamily}); not necessarily installed. */
+    private static final java.util.Set<String> STAND_IN_FAMILIES =
+            java.util.Set.of("맑은 고딕", "Batang", "Gungsuh", "Dotum", "Gulim", "나눔고딕", "나눔명조", "휴먼명조", "휴먼고딕");
+
     private final SystemFonts systemFonts;
     private final TypefaceChooser typefaceChooser = new TypefaceChooser(this);
 
@@ -118,6 +122,12 @@ public class FontMatcher {
         if (nameTellsFamily(font.getName())) {
             return byName;
         }
+        // A well-known Latin font (Helvetica, Arial, Times...) says its weight in its name: judged by its glyphs
+        // against the installed Korean fonts, a plain one could come out "bold" on a PC without Malgun Gothic.
+        String latin = latinFamily(font.getName());
+        if (latin != null) {
+            return match(LATIN_SERIF.matcher(latin).find(), byName.bold);
+        }
         // The name says nothing ("HYwulM"): a heavy title font would otherwise be redrawn in the
         // default regular sans, so judge it by the look of its glyphs like a Type 3 font.
         return typefaceChooser.judge(font, page.samples(font)).orElse(byName);
@@ -193,7 +203,13 @@ public class FontMatcher {
         if (family == null || family.isBlank()) {
             face = resolve(new Match("맑은 고딕", bold)).orElseThrow(() -> new FontUnavailableException(NO_FONT_MESSAGE));
         } else {
-            face = systemFonts.find(bold, family).orElseThrow(
+            // A family this matcher stands in for the page's font (맑은 고딕, Batang...) falls back to a similar
+            // installed one, as drawing it would; a family the user picked by name must be there.
+            Optional<SystemFonts.Face> found = systemFonts.find(bold, family);
+            if (found.isEmpty() && STAND_IN_FAMILIES.contains(family)) {
+                found = resolve(new Match(family, bold));
+            }
+            face = found.orElseThrow(
                     () -> new FontUnavailableException("글꼴 '" + family + "'을(를) 이 PC에서 찾지 못했습니다."));
         }
         try {
@@ -324,6 +340,28 @@ public class FontMatcher {
 
         String family = familyByName(name);
         return new Match(family != null ? family : "맑은 고딕", bold);
+    }
+
+    private static final java.util.regex.Pattern LATIN_FAMILY = java.util.regex.Pattern.compile(
+            "helvetica|arial|times|courier|calibri|cambria|verdana|tahoma|georgia|segoe|liberation|dejavu|garamond"
+                    + "|trebuchet|consolas|lucida|candara|corbel|constantia|book ?antiqua|century|franklin|futura",
+            java.util.regex.Pattern.CASE_INSENSITIVE);
+    private static final java.util.regex.Pattern LATIN_SERIF =
+            java.util.regex.Pattern.compile("times|cambria|georgia|garamond|constantia|antiqua|century|serif",
+                    java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    /** The well-known Latin family in a font's name ("Arial-BoldMT" → "arial"), or null. */
+    static String latinFamily(String pdfFontName) {
+        if (pdfFontName == null) {
+            return null;
+        }
+        java.util.regex.Matcher m = LATIN_FAMILY.matcher(pdfFontName);
+        // "Liberation Serif", "DejaVu Serif": the word after tells serif from sans.
+        if (m.find()) {
+            String rest = pdfFontName.substring(m.start()).toLowerCase(Locale.ROOT);
+            return rest.contains("serif") && !rest.contains("sans") ? rest : m.group().toLowerCase(Locale.ROOT);
+        }
+        return null;
     }
 
     /** The family a font name points to, or null when the name says nothing (e.g. "HYwulM", "T1"). */

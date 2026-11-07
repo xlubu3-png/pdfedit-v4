@@ -10,11 +10,17 @@ package com.pdfedit.dto;
  * @param releaseUrl the web page of the newest release, with what changed
  * @param notes      the release's description, as written when it was published
  * @param error      why the check failed (offline, GitHub unreachable, ...), or null
+ * @param outcome    how the update started before this run ended: installed, or not (the installer was cancelled
+ *                   or failed); null when this run does not follow an update
  */
 public record UpdateInfo(boolean enabled, String current, String latest, boolean newer, String releaseUrl,
-                         String notes, String error) {
+                         String notes, String error, Outcome outcome) {
+
+    /** An update from {@code from} to {@code to}: whether the running version is now {@code to} (or newer). */
+    public record Outcome(String from, String to, boolean installed) {
+    }
 
     public static UpdateInfo disabled(String current) {
-        return new UpdateInfo(false, current, null, false, null, null, null);
+        return new UpdateInfo(false, current, null, false, null, null, null, null);
     }
 }

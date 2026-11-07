@@ -96,6 +96,32 @@ class UpdateServiceTest {
     }
 
     @Test
+    void theNextStartTellsWhetherTheUpdateHappened() throws Exception {
+        UpdateService old = service(true, "0.051");
+        old.check(true);
+        old.install();
+        assertThat(quit.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(folder.resolve("downloads").resolve(UpdateService.PENDING)).exists();
+
+        // The installer was cancelled: the same version starts again.
+        UpdateInfo same = service(true, "0.051").check(false);
+        assertThat(same.outcome()).isEqualTo(new UpdateInfo.Outcome("0.051", "0.099", false));
+        // Said once: the note is gone.
+        assertThat(service(true, "0.051").check(false).outcome()).isNull();
+
+        Files.writeString(folder.resolve("downloads").resolve(UpdateService.PENDING), "0.051\n0.099\n");
+        assertThat(service(true, "0.099").check(false).outcome()).isEqualTo(new UpdateInfo.Outcome("0.051", "0.099", true));
+    }
+
+    @Test
+    void theInstallerIsWaitedForAndTheProgramStartedAgain() {
+        String script = UpdateService.reopenScript("C:\\Temp\\WINTECH_PDF_Setup_0.099.exe",
+                "C:\\Program Files\\O'Brien App\\App.exe");
+        assertThat(script).isEqualTo("try { Start-Process -FilePath 'C:\\Temp\\WINTECH_PDF_Setup_0.099.exe' -Wait } catch { }; "
+                + "Start-Sleep -Seconds 2; Start-Process -FilePath 'C:\\Program Files\\O''Brien App\\App.exe'");
+    }
+
+    @Test
     void versionsAreComparedNumberByNumber() {
         assertThat(UpdateService.compareVersions("0.052", "0.051")).isPositive();
         assertThat(UpdateService.compareVersions("0.100", "0.099")).isPositive();

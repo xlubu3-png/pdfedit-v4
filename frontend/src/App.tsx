@@ -30,7 +30,7 @@ import { ocrMessage, recognizeAll } from './ocr'
 import { keyCode } from './keys'
 import { dragHasFiles, pickPdfs } from './pdfFiles'
 import { clearSession, loadSession, saveSession } from './session'
-import { readSkippedVersion, shouldAnnounce, skipVersion } from './updateNotice'
+import { outcomeNote, readSkippedVersion, shouldAnnounce, skipVersion } from './updateNotice'
 import { CompareView } from './components/CompareView'
 import { FindReplaceDialog } from './components/FindReplaceDialog'
 import { HwpEditor } from './components/HwpEditor'
@@ -161,7 +161,11 @@ function App() {
   // Looked up once at start; the server remembers the answer for a few hours, so this costs nothing.
   useEffect(() => {
     fetchUpdate(false)
-      .then(setUpdate)
+      .then((loaded) => {
+        setUpdate(loaded)
+        const said = outcomeNote(loaded)
+        if (said) setUpdateNote(said)
+      })
       .catch(() => setUpdate(null))
   }, [])
 

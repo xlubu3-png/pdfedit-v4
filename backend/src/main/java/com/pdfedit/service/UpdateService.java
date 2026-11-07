@@ -16,6 +16,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
@@ -68,6 +69,9 @@ public class UpdateService {
         void launch(Path installer) throws IOException;
     }
 
+    /** Left in the download folder while an update runs: the version before it, and the one being installed. */
+    static final String PENDING = "pending-update.txt";
+
     private final boolean enabled;
     private final String currentVersion;
     private final String apiBase;
@@ -80,6 +84,8 @@ public class UpdateService {
     private final JsonMapper mapper = JsonMapper.builder().build();
     private final AtomicBoolean installing = new AtomicBoolean();
 
+    /** How the update started by the run before this one went; null when it did not start one. */
+    private final UpdateInfo.Outcome outcome;
     private volatile Candidate latest;
     private volatile Instant checkedAt;
     private volatile String lastError;
@@ -91,7 +97,7 @@ public class UpdateService {
             @Value("${app.update.api-base:https://api.github.com}") String apiBase,
             @Value("${app.update.download-prefix:}") String downloadPrefix,
             ConfigurableApplicationContext context) {
-        this(enabled, currentVersion, repo, apiBase, downloadPrefix, UpdateService::startWithShell,
+        this(enabled, currentVersion, repo, apiBase, downloadPrefix, UpdateService::startAndReopen,
                 () -> quitApp(context), Path.of(System.getProperty("java.io.tmpdir"), "WINTECH_PDF_update"));
     }
 
@@ -108,6 +114,36 @@ public class UpdateService {
         this.launcher = launcher;
         this.quit = quit;
         this.downloadDir = downloadDir;
+        this.outcome = enabled ? readOutcome() : null;
+    }
+
+    /**
+     * The note the run that started an installer left ({@link #PENDING}: the version it was and the one it went to),
+     * read once and removed: whether this run is now that version.
+     */
+    private UpdateInfo.Outcome readOutcome() {
+        Path pending = downloadDir.resolve(PENDING);
+        try {
+            if (!Files.exists(pending)) {
+                return null;
+            }
+            List<String> lines = Files.readAllLines(pending);
+            Files.deleteIfExists(pending);
+            if (lines.size() < 2) {
+                return null;
+            }
+            String to = lines.get(1).strip();
+            boolean installed = compareVersions(currentVersion, to) >= 0;
+            if (installed) {
+                log.info("Updated from {} to {}", lines.get(0).strip(), currentVersion);
+            } else {
+                log.warn("The update to {} did not happen: still {} (the installer was cancelled or failed)", to,
+                        currentVersion);
+            }
+            return new UpdateInfo.Outcome(lines.get(0).strip(), to, installed);
+        } catch (IOException e) {
+            return null;
+        }
     }
 
     /** Whether a newer version exists; the answer is remembered for a few hours unless {@code refresh}. */
@@ -122,7 +158,7 @@ public class UpdateService {
         Candidate found = latest;
         boolean newer = found != null && compareVersions(found.version(), currentVersion) > 0;
         return new UpdateInfo(true, currentVersion, found == null ? null : found.version(), newer,
-                found == null ? null : found.releaseUrl(), found == null ? null : found.notes(), lastError);
+                found == null ? null : found.releaseUrl(), found == null ? null : found.notes(), lastError, outcome);
     }
 
     /**
@@ -147,9 +183,17 @@ public class UpdateService {
                 throw new UpdateFailedException("설치할 새 버전이 없습니다.");
             }
             Path file = download(found);
+            Path pending = downloadDir.resolve(PENDING);
             try {
+                // For the next start to tell whether the update happened.
+                Files.writeString(pending, currentVersion + "\n" + found.version() + "\n");
                 launcher.launch(file);
             } catch (IOException e) {
+                try {
+                    Files.deleteIfExists(pending);
+                } catch (IOException ignored) {
+                    // the next start then says the update did not happen, which is true
+                }
                 log.warn("Could not start the installer {}: {}", file, e.toString());
                 throw new UpdateFailedException("설치 프로그램을 실행하지 못했습니다. " + reason(e), e);
             }
@@ -332,7 +376,7 @@ public class UpdateService {
      * Compares dotted numeric versions ("0.051" &lt; "0.100" &lt; "1.0"): positive when {@code a} is newer.
      * Anything that is not a number counts as zero.
      */
-    static int compareVersions(String a, String b) {
+    public static int compareVersions(String a, String b) {
         String[] x = a.replaceFirst("^[vV]", "").split("\\.");
         String[] y = b.replaceFirst("^[vV]", "").split("\\.");
         for (int i = 0; i < Math.max(x.length, y.length); i++) {
@@ -353,12 +397,34 @@ public class UpdateService {
         }
     }
 
-    /** Opens the installer the way double-clicking it would, which also brings up Windows' permission prompt. */
-    private static void startWithShell(Path installer) throws IOException {
+    /**
+     * Opens the installer the way double-clicking it would (which brings up Windows' permission prompt) and, once it
+     * is done - installed, cancelled or failed - starts the program again, so the user does not have to: the new
+     * version, or the old one still there. A small hidden PowerShell does the waiting, as this app quits meanwhile.
+     */
+    private static void startAndReopen(Path installer) throws IOException {
         if (!System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")) {
             throw new IOException("Windows에서만 설치할 수 있습니다.");
         }
-        new ProcessBuilder("cmd.exe", "/c", "start", "", installer.toString()).start();
+        String app = ProcessHandle.current().info().command().orElse("");
+        if (!app.toLowerCase(Locale.ROOT).endsWith(".exe") || app.toLowerCase(Locale.ROOT).endsWith("java.exe")
+                || app.toLowerCase(Locale.ROOT).endsWith("javaw.exe")) {
+            // Not the installed program's own launcher: just the installer, as before.
+            new ProcessBuilder("cmd.exe", "/c", "start", "", installer.toString()).start();
+            return;
+        }
+        new ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+                "-Command", reopenScript(installer.toString(), app)).start();
+    }
+
+    /** The PowerShell that runs the installer, waits for it, then starts the program (paths quoted for it). */
+    static String reopenScript(String installer, String app) {
+        return "try { Start-Process -FilePath " + quote(installer) + " -Wait } catch { }; "
+                + "Start-Sleep -Seconds 2; Start-Process -FilePath " + quote(app);
+    }
+
+    private static String quote(String path) {
+        return "'" + path.replace("'", "''") + "'";
     }
 
     private static void quitApp(ConfigurableApplicationContext context) {

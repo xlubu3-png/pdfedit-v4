@@ -21,6 +21,8 @@ export interface UpdateInfo {
   releaseUrl: string | null
   notes: string | null
   error: string | null
+  /** How the update started before this run went (installed, or not: cancelled or failed); null after no update. */
+  outcome?: { from: string; to: string; installed: boolean } | null
 }
 
 /** An area whose content is taken out of the exported PDF and painted black: PDF user space, points. */

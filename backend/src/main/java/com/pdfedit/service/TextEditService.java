@@ -790,10 +790,16 @@ public class TextEditService {
             // In the box's colour, as the editor shows it (and as the user may have changed it), which is told from
             // the scan's ink when the line is rewritten.
             // Turned as the scan's line is (a sheet fed a little askew), about where the new words start.
+            // As letter shapes, not text: the whole line is already there as invisible text, and the changed words
+            // as text too would be found and copied twice (merged by a reader only where the two lie exactly over
+            // each other).
             cs.saveGraphicsState();
             cs.transform(turnAbout(box.rotation(), start, baseline));
-            drawLine(cs, styled, middle, start, baseline, size, RunEdit.colour(box.color(), Color.BLACK), squeeze,
-                    box.charSpacing() * squeeze);
+            if (!drawOutlines(cs, styled, middle, start, baseline, size, RunEdit.colour(box.color(), Color.BLACK),
+                    squeeze, box.charSpacing() * squeeze)) {
+                drawLine(cs, styled, middle, start, baseline, size, RunEdit.colour(box.color(), Color.BLACK), squeeze,
+                        box.charSpacing() * squeeze);
+            }
             cs.restoreGraphicsState();
         }
         drawInvisibleTurned(cs, styled, box, now);
@@ -1002,6 +1008,65 @@ public class TextEditService {
             }
         }
         return -1;
+    }
+
+    /**
+     * The text drawn as the shapes of its letters (filled outlines), not as text: it looks as {@link #drawLine} draws
+     * it but is not found or copied. False, having drawn nothing, when the font cannot give its letters' outlines.
+     */
+    private static boolean drawOutlines(PDPageContentStream cs, FontMatcher.Styled styled, String text, float x,
+            float y, float fontSize, Color colour, float hScale, float charSpacing) throws IOException {
+        if (!(styled.font() instanceof org.apache.pdfbox.pdmodel.font.PDVectorFont vector)) {
+            return false;
+        }
+        PDFont font = styled.font();
+        java.awt.geom.GeneralPath all = new java.awt.geom.GeneralPath();
+        float pen = x;
+        try {
+            int i = 0;
+            while (i < text.length()) {
+                int cp = text.codePointAt(i);
+                String ch = new String(Character.toChars(cp));
+                i += ch.length();
+                byte[] bytes = font.encode(ch);
+                int code = font.readCode(new java.io.ByteArrayInputStream(bytes));
+                // Glyph space is a thousandth of the size; the line's narrowing applies across only.
+                java.awt.geom.AffineTransform at = new java.awt.geom.AffineTransform(
+                        fontSize / 1000f * hScale, 0, 0, fontSize / 1000f, pen, y);
+                all.append(vector.getNormalizedPath(code).getPathIterator(at), false);
+                pen += font.getWidth(code) / 1000f * fontSize * hScale + charSpacing;
+            }
+        } catch (IllegalArgumentException | IOException unknownLetter) {
+            return false;
+        }
+        cs.saveGraphicsState();
+        try {
+            cs.setNonStrokingColor(colour);
+            double[] c = new double[6];
+            for (java.awt.geom.PathIterator it = all.getPathIterator(null); !it.isDone(); it.next()) {
+                switch (it.currentSegment(c)) {
+                    case java.awt.geom.PathIterator.SEG_MOVETO -> cs.moveTo((float) c[0], (float) c[1]);
+                    case java.awt.geom.PathIterator.SEG_LINETO -> cs.lineTo((float) c[0], (float) c[1]);
+                    case java.awt.geom.PathIterator.SEG_QUADTO -> cs.curveTo2((float) c[0], (float) c[1],
+                            (float) c[2], (float) c[3]);
+                    case java.awt.geom.PathIterator.SEG_CUBICTO -> cs.curveTo((float) c[0], (float) c[1],
+                            (float) c[2], (float) c[3], (float) c[4], (float) c[5]);
+                    case java.awt.geom.PathIterator.SEG_CLOSE -> cs.closePath();
+                    default -> { }
+                }
+            }
+            if (styled.fauxBold()) {
+                // A family without a bold cut: thicken the strokes a little, as drawLine does.
+                cs.setStrokingColor(colour);
+                cs.setLineWidth(fontSize * 0.03f);
+                cs.fillAndStroke();
+            } else {
+                cs.fill();
+            }
+        } finally {
+            cs.restoreGraphicsState();
+        }
+        return true;
     }
 
     /** The text, not seen but found and copied by a reader, as a scanned page's recognized text is. */

@@ -207,7 +207,9 @@ public final class TestPdfs {
     }
 
     private static SystemFonts.Face koreanFont(boolean bold) {
-        for (String name : List.of("malgungothic", "nanumgothic", "dotum")) {
+        // NanumGothic (Linux) loses its space when embedded whole - it reads back as an empty code - so the
+        // tests' pages are made with NanumBarunGothic there; Malgun Gothic on Windows has no such quirk.
+        for (String name : List.of("malgungothic", "nanumbarungothic", "nanumgothic", "dotum")) {
             Optional<SystemFonts.Face> face = SystemFonts.system().find(bold, name).filter(f -> !f.inCollection());
             if (face.isPresent()) {
                 return face.get();

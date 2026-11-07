@@ -344,6 +344,8 @@ export function TextEditor({
   const previewOwed = useRef(false)
   const queue = useRef<Promise<void>>(Promise.resolve())
   const lastSaveFailed = useRef(false)
+  /** A note on what the last edit did, kept in the status beside the save that follows it. */
+  const statusNote = useRef('')
   const pasteCount = useRef(0)
   const pasteTimer = useRef<number | undefined>(undefined)
   /** Undo/redo: whole-page snapshots taken before each action (states are immutable, so snapshots are cheap). */
@@ -551,7 +553,9 @@ export function TextEditor({
           await saveAddedImages(documentId, pageIndex, imagesRef.current)
         }
         setRetryable(false)
-        setStatus(savedLabel())
+        // What the edit did stays said beside the save, not replaced by it a moment later.
+        setStatus(statusNote.current ? `${statusNote.current} · ${savedLabel()}` : savedLabel())
+        statusNote.current = ''
         previewOwed.current = true
         onEdited(pageKey)
         refreshRemoval()
@@ -1269,7 +1273,8 @@ export function TextEditor({
       addedDirty.current = true
       scheduleSave()
     }
-    setStatus(looks.size > 0 ? `고쳐 쓴 상자 ${looks.size}개를 다시 맞췄습니다` : '')
+    statusNote.current = looks.size > 0 ? `고쳐 쓴 상자 ${looks.size}개를 다시 맞췄습니다` : ''
+    setStatus(statusNote.current)
     if (missing > 0) {
       setError(`고쳐 쓴 상자 ${missing}개는 인식한 줄을 찾지 못해 그대로 두었습니다. 글자 인식을 다시 해 주세요.`)
     }

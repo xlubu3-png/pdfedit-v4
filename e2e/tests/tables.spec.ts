@@ -19,6 +19,8 @@ async function openTable(page: Page) {
   })
   await page.locator('button[title="텍스트 편집"]').first().click()
   await expect(page.locator('.te-box[data-index="0"]')).toBeVisible()
+  // The page's picture is loaded: until then the page has no height and a drag on its text misses it.
+  await expect.poll(() => page.locator('.te-canvas img').first().evaluate((i: HTMLImageElement) => i.complete && i.naturalHeight > 0)).toBe(true)
 }
 
 /** What is on the clipboard: its HTML (what Excel pastes) and its plain text. */

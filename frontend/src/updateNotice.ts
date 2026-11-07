@@ -32,3 +32,12 @@ export function shortNotes(notes: string | null, maxChars = 140): string {
     .trim()
   return text.length > maxChars ? `${text.slice(0, maxChars)}…` : text
 }
+
+/** What to tell the user after an update was started: that it worked, or that it did not and how to go on. */
+export function outcomeNote(info: UpdateInfo | null): string | null {
+  const outcome = info?.outcome
+  if (!outcome) return null
+  return outcome.installed
+    ? `v${info.current}(으)로 업데이트했습니다.`
+    : `v${outcome.to} 업데이트가 끝나지 않아 v${info.current} 그대로입니다. 설치 창이 취소되었거나 설치에 실패했을 수 있습니다. 업데이트를 다시 해 주세요.`
+}

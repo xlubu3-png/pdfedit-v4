@@ -11,6 +11,8 @@ import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
+import com.pdfedit.service.UpdateService;
+
 @SpringBootApplication
 @EnableScheduling
 public class PdfEditApplication {
@@ -20,21 +22,53 @@ public class PdfEditApplication {
 
     public static void main(String[] args) {
         boolean installed = InstalledApp.isInstalled();
-        if (installed) {
+        if (!installed) {
+            start(args, false);
+            return;
+        }
+        try {
+            String version = InstalledApp.ownVersion();
             // Double-clicking the shortcut again should bring up the running copy, not start another.
             if (!InstalledApp.claimSingleInstance()) {
-                int running = InstalledApp.awaitRunningInstance(60_000);
-                if (running > 0) {
-                    openBrowser("http://localhost:" + running);
+                InstalledApp.Running running = InstalledApp.awaitRunningInstance(60_000);
+                boolean older = running != null && version != null
+                        && (running.version() == null || UpdateService.compareVersions(running.version(), version) < 0);
+                if (older && InstalledApp.takeOver()) {
+                    // An older version was still running: this one starts in its place.
+                } else if (running != null) {
+                    openBrowser("http://localhost:" + running.port());
+                    return;
+                } else {
+                    InstalledApp.showStartFailure("이미 실행 중인 WINTECH 문서편집기가 1분 동안 응답하지 않습니다.\n"
+                            + "작업 관리자에서 'WINTECH DocEditor'를 끝낸 뒤 다시 실행해 주세요.");
+                    System.exit(1);
+                    return;
                 }
-                return;
             }
+            start(args, true);
+        } catch (Throwable e) {
+            // The cause is in the log (Spring Boot writes it there as well).
+            org.slf4j.LoggerFactory.getLogger(PdfEditApplication.class).error("The app could not start", e);
+            InstalledApp.showStartFailure("원인: " + cause(e));
+            System.exit(1);
         }
+    }
 
+    /** The innermost reason, as one short line. */
+    private static String cause(Throwable e) {
+        Throwable root = e;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        String message = root.getMessage();
+        return root.getClass().getSimpleName() + (message == null || message.isBlank() ? "" : ": " + message);
+    }
+
+    private static void start(String[] args, boolean installed) {
         int port = findAvailablePort(resolvePreferredPort());
         System.setProperty("server.port", String.valueOf(port));
         if (installed) {
-            InstalledApp.publishPort(port);
+            InstalledApp.publishPort(port, InstalledApp.ownVersion());
         }
         // Spring Boot forces java.awt.headless=true by default, which turns Desktop.getDesktop()
         // into a no-op, so it is switched off - but only where a desktop really exists. On a

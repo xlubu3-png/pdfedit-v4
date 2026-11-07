@@ -584,15 +584,65 @@ export function toSheet(blocks: Block[]): Sheet {
     })
   }
   const heights = ys.slice(1).map((y, i) => Math.max(1, y - ys[i]))
-  // The text fits its cell's height as on the page: a cell of several lines (a paragraph, "생년월일 (법인등록번호)")
-  // gets smaller letters rather than lines running over the rows below.
+  // Readable letters and rows tall enough for them, as Excel makes rows when something is pasted: a cell keeps the
+  // page's letter size (at least MIN_READABLE), and a row grows to the lines its cells need at their column width
+  // (the letters of the sheet's font take more room than the page's). Rows are never shorter than on the page.
+  const widths = xs.slice(1).map((x, i) => x - xs[i])
+  const usualSize = Math.max(MIN_READABLE, Math.round((usual / BOX_PER_FONT) * 2) / 2)
   for (const cell of cells) {
     if (cell.size === null) continue
-    const tall = heights.slice(cell.row, cell.row + cell.rowSpan).reduce((a, h) => a + h, 0)
-    const fits = Math.floor((tall / (cell.lines.length * BOX_PER_FONT)) * 2) / 2
-    cell.size = Math.max(6, Math.min(cell.size, fits))
+    // Letters bigger than the page's usual ones (a heading, or a misread recognized line) shrink toward the usual
+    // size when the cell is too narrow for them, before the text wraps: a title fitting its wide cell stays big.
+    if (cell.borders && cell.size > usualSize) {
+      const room = widths.slice(cell.col, cell.col + cell.colSpan).reduce((a, w) => a + w, 0) - CELL_PADDING
+      const widest = Math.max(...cell.lines.map((line) => textWidth(line, 1)))
+      if (widest * cell.size > room) {
+        cell.size = Math.max(usualSize, Math.floor((room / Math.max(widest, 0.01)) * 2) / 2)
+      }
+    }
+    cell.size = Math.max(MIN_READABLE, cell.size)
   }
-  return { widths: xs.slice(1).map((x, i) => x - xs[i]), heights, cells }
+  const need = (cell: SheetCell) => {
+    if (cell.size === null) return 0
+    const size = cell.size
+    const room = Math.max(size, widths.slice(cell.col, cell.col + cell.colSpan).reduce((a, w) => a + w, 0) - CELL_PADDING)
+    // A line outside the tables runs on over the empty cells beside it; a table's cell wraps inside its width.
+    const lines = cell.borders
+      ? cell.lines.reduce((n, line) => n + Math.max(1, Math.ceil(textWidth(line, size) / room)), 0)
+      : cell.lines.length
+    return lines * size * LINE_HEIGHT + ROW_PADDING
+  }
+  // Single-row cells first, then cells over several rows add what they still lack to their last row.
+  for (const cell of cells) {
+    if (cell.rowSpan === 1) heights[cell.row] = Math.max(heights[cell.row], need(cell))
+  }
+  for (const cell of cells) {
+    if (cell.rowSpan === 1) continue
+    const last = cell.row + cell.rowSpan - 1
+    const tall = heights.slice(cell.row, last + 1).reduce((a, h) => a + h, 0)
+    const lack = need(cell) - tall
+    if (lack > 0 && last < heights.length) heights[last] += lack
+  }
+  for (let i = 0; i < heights.length; i++) heights[i] = Math.round(heights[i] * 4) / 4
+  return { widths, heights, cells }
+}
+
+/** Letters smaller than this (points) are hard to read in a sheet; a page's small print is made this big. */
+const MIN_READABLE = 8
+/** A line of the sheet's font is this many times its size tall (맑은 고딕 with Excel's line spacing). */
+const LINE_HEIGHT = 1.35
+/** Room a cell keeps above and below its text, and beside it (points). */
+const ROW_PADDING = 3
+const CELL_PADDING = 4
+
+/** About how wide (points) the text is in the sheet's font: Hangul and other wide letters a full size, the rest about half. */
+function textWidth(text: string, size: number): number {
+  let em = 0
+  for (const ch of text) {
+    const code = ch.codePointAt(0) ?? 0
+    em += code >= 0x1100 && code <= 0xffdc && !(code >= 0xff61 && code <= 0xffdc) ? 1 : ch === ' ' ? 0.3 : 0.58
+  }
+  return em * size
 }
 
 /**

@@ -201,14 +201,14 @@ function worksheet(sheet: Sheet, styles: Styles): string {
   return (
     XML_HEAD +
     `<worksheet xmlns="${MAIN}" xmlns:r="${REL}">` +
-    // Printed as the page was: A4, the whole width on one sheet of paper.
+    // Printed as the page was: A4, one sheet of paper (rows grown for readable letters are fitted back on it).
     '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>' +
     '<sheetFormatPr defaultRowHeight="16.5"/>' +
     (cols ? `<cols>${cols}</cols>` : '') +
     `<sheetData>${rows}</sheetData>` +
     (merges.length > 0 ? `<mergeCells count="${merges.length}">${merges.join('')}</mergeCells>` : '') +
     '<pageMargins left="0.25" right="0.25" top="0.4" bottom="0.4" header="0.2" footer="0.2"/>' +
-    '<pageSetup paperSize="9" orientation="portrait" fitToWidth="1" fitToHeight="0"/>' +
+    '<pageSetup paperSize="9" orientation="portrait" fitToWidth="1" fitToHeight="1"/>' +
     '</worksheet>'
   )
 }

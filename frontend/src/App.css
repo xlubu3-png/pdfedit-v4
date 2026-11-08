@@ -2277,3 +2277,124 @@ kbd {
   display: inline-flex;
   gap: 6px;
 }
+
+/* 표 칸 바로잡기: the page's tables by their borders, to be put right by hand. */
+.te-tablefix {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  cursor: default;
+  touch-action: none;
+}
+
+.te-tablefix.mode-col,
+.te-tablefix.mode-row,
+.te-tablefix.mode-draw {
+  cursor: crosshair;
+}
+
+.te-tablefix-table {
+  position: absolute;
+  box-sizing: border-box;
+  background: rgba(37, 99, 235, 0.06);
+  outline: 1px dashed rgba(37, 99, 235, 0.6);
+}
+
+.te-tablefix-table.manual {
+  background: rgba(22, 163, 74, 0.07);
+  outline-color: rgba(22, 163, 74, 0.7);
+}
+
+.te-tablefix-table.picked {
+  outline: 2px solid #2563eb;
+}
+
+.te-tablefix-line {
+  position: absolute;
+  z-index: 1;
+}
+
+.te-tablefix-line.vertical {
+  top: 0;
+  bottom: 0;
+  width: 9px;
+  margin-left: -4px;
+  cursor: col-resize;
+}
+
+.te-tablefix-line.horizontal {
+  left: 0;
+  right: 0;
+  height: 9px;
+  margin-top: -4px;
+  cursor: row-resize;
+}
+
+.te-tablefix-line::after {
+  content: '';
+  position: absolute;
+  background: #2563eb;
+}
+
+.te-tablefix-table.manual .te-tablefix-line::after {
+  background: #16a34a;
+}
+
+.te-tablefix-line.vertical::after {
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 2px;
+}
+
+.te-tablefix-line.horizontal::after {
+  left: 0;
+  right: 0;
+  top: 4px;
+  height: 2px;
+}
+
+.te-tablefix-line:hover::after {
+  background: #dc2626;
+}
+
+.te-tablefix.mode-col .te-tablefix-line,
+.te-tablefix.mode-row .te-tablefix-line,
+.te-tablefix.mode-draw .te-tablefix-line {
+  pointer-events: none;
+}
+
+.te-tablefix-drawing {
+  position: absolute;
+  border: 2px dashed #16a34a;
+  background: rgba(22, 163, 74, 0.08);
+}
+
+.te-tablefix-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-width: min(980px, 96vw);
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  font-size: 13px;
+}
+
+.te-tablefix-bar button.active {
+  background: #2563eb;
+  color: #fff;
+  border-color: #2563eb;
+}
+
+.te-tablefix-hint {
+  flex: 1 1 240px;
+  color: #4b5563;
+}

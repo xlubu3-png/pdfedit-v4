@@ -22,7 +22,7 @@ import type {
 import { isKorean } from './errors'
 import { parseRedactionReport, type RedactionReport } from './redaction'
 import { parseShrinkReport, type ShrinkReport } from './shrink'
-import type { Rulings } from './tableGrid'
+import type { Grid, Rulings } from './tableGrid'
 
 const BASE = '/api/v1/pdf'
 
@@ -253,6 +253,26 @@ export async function straightenPage(
     throw await failure(response, '쪽의 기울기를 바로잡지 못했습니다')
   }
   return response.json()
+}
+
+/** The tables set out by hand on the page (표 칸 바로잡기); empty when the page's own are used. */
+export async function fetchTableGrids(documentId: string, pageIndex: number): Promise<Grid[]> {
+  const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/table-grids`)
+  if (!response.ok) {
+    throw await failure(response, '표 칸을 불러오지 못했습니다')
+  }
+  return response.json()
+}
+
+export async function saveTableGrids(documentId: string, pageIndex: number, grids: Grid[]): Promise<void> {
+  const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/table-grids`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(grids),
+  })
+  if (!response.ok) {
+    throw await failure(response, '표 칸을 저장하지 못했습니다')
+  }
 }
 
 export async function duplicatePage(documentId: string, pageIndex: number): Promise<UploadResponse> {

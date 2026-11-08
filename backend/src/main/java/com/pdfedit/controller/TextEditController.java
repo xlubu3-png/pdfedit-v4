@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.pdfedit.dto.PageTextDto;
+import com.pdfedit.dto.TableGrid;
 import com.pdfedit.dto.TextEditItem;
 import com.pdfedit.service.InvalidEditException;
 import com.pdfedit.service.PdfDocumentStore;
@@ -30,6 +31,9 @@ import com.pdfedit.text.ScanRulings;
 @RestController
 @RequestMapping("/api/v1/pdf/documents/{documentId}/pages/{pageIndex}")
 public class TextEditController {
+
+    /** Most tables set out by hand on one page. */
+    private static final int MAX_GRIDS = 50;
 
     private final PdfDocumentStore store;
     private final TextEditService textEditService;
@@ -70,6 +74,32 @@ public class TextEditController {
                 }
             }
             return drawn;
+        }
+    }
+
+    /** The tables set out by hand on the page (표 칸 바로잡기); empty when the page's own are used. */
+    @GetMapping("/table-grids")
+    public List<TableGrid> tableGrids(@PathVariable String documentId, @PathVariable int pageIndex) {
+        checkPage(documentId, pageIndex);
+        return store.tableGrids(documentId, pageIndex);
+    }
+
+    /** Replaces the tables set out by hand on the page; an empty list goes back to the page's own tables. */
+    @PutMapping("/table-grids")
+    public ResponseEntity<Void> saveTableGrids(@PathVariable String documentId, @PathVariable int pageIndex,
+            @RequestBody List<TableGrid> grids) {
+        checkPage(documentId, pageIndex);
+        if (grids.size() > MAX_GRIDS || grids.stream().anyMatch(g -> g == null || !g.valid())) {
+            throw new InvalidEditException("표의 칸 선이 잘못되었습니다.");
+        }
+        store.setTableGrids(documentId, pageIndex, grids);
+        return ResponseEntity.noContent().build();
+    }
+
+    private void checkPage(String documentId, int pageIndex) {
+        int pages = store.getInfo(documentId).pageCount();
+        if (pageIndex < 0 || pageIndex >= pages) {
+            throw new InvalidEditException("페이지 번호가 잘못되었습니다.");
         }
     }
 

@@ -19,6 +19,8 @@ import {
   saveTextEdits,
   uploadImage,
   fetchRulings,
+  fetchTableGrids,
+  saveTableGrids,
 } from '../api'
 import type { TextEditPayload } from '../api'
 import { fontBaseName, missingFontNames, otherFormatFamily, reloadMessage } from '../fontHelp'
@@ -28,14 +30,15 @@ import { History } from '../history'
 import { keyCode } from '../keys'
 import { copyRich, copyText } from '../clipboard'
 import { downloadBlob } from '../download'
-import { sheetWith, workbookName } from '../excelExport'
+import { sheetOf, sheetWith, workbookName } from '../excelExport'
 import { sheetsToXlsx } from '../xlsx'
 import { ocrMessage, recognizeAll, straightenedNote } from '../ocr'
 import { lineOfCover, refitted } from '../refit'
 import { asLines, asTable, placed, rewrittenLines, selectableLines } from '../textSelect'
 import type { PlacedText } from '../textSelect'
-import { findTables, hasTable, layout, straighten, toHtml, toTsv, turnOf } from '../tableGrid'
-import type { Table, Turn } from '../tableGrid'
+import { findTables, hasTable, layout, notCovered, straighten, toHtml, toTsv, turnOf, withGrids } from '../tableGrid'
+import type { Grid, Table, Turn } from '../tableGrid'
+import { TableFixLayer } from './TableFixLayer'
 import { FITTING } from '../types'
 import { BLOCKED_NOTE, useRightClick } from '../rightClick'
 import { ContextMenu } from './ContextMenu'
@@ -462,6 +465,41 @@ export function TextEditor({
       cancelled = true
     }
   }, [documentId, pageIndex, recognized])
+
+  /** Tables set out by hand on the page (표 칸 바로잡기): they take the place of those found where they lie. */
+  const [pageGrids, setPageGrids] = useState<{ page: string; grids: Grid[] }>({ page: '', grids: [] })
+  const grids = pageGrids.page === tablesPage ? pageGrids.grids : []
+  useEffect(() => {
+    let cancelled = false
+    fetchTableGrids(documentId, pageIndex)
+      .then((loaded) => {
+        if (!cancelled) setPageGrids({ page: `${documentId}/${pageIndex}`, grids: loaded })
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [documentId, pageIndex])
+  /** The tables copied and saved to Excel; and how the text is turned to fit them (not for tables set by hand). */
+  const usedTables = withGrids(tables, grids)
+  const usedTurn = grids.length > 0 ? null : tablesTurn
+  /** 표 칸 바로잡기 is open. */
+  const [fixingTables, setFixingTables] = useState(false)
+
+  async function saveGrids(next: Grid[]) {
+    try {
+      await saveTableGrids(documentId, pageIndex, next)
+      setPageGrids({ page: tablesPage, grids: next })
+      setFixingTables(false)
+      setStatus(
+        next.length > 0
+          ? `바로잡은 표 ${next.length}개를 저장했습니다 · 엑셀 저장과 표 모양 복사에 씁니다`
+          : '바로잡은 표를 지우고 쪽에서 찾은 표를 다시 씁니다',
+      )
+    } catch (e) {
+      setError(errorText(e, '표 칸을 저장하지 못했습니다'))
+    }
+  }
 
   // Ctrl+C on text dragged over in a table: the browser's copy (the letters, for Notepad) gets the table as HTML
   // as well, so pasting into Excel puts each piece in its cell, with the borders and merged cells.
@@ -1343,7 +1381,7 @@ export function TextEditor({
    * @param onlyPicked the text dragged over: the tables cut down to the cells it is in
    */
   function tableCopy(cells: PlacedText[], onlyPicked: boolean): { tsv: string; html: string } | null {
-    const blocks = layout(straighten(cells, tablesTurn), tables, onlyPicked)
+    const blocks = layout(straighten(cells, usedTurn), usedTables, onlyPicked)
     return hasTable(blocks) ? { tsv: toTsv(blocks), html: toHtml(blocks) } : null
   }
 
@@ -1362,10 +1400,10 @@ export function TextEditor({
   async function saveExcel() {
     const name = workbookName(page.sourceFileName, total > 1 ? position + 1 : undefined)
     // The page's lines as they are now: once a scan's text is recognized, its letters are told from borders.
-    let sheet = sheetWith(straighten(pageText(), tablesTurn), tables)
+    let sheet = sheetWith(straighten(pageText(), usedTurn), usedTables)
     try {
       const rulings = await fetchRulings(documentId, pageIndex)
-      sheet = sheetWith(straighten(pageText(), turnOf(rulings)), findTables(rulings))
+      sheet = sheetOf(pageText(), rulings, grids)
     } catch {
       // the lines found when the page opened will do
     }
@@ -1551,6 +1589,7 @@ export function TextEditor({
           { label: '이 쪽 글자 모두 복사', onSelect: () => void copyPlain(asLines(pageText()), '이 쪽 글자') },
           { label: '표 모양으로 모두 복사 (엑셀)', onSelect: () => void copyTable(pageText(), false, '이 쪽 글자를 표 모양으로') },
           { label: '이 쪽을 엑셀 파일로 저장 (.xlsx)', onSelect: () => void saveExcel() },
+          { label: '표 칸 바로잡기…', onSelect: () => setFixingTables(true) },
         ],
       }
     }
@@ -1638,6 +1677,7 @@ export function TextEditor({
         { label: '이 쪽 글자 모두 복사', onSelect: () => void copyPlain(asLines(pageText()), '이 쪽 글자') },
         { label: '표 모양으로 모두 복사 (엑셀)', onSelect: () => void copyTable(pageText(), false, '이 쪽 글자를 표 모양으로') },
         { label: '이 쪽을 엑셀 파일로 저장 (.xlsx)', onSelect: () => void saveExcel() },
+        { label: '표 칸 바로잡기…', onSelect: () => setFixingTables(true) },
         ...fix,
         'separator',
         { label: '실행 취소', shortcut: 'Ctrl+Z', disabled: history.undo === 0, onSelect: () => undo() },
@@ -1965,6 +2005,8 @@ export function TextEditor({
   useEffect(() => {
     shortcut.current = (e) => {
       if (e.isComposing || e.keyCode === 229) return // a Hangul syllable is still being composed
+      // 표 칸 바로잡기 takes the keys it uses (Esc, Delete) itself; nothing else acts meanwhile.
+      if (fixingTables) return
       const el = e.target instanceof HTMLElement ? e.target : null
       const box = el?.closest<HTMLElement>('[data-index], [data-added]') ?? null
       const inField = el?.closest('input, select, textarea, .find-dialog, .fp-popup') != null
@@ -2765,6 +2807,19 @@ export function TextEditor({
                 setLoadedRevision(Number.isFinite(loaded) ? loaded : revision)
               }}
             />
+            {fixingTables && scale > 0 && (
+              <TableFixLayer
+                found={notCovered(
+                  layout(straighten(pageText(), tablesTurn), tables, false).flatMap((b) => (b.kind === 'table' ? [b.table] : [])),
+                  grids,
+                )}
+                grids={grids}
+                texts={pageText()}
+                scale={scale}
+                onDone={saveGrids}
+                onCancel={() => setFixingTables(false)}
+              />
+            )}
             {scale > 0 && (
               <div
                 className={`te-layer${adding ? ' adding' : ''}${stale ? ' stale' : ''}${selecting ? ' selecting' : ''}`}

@@ -208,6 +208,64 @@ function buildTable(xs: number[], ys: number[], h: Rulings['horizontal'], v: Rul
   return { xs, ys, cells }
 }
 
+/** A table set out by hand (표 칸 바로잡기): its column and row borders, points, edges included. */
+export interface Grid {
+  xs: number[]
+  ys: number[]
+}
+
+/** The table a grid sets out: every cell on its own, every border drawn. */
+export function gridTable(grid: Grid): Table {
+  const all = { top: true, right: true, bottom: true, left: true }
+  const cells: TableCell[] = []
+  for (let r = 0; r < grid.ys.length - 1; r++) {
+    for (let c = 0; c < grid.xs.length - 1; c++) {
+      cells.push({
+        row: r,
+        col: c,
+        rowSpan: 1,
+        colSpan: 1,
+        left: grid.xs[c],
+        top: grid.ys[r],
+        right: grid.xs[c + 1],
+        bottom: grid.ys[r + 1],
+        borders: all,
+        texts: [],
+      })
+    }
+  }
+  return { xs: [...grid.xs], ys: [...grid.ys], cells }
+}
+
+/** A table's grid (its borders), to be set out by hand from it. */
+export function gridOf(table: Table): Grid {
+  return { xs: [...table.xs], ys: [...table.ys] }
+}
+
+/**
+ * The tables to use: those set out by hand, and of the ones found on the page those not lying where one set out by
+ * hand does (more than half of either over the other) - the hand-made one is what the user wants there.
+ */
+export function withGrids(found: Table[], grids: Grid[]): Table[] {
+  if (grids.length === 0) return found
+  return [...notCovered(found, grids), ...grids.map(gridTable)].sort((a, b) => a.ys[0] - b.ys[0])
+}
+
+/** The tables found on the page that no table set out by hand lies over (more than half of either). */
+export function notCovered(found: Table[], grids: Grid[]): Table[] {
+  const area = (l: number, t: number, r: number, b: number) => Math.max(0, r - l) * Math.max(0, b - t)
+  const box = (t: { xs: number[]; ys: number[] }) => [t.xs[0], t.ys[0], t.xs[t.xs.length - 1], t.ys[t.ys.length - 1]]
+  return found.filter(
+    (table) =>
+      !grids.some((g) => {
+        const [al, at, ar, ab] = box(table)
+        const [bl, bt, br, bb] = box(g)
+        const both = area(Math.max(al, bl), Math.max(at, bt), Math.min(ar, br), Math.min(ab, bb))
+        return both > 0.5 * Math.min(area(al, at, ar, ab), area(bl, bt, br, bb))
+      }),
+  )
+}
+
 /**
  * The text laid out as it is on the page: the tables with each piece of text in the cell its middle is in, and the
  * rest as rows. With `onlyPicked`, a table keeps just the rows and columns the text is in (a part dragged over);

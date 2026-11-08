@@ -25,6 +25,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import com.pdfedit.dto.TableGrid;
 import com.pdfedit.ocr.OcrText;
 import com.pdfedit.redact.Redaction;
 import com.pdfedit.text.AddedImage;
@@ -75,7 +76,8 @@ public class PdfDocumentStore {
     /** What is written next to the PDF; page and run numbers are strings because JSON keys are. */
     record Stored(String fileName, int pageCount, Map<String, Map<String, RunEdit>> edits,
                   Map<String, List<AddedText>> added, Map<String, List<AddedImage>> images,
-                  Map<String, List<Redaction>> redactions, Map<String, List<OcrText>> ocr) {
+                  Map<String, List<Redaction>> redactions, Map<String, List<OcrText>> ocr,
+                  Map<String, List<TableGrid>> tables) {
     }
 
     /** Said (as the 404 answer) for a document the app no longer holds, e.g. one removed after the retention period. */
@@ -273,6 +275,22 @@ public class PdfDocumentStore {
         return require(documentId).ocrByPage.getOrDefault(pageIndex, List.of());
     }
 
+    /** Replaces the tables set out by hand on a page (empty: the page's own tables are used again). */
+    public void setTableGrids(String documentId, int pageIndex, List<TableGrid> tables) {
+        Entry entry = require(documentId);
+        if (tables.isEmpty()) {
+            entry.tablesByPage.remove(pageIndex);
+        } else {
+            entry.tablesByPage.put(pageIndex, List.copyOf(tables));
+        }
+        persist(documentId);
+    }
+
+    /** The tables set out by hand on a page; empty when it has none. */
+    public List<TableGrid> tableGrids(String documentId, int pageIndex) {
+        return require(documentId).tablesByPage.getOrDefault(pageIndex, List.of());
+    }
+
     /** The redaction areas of a page; empty when it has none. */
     public List<Redaction> redactions(String documentId, int pageIndex) {
         return require(documentId).redactionsByPage.getOrDefault(pageIndex, List.of());
@@ -376,6 +394,10 @@ public class PdfDocumentStore {
         if (recognized != null) {
             to.ocrByPage.put(toPage, recognized);
         }
+        List<TableGrid> grids = from.tablesByPage.get(fromPage);
+        if (grids != null) {
+            to.tablesByPage.put(toPage, grids);
+        }
         persist(toDocument);
     }
 
@@ -409,12 +431,14 @@ public class PdfDocumentStore {
         entry.redactionsByPage.forEach((page, areas) -> redactions.put(String.valueOf(page), areas));
         Map<String, List<OcrText>> ocr = new LinkedHashMap<>();
         entry.ocrByPage.forEach((page, lines) -> ocr.put(String.valueOf(page), lines));
+        Map<String, List<TableGrid>> tables = new LinkedHashMap<>();
+        entry.tablesByPage.forEach((page, grids) -> tables.put(String.valueOf(page), grids));
         synchronized (entry) {
             Path target = metaPath(documentId);
             Path temp = target.resolveSibling(target.getFileName() + ".tmp");
             try {
                 Files.write(temp, mapper.writeValueAsBytes(
-                        new Stored(entry.fileName, entry.pageCount, edits, added, images, redactions, ocr)));
+                        new Stored(entry.fileName, entry.pageCount, edits, added, images, redactions, ocr, tables)));
                 Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
             } catch (IOException e) {
                 log.warn("Could not save the edits of {}: {}", documentId, e.toString());
@@ -518,6 +542,10 @@ public class PdfDocumentStore {
             if (stored.ocr() != null) {
                 stored.ocr().forEach((page, lines) -> entry.ocrByPage.put(Integer.valueOf(page), List.copyOf(lines)));
             }
+            if (stored.tables() != null) {
+                stored.tables().forEach((page, grids) ->
+                        entry.tablesByPage.put(Integer.valueOf(page), List.copyOf(grids)));
+            }
             entry.imageIds.addAll(savedImageIds(documentId));
             documents.put(documentId, entry);
         } catch (IOException | RuntimeException e) {
@@ -589,6 +617,8 @@ public class PdfDocumentStore {
         final Map<Integer, List<Redaction>> redactionsByPage = new ConcurrentHashMap<>();
         /** pageIndex to the text recognized on that (scanned) page, written as invisible text on export. */
         final Map<Integer, List<OcrText>> ocrByPage = new ConcurrentHashMap<>();
+        /** pageIndex to the tables the user set out by hand on it. */
+        final Map<Integer, List<TableGrid>> tablesByPage = new ConcurrentHashMap<>();
         /** Pictures uploaded for the document; their bytes are on disk, or here when there is no data folder. */
         final java.util.Set<String> imageIds = ConcurrentHashMap.newKeySet();
         final Map<String, byte[]> imagesInMemory = new ConcurrentHashMap<>();

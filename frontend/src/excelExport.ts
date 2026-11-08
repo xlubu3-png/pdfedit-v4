@@ -1,15 +1,19 @@
-import { fetchPageOcr, fetchPageText, fetchRulings } from './api'
-import { findTables, layout, straighten, toSheet, turnOf } from './tableGrid'
+import { fetchPageOcr, fetchPageText, fetchRulings, fetchTableGrids } from './api'
+import { findTables, layout, straighten, toSheet, turnOf, withGrids } from './tableGrid'
 import type { PlacedText } from './textSelect'
-import type { Sheet, Table } from './tableGrid'
+import type { Grid, Sheet, Table } from './tableGrid'
 import { placed, rewrittenLines, selectableLines } from './textSelect'
 import type { PageItem } from './types'
 import { sheetsToXlsx } from './xlsx'
 
 const EMPTY: Sheet = { widths: [], heights: [], cells: [] }
 
-/** The page's text as one sheet laid out as the page is: its tables in their cells, the rest where it stands. */
-export function sheetOf(texts: PlacedText[], rulings: Parameters<typeof findTables>[0]): Sheet {
+/**
+ * The page's text as one sheet laid out as the page is: its tables in their cells, the rest where it stands. Tables
+ * set out by hand (`grids`, as the page is seen) take the place of those found where they lie.
+ */
+export function sheetOf(texts: PlacedText[], rulings: Parameters<typeof findTables>[0], grids: Grid[] = []): Sheet {
+  if (grids.length > 0) return sheetWith(texts, withGrids(findTables(rulings), grids))
   return sheetWith(straighten(texts, turnOf(rulings)), findTables(rulings))
 }
 
@@ -30,16 +34,14 @@ export function workbookName(sourceFileName: string, page?: number): string {
  * on it, and the lines of its tables.
  */
 async function pageSheet(page: PageItem): Promise<Sheet> {
-  const [data, rulings, ocr] = await Promise.all([
+  const [data, rulings, ocr, grids] = await Promise.all([
     fetchPageText(page.documentId, page.pageIndex),
     fetchRulings(page.documentId, page.pageIndex).catch(() => ({ horizontal: [], vertical: [] })),
     fetchPageOcr(page.documentId, page.pageIndex).catch(() => ({ lines: [] })),
+    fetchTableGrids(page.documentId, page.pageIndex).catch(() => [] as Grid[]),
   ])
   const lines = selectableLines(data, new Map(), ocr.lines, rewrittenLines(ocr.lines, data.added ?? []), data.added ?? [], 1)
-  return sheetOf(
-    lines.map(placed),
-    rulings,
-  )
+  return sheetOf(lines.map(placed), rulings, grids)
 }
 
 /**

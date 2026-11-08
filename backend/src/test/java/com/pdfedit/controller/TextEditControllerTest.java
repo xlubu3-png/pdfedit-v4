@@ -40,6 +40,32 @@ class TextEditControllerTest {
     }
 
     @Test
+    void tablesSetOutByHandAreKeptAndCleared() throws Exception {
+        mvc.perform(get(base() + "/table-grids")).andExpect(status().isOk()).andExpect(content().json("[]"));
+
+        mvc.perform(put(base() + "/table-grids").contentType(MediaType.APPLICATION_JSON)
+                .content("[{\"xs\":[50,150,300],\"ys\":[100,120,140,160]}]"))
+                .andExpect(status().isNoContent());
+        mvc.perform(get(base() + "/table-grids"))
+                .andExpect(jsonPath("$[0].xs[1]").value(150.0))
+                .andExpect(jsonPath("$[0].ys.length()").value(4));
+
+        mvc.perform(put(base() + "/table-grids").contentType(MediaType.APPLICATION_JSON).content("[]"))
+                .andExpect(status().isNoContent());
+        mvc.perform(get(base() + "/table-grids")).andExpect(content().json("[]"));
+    }
+
+    @Test
+    void aTableWhoseBordersAreOutOfOrderOrTooFewIsRefused() throws Exception {
+        for (String bad : new String[] {"[{\"xs\":[150,50],\"ys\":[1,2]}]", "[{\"xs\":[50],\"ys\":[1,2]}]",
+                "[{\"xs\":[1,2],\"ys\":null}]"}) {
+            mvc.perform(put(base() + "/table-grids").contentType(MediaType.APPLICATION_JSON).content(bad))
+                    .andExpect(status().isBadRequest());
+        }
+        mvc.perform(get(base() + "/table-grids")).andExpect(content().json("[]"));
+    }
+
+    @Test
     void textRunsListsTheLinesOfThePage() throws Exception {
         mvc.perform(get(base() + "/text-runs"))
                 .andExpect(status().isOk())

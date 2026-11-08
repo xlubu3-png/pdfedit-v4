@@ -1,4 +1,4 @@
-import type { Table, TableCell } from './tableGrid'
+import type { Grid, Table, TableCell } from './tableGrid'
 import { rows } from './textSelect'
 import type { PlacedText } from './textSelect'
 
@@ -161,4 +161,31 @@ function piece(text: PlacedText, from: number, to: number, right: number): Place
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b)
   return sorted.length === 0 ? 0 : sorted[Math.floor(sorted.length / 2)]
+}
+
+/**
+ * A table drawn by hand over text (표 칸 바로잡기 · 새 표): its rows the lines of text in it, parted halfway between
+ * them, and its columns the gaps no line crosses - as a table without lines is found, but within the area drawn and
+ * from any number of lines. The area's edges are the table's.
+ */
+export function splitArea(texts: PlacedText[], left: number, top: number, right: number, bottom: number): Grid {
+  const inside = texts
+    .flatMap(splitAtGaps)
+    .filter((t) => t.text.trim() !== '' && (t.width ?? 0) > 0)
+    .filter((t) => {
+      const x = t.left + (t.width ?? 0) / 2
+      const y = t.top + t.height / 2
+      return x >= left && x <= right && y >= top && y <= bottom
+    })
+  if (inside.length === 0) return { xs: [left, right], ys: [top, bottom] }
+  const lines: Line[] = rows(inside).map((row) => ({
+    pieces: row,
+    top: Math.min(...row.map((t) => t.top)),
+    bottom: Math.max(...row.map((t) => t.top + t.height)),
+    height: median(row.map((t) => t.letters ?? t.height)),
+  }))
+  const gaps = columnGaps(lines)
+  const xs = [left, ...gaps.map((g) => (g.from + g.to) / 2).filter((x) => x > left + 2 && x < right - 2), right]
+  const ys = [top, ...lines.slice(1).map((l, i) => (lines[i].bottom + l.top) / 2), bottom]
+  return { xs, ys: ys.filter((y, i) => i === 0 || y > ys[i - 1] + 1) }
 }

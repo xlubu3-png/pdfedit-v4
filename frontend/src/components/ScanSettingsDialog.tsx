@@ -11,15 +11,16 @@ interface ScanSettingsDialogProps {
 /** What recognizing a scan's text does besides reading it. */
 export function ScanSettingsDialog({ settings, onSave, onClose }: ScanSettingsDialogProps) {
   const [straighten, setStraighten] = useState(settings.straightenOnOcr !== false)
+  const [auto, setAuto] = useState(settings.autoOcr === true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const changed = straighten !== (settings.straightenOnOcr !== false)
+  const changed = straighten !== (settings.straightenOnOcr !== false) || auto !== (settings.autoOcr === true)
 
   async function save() {
     setBusy(true)
     setError(null)
     try {
-      await onSave({ ...settings, straightenOnOcr: straighten })
+      await onSave({ ...settings, straightenOnOcr: straighten, autoOcr: auto })
       onClose()
     } catch (e) {
       setError(errorText(e, '저장하지 못했습니다'))
@@ -36,6 +37,14 @@ export function ScanSettingsDialog({ settings, onSave, onClose }: ScanSettingsDi
             ✕
           </button>
         </div>
+        <label className="check-row">
+          <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} disabled={busy} />
+          스캔 문서를 열면 묻지 않고 바로 글자 인식하기
+        </label>
+        <p>
+          글자가 없는 스캔 PDF를 열면 곧바로 글자를 인식합니다(쪽당 2초쯤). 인식하는 동안 위에 진행 상황이 보이고, '중지'로 멈출 수
+          있습니다. 끄면 전처럼 "글자 인식 / 나중에"를 묻습니다.
+        </p>
         <label className="check-row">
           <input type="checkbox" checked={straighten} onChange={(e) => setStraighten(e.target.checked)} disabled={busy} />
           글자 인식할 때 스캔 쪽의 방향·기울기를 먼저 바로잡기

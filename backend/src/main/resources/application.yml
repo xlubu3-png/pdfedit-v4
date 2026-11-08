@@ -3,11 +3,13 @@
 # Shown in the UI. Raise it by 0.001 with every change to the app. Keep it in quotes: unquoted, YAML reads
 # 0.050 as the number 0.05 and the screen would show "v0.05".
 app:
-  version: "0.133"
+  version: "0.134"
   # Uploaded documents and their edits are kept here, so they survive a restart of the app.
   # PDFEDIT_DATA_DIR moves it; documents untouched for this many days are deleted.
   data-dir: ${PDFEDIT_DATA_DIR:${user.home}/WINTECH_PDF/data}
   retention-days: ${PDFEDIT_RETENTION_DAYS:30}
+  # Whether a scanned document is recognized as soon as it is opened, until the user changes it on the screen.
+  auto-ocr: ${PDFEDIT_AUTO_OCR:true}
   update:
     # Switched on by the installer build (application-installed.yml); never in development.
     enabled: false

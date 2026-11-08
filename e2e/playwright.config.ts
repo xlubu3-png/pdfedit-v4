@@ -31,6 +31,7 @@ export default defineConfig({
     url: `http://localhost:${port}/api/v1/pdf/health`,
     reuseExistingServer: false,
     timeout: 120_000,
-    env: { ...process.env, PDFEDIT_DATA_DIR: dataDir } as Record<string, string>,
+    // Scans are not recognized as they open unless a test switches it on: most tests open one and choose.
+    env: { ...process.env, PDFEDIT_DATA_DIR: dataDir, PDFEDIT_AUTO_OCR: 'false' } as Record<string, string>,
   },
 })

@@ -12,6 +12,8 @@ export interface AppSettings {
   retentionDays: number
   /** Whether recognizing a scan's text first sets its pages straight (fed askew). */
   straightenOnOcr?: boolean
+  /** Whether a scanned document is recognized as soon as it is opened, without asking. */
+  autoOcr?: boolean
 }
 
 /** Whether a newer version of the app is published; `enabled` is false outside the installed app. */

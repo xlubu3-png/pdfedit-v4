@@ -88,8 +88,9 @@ test('with straightening switched off in the settings, a scan is read as it is',
   await page.goto('/')
   await page.getByRole('button', { name: '글자 인식 설정' }).click()
   const dialog = page.getByRole('dialog', { name: '글자 인식 설정' })
-  await expect(dialog.getByRole('checkbox')).toBeChecked()
-  await dialog.getByRole('checkbox').uncheck()
+  const box = dialog.getByRole('checkbox', { name: /방향·기울기를 먼저 바로잡기/ })
+  await expect(box).toBeChecked()
+  await box.uncheck()
   await dialog.getByRole('button', { name: '저장' }).click()
   await expect(dialog).toHaveCount(0)
   try {
@@ -134,4 +135,25 @@ test('a page scanned upside down is turned the right way up before it is read', 
   const after = await firstPageDocument(page)
   const lines = (await (await page.request.get(`/api/v1/pdf/documents/${after}/pages/0/ocr`)).json()).lines
   expect(lines.map((l: { text: string }) => l.text.replace(/\s+/g, '')).join('|')).toContain('010-2345-6789')
+})
+
+test('switched on, a scan is recognized as soon as it is opened, without asking', async ({ page }) => {
+  await page.goto('/')
+  await page.getByRole('button', { name: '글자 인식 설정' }).click()
+  const dialog = page.getByRole('dialog', { name: '글자 인식 설정' })
+  const auto = dialog.getByRole('checkbox', { name: /바로 글자 인식하기/ })
+  await expect(auto).not.toBeChecked()
+  await auto.check()
+  await dialog.getByRole('button', { name: '저장' }).click()
+  try {
+    await page.locator('input[type=file]').setInputFiles({ name: 'askew.pdf', mimeType: 'application/pdf', buffer: await askewScan(page) })
+    const banner = page.locator('.info-banner[role=status]').last()
+    await expect(banner).toContainText(/글자 \d+줄을 인식했습니다/, { timeout: 60_000 })
+    await expect(banner).toContainText('기울기를 바로잡았습니다')
+    await expect(page.getByText('스캔한 문서로 보입니다')).toHaveCount(0)
+    await expect(page.locator('.page-card .page-ocr')).toHaveText('OCR')
+  } finally {
+    const now = await (await page.request.get('/api/v1/pdf/settings')).json()
+    await page.request.put('/api/v1/pdf/settings', { data: { ...now, autoOcr: false } })
+  }
 })

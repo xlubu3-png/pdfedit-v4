@@ -274,8 +274,14 @@ function App() {
     if (unlocked.length > 0) {
       setNotice(`암호를 풀어서 열었습니다: ${unlocked.join(', ')}. 내보낼 때 암호를 다시 걸 수 있습니다.`)
     }
-    setScanSuggest(scanned.pages.length > 0 ? scanned : null)
     setBusy(false)
+    if (scanned.pages.length > 0 && settings?.autoOcr === true) {
+      // Opened, then read at once (set straight first), as a reader that recognizes scans does; 중지 stops it.
+      setScanSuggest(null)
+      void handleOcr(scanned.pages)
+    } else {
+      setScanSuggest(scanned.pages.length > 0 ? scanned : null)
+    }
   }
 
   /**
@@ -921,7 +927,7 @@ function App() {
                 type="button"
                 className="link-button"
                 onClick={() => setScanSettingsOpen(true)}
-                title="글자 인식할 때 스캔 쪽의 방향·기울기를 바로잡을지 정합니다"
+                title="스캔 문서를 열면 바로 인식할지, 인식할 때 방향·기울기를 바로잡을지 정합니다"
               >
                 글자 인식 설정
               </button>

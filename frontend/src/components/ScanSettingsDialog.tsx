@@ -38,11 +38,11 @@ export function ScanSettingsDialog({ settings, onSave, onClose }: ScanSettingsDi
         </div>
         <label className="check-row">
           <input type="checkbox" checked={straighten} onChange={(e) => setStraighten(e.target.checked)} disabled={busy} />
-          글자 인식할 때 기운 스캔 쪽을 먼저 바로잡기
+          글자 인식할 때 스캔 쪽의 방향·기울기를 먼저 바로잡기
         </label>
         <p>
-          비스듬히 스캔된 쪽(0.25°~5°)을 바로 세운 뒤 읽어 인식이 더 정확해지고, 글자 선택·엑셀 저장·고쳐 쓰기도 줄에 맞게
-          됩니다. 쪽 그림은 다시 압축하지 않아 화질·용량이 그대로이고, Ctrl+Z로 되돌릴 수 있습니다. 글자로 된 쪽은 건드리지
+          뒤집히거나 옆으로 누운 쪽은 바로 돌리고, 비스듬히 스캔된 쪽(0.25°~5°)은 바로 세운 뒤 읽어 인식이 더 정확해지고,
+          글자 선택·엑셀 저장·고쳐 쓰기도 줄에 맞게 됩니다. 쪽 목록에서 직접 돌려 둔 쪽은 방향을 그대로 둡니다. 쪽 그림은 다시 압축하지 않아 화질·용량이 그대로이고, Ctrl+Z로 되돌릴 수 있습니다. 글자로 된 쪽은 건드리지
           않습니다.
         </p>
         {error && <p className="find-message error">{error}</p>}

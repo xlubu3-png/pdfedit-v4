@@ -62,7 +62,12 @@ export function nextUnsure(lines: { score: number }[], from: number, step: 1 | -
   return null
 }
 
-/** What setting pages straight did, to go before the recognition's message; empty when no page was turned. */
-export function straightenedNote(pages: number): string {
-  return pages > 0 ? `${pages}쪽의 기울기를 바로잡았습니다 (Ctrl+Z로 되돌림). ` : ''
+/**
+ * What setting pages straight did, to go before the recognition's message; empty when no page was turned.
+ * `upright` of them were scanned on their side or upside down and turned the right way up.
+ */
+export function straightenedNote(pages: number, upright = 0): string {
+  if (pages === 0) return ''
+  const what = upright > 0 ? `방향·기울기를 바로잡았습니다 (뒤집히거나 누운 쪽 ${upright}쪽)` : '기울기를 바로잡았습니다'
+  return `${pages}쪽의 ${what}. Ctrl+Z로 되돌릴 수 있습니다. `
 }

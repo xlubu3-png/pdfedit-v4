@@ -227,7 +227,7 @@ export function PageGrid({
       'separator',
       { label: '왼쪽으로 회전', disabled: busy, onSelect: () => onRotate(key, -90) },
       { label: '오른쪽으로 회전', disabled: busy, onSelect: () => onRotate(key, 90) },
-      { label: `기울기 바로잡기 (스캔)${many}`, disabled: busy, onSelect: () => onStraighten(key) },
+      { label: `방향·기울기 바로잡기 (스캔)${many}`, disabled: busy, onSelect: () => onStraighten(key) },
       'separator',
       { label: '페이지 복제 (고친 내용째로)', disabled: busy, onSelect: () => onDuplicate(key) },
       { label: '뒤에 빈 페이지 삽입', disabled: busy, onSelect: () => onInsertBlankAfter(key) },

@@ -127,8 +127,8 @@ interface TextEditorProps {
    * opens again on the straight copy, with {@link recognizeOnOpen}, and this one does nothing more.
    */
   onStraightenFirst?: () => Promise<boolean>
-  /** Recognize the page as soon as the editor opens (it was just set straight to be recognized). */
-  recognizeOnOpen?: boolean
+  /** Recognize the page as soon as the editor opens: it was just set straight (and upright: turned a quarter or more). */
+  recognizeOnOpen?: { upright: boolean }
   onRecognizedOnOpen?: () => void
   /** How far recognizing every page has got, while it runs. */
   ocrProgress: { done: number; total: number } | null
@@ -373,7 +373,7 @@ export function TextEditor({
     if (!recognizeOnOpen || recognizedOnOpen.current) return
     recognizedOnOpen.current = true
     onRecognizedOnOpen?.()
-    void recognizeThisPage(true)
+    void recognizeThisPage(recognizeOnOpen)
   })
 
   // A menu item's action on the line, box or picture it picked, once the editor shows it picked.
@@ -1703,7 +1703,7 @@ export function TextEditor({
   }
 
   /** Recognizes the text of this page (a second or two), outlines what was found and tells the page list. */
-  async function recognizeThisPage(straightened = false) {
+  async function recognizeThisPage(straightened?: { upright: boolean }) {
     setOcrBusy(true)
     setOcrNote(null)
     setError(null)
@@ -1728,7 +1728,7 @@ export function TextEditor({
       setShowOcr(true)
       const unsure = found.filter((l) => l.score < UNSURE).length
       setOcrNote(
-        (straightened ? straightenedNote(1) : '') +
+        (straightened ? straightenedNote(1, straightened.upright ? 1 : 0) : '') +
           ocrMessage(summary) +
           (found.length > 0 ? ' 점선 줄을 클릭해 Ctrl+C로 복사하거나, 두 번 클릭해 고쳐 쓸 수 있습니다.' : '') +
           (unsure > 0 ? ` 주황색 ${unsure}줄은 인식이 불확실하니 확인하세요.` : ''),

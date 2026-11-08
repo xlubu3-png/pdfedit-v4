@@ -35,11 +35,26 @@ public final class PageStraightener {
      * cannot be told, or it is not a scan.
      */
     public static double angle(PDDocument document, int pageIndex) throws IOException {
-        if (hasText(document, pageIndex)) {
+        if (!isScan(document, pageIndex)) {
             return 0;
         }
         BufferedImage seen = new PDFRenderer(document).renderImageWithDPI(pageIndex, DPI, ImageType.GRAY);
         return Deskew.angle(seen);
+    }
+
+    /**
+     * The page as a document of its own, shown turned clockwise by {@code quarter} (0, 90, 180, 270) - a /Rotate,
+     * which an uploaded document has baked into its drawing (PageRotationBaker) before it is edited.
+     */
+    public static byte[] quarterTurned(byte[] pdf, int pageIndex, int quarter) throws IOException {
+        try (PDDocument source = Loader.loadPDF(pdf);
+                PDDocument copy = new PDDocument();
+                ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            PDPage page = copy.importPage(source.getPage(pageIndex));
+            page.setRotation(((page.getRotation() + quarter) % 360 + 360) % 360);
+            copy.save(out);
+            return out.toByteArray();
+        }
     }
 
     /** The page as a document of its own, turned clockwise by {@code degrees} about its middle. */
@@ -79,10 +94,11 @@ public final class PageStraightener {
         }
     }
 
-    private static boolean hasText(PDDocument document, int pageIndex) throws IOException {
+    /** Whether the page is a scan: a picture, with next to no real text. */
+    public static boolean isScan(PDDocument document, int pageIndex) throws IOException {
         PDFTextStripper stripper = new PDFTextStripper();
         stripper.setStartPage(pageIndex + 1);
         stripper.setEndPage(pageIndex + 1);
-        return stripper.getText(document).replaceAll("\\s", "").length() > MAX_TEXT;
+        return stripper.getText(document).replaceAll("\\s", "").length() <= MAX_TEXT;
     }
 }

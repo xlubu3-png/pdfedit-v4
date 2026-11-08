@@ -122,7 +122,7 @@ function App() {
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [scanSettingsOpen, setScanSettingsOpen] = useState(false)
   /** The page the editor is to recognize as soon as it opens on it (a page just set straight for that). */
-  const [recognizeOnOpen, setRecognizeOnOpen] = useState<string | null>(null)
+  const [recognizeOnOpen, setRecognizeOnOpen] = useState<{ key: string; upright: boolean } | null>(null)
   const [retentionOpen, setRetentionOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [passwordAsk, setPasswordAsk] = useState<PasswordAsk | null>(null)
@@ -292,8 +292,10 @@ function App() {
     setScanSuggest(null)
     try {
       // Pages fed askew are set straight first: they are read better, and their lines then lie level.
-      const turned = settings?.straightenOnOcr === false ? new Map<string, PageItem>() : await straighten(chosen)
-      const message = straightenedNote(turned.size) + (await recognize(chosen.map((p) => turned.get(p.key) ?? p)))
+      const { copies: turned, upright } =
+        settings?.straightenOnOcr === false ? { copies: new Map<string, PageItem>(), upright: 0 } : await straighten(chosen)
+      const message =
+        straightenedNote(turned.size, upright) + (await recognize(chosen.map((p) => turned.get(p.key) ?? p)))
       setNotice(message)
       return message
     } catch (e) {
@@ -328,11 +330,13 @@ function App() {
    * The scanned pages fed askew, each replaced in the list by its straightened copy (one step Ctrl+Z takes back);
    * the copies by the key of the page they replace. Pages straight already, or not scans, are left as they are.
    */
-  async function straighten(targets: PageItem[]): Promise<Map<string, PageItem>> {
+  async function straighten(targets: PageItem[]): Promise<{ copies: Map<string, PageItem>; upright: number }> {
     const copies = new Map<string, PageItem>()
+    let upright = 0
     for (const p of targets) {
-      const result = await straightenPage(p.documentId, p.pageIndex)
+      const result = await straightenPage(p.documentId, p.pageIndex, p.rotation)
       if (!result.documentId) continue
+      if (result.quarter !== 0) upright++
       copies.set(p.key, {
         key: `${result.documentId}-0`,
         documentId: result.documentId,
@@ -347,7 +351,7 @@ function App() {
       changePages((prev) => prev.map((p) => copies.get(p.key) ?? p))
       setSelectedKeys((prev) => new Set([...prev].map((k) => copies.get(k)?.key ?? k)))
     }
-    return copies
+    return { copies, upright }
   }
 
   /**
@@ -360,13 +364,13 @@ function App() {
     setBusy(true)
     setError(null)
     try {
-      const turned = await straighten(targets)
+      const { copies: turned, upright } = await straighten(targets)
       if (turned.size === 0) {
-        setNotice('바로잡을 만큼 기운 스캔 쪽이 없습니다 (글자로 된 쪽은 그대로 둡니다).')
+        setNotice('바로잡을 만큼 기울거나 뒤집힌 스캔 쪽이 없습니다 (글자로 된 쪽은 그대로 둡니다).')
         return
       }
       const again = targets.filter((p) => turned.has(p.key) && (p.ocrLines ?? 0) > 0).map((p) => turned.get(p.key)!)
-      const note = straightenedNote(turned.size)
+      const note = straightenedNote(turned.size, upright)
       setNotice(again.length > 0 ? note + (await recognize(again)) : note.trim())
     } catch (e) {
       setError(errorText(e, '쪽의 기울기를 바로잡지 못했습니다'))
@@ -917,7 +921,7 @@ function App() {
                 type="button"
                 className="link-button"
                 onClick={() => setScanSettingsOpen(true)}
-                title="글자 인식할 때 기운 스캔 쪽을 바로잡을지 정합니다"
+                title="글자 인식할 때 스캔 쪽의 방향·기울기를 바로잡을지 정합니다"
               >
                 글자 인식 설정
               </button>
@@ -1305,14 +1309,14 @@ function App() {
             // The page in the editor, set straight before it is read: the editor opens again on the straight copy
             // and recognizes it there.
             if (settings?.straightenOnOcr === false || busy) return false
-            const turned = await straighten([editingPage])
-            const copy = turned.get(editingPage.key)
+            const { copies, upright } = await straighten([editingPage])
+            const copy = copies.get(editingPage.key)
             if (!copy) return false
-            setRecognizeOnOpen(copy.key)
+            setRecognizeOnOpen({ key: copy.key, upright: upright > 0 })
             setEditingKey(copy.key)
             return true
           }}
-          recognizeOnOpen={recognizeOnOpen === editingPage.key}
+          recognizeOnOpen={recognizeOnOpen?.key === editingPage.key ? { upright: recognizeOnOpen.upright } : undefined}
           onRecognizedOnOpen={() => setRecognizeOnOpen(null)}
           ocrProgress={ocrProgress}
           onStopRecognize={() => (ocrStop.current = true)}

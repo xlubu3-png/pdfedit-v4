@@ -39,6 +39,8 @@ public class PageOcr implements DisposableBean {
 
     /** Enough for print down to 8 pt: the models read text from about 15 pixels high. */
     static final float DPI = 200f;
+    /** Telling a page's way up needs only its lines' shapes and a few of them read: a lighter picture will do. */
+    private static final float ORIENT_DPI = 120f;
     /** How far (points) around a real text line an OCR line still counts as the same text. */
     private static final float SAME_TEXT_MARGIN = 2f;
 
@@ -80,7 +82,8 @@ public class PageOcr implements DisposableBean {
         List<TextRunDto> runs = textEditService.describePage(pdf, pageIndex, PageEdits.NONE).runs();
         List<OcrLine> read;
         try {
-            read = engine().read(picture);
+            // Read off the picture cleaned where it is faint or speckled; the places found are the same.
+            read = engine().read(ScanCleanup.forReading(picture));
         } catch (OrtException e) {
             throw new OcrUnavailableException(e);
         }
@@ -105,6 +108,22 @@ public class PageOcr implements DisposableBean {
             }
         }
         return new Result(lines, alreadyText, (System.nanoTime() - start) / 1e9);
+    }
+
+    /**
+     * Quarter turns clockwise (0, 90, 180, 270) that set a page scanned on its side or upside down upright, as the
+     * reader tells from its lines; 0 when it is upright or cannot be told.
+     */
+    public int uprightTurn(byte[] pdf, int pageIndex) throws IOException {
+        BufferedImage picture;
+        try (PDDocument doc = Loader.loadPDF(pdf)) {
+            picture = new PDFRenderer(doc).renderImageWithDPI(pageIndex, ORIENT_DPI, ImageType.RGB);
+        }
+        try {
+            return engine().uprightTurn(ScanCleanup.forReading(picture));
+        } catch (OrtException e) {
+            throw new OcrUnavailableException(e);
+        }
     }
 
     /**

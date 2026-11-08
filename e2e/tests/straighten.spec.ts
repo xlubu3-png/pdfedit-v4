@@ -3,8 +3,8 @@ import type { Page } from '@playwright/test'
 import { scannedPdf } from './fixtures'
 
 /** A scan fed 2 degrees askew: lines of text and a ruled list drawn on a 200 dpi A4 canvas, turned anticlockwise. */
-async function askewScan(page: Page): Promise<Buffer> {
-  const dataUrl = await page.evaluate(() => {
+async function askewScan(page: Page, degrees = -2): Promise<Buffer> {
+  const dataUrl = await page.evaluate((degrees) => {
     const canvas = document.createElement('canvas')
     canvas.width = 1654
     canvas.height = 2339
@@ -12,7 +12,7 @@ async function askewScan(page: Page): Promise<Buffer> {
     g.fillStyle = '#fff'
     g.fillRect(0, 0, canvas.width, canvas.height)
     g.translate(827, 1170)
-    g.rotate((-2 * Math.PI) / 180)
+    g.rotate((degrees * Math.PI) / 180)
     g.translate(-827, -1170)
     g.fillStyle = '#000'
     g.strokeStyle = '#222'
@@ -27,7 +27,7 @@ async function askewScan(page: Page): Promise<Buffer> {
       g.stroke()
     })
     return canvas.toDataURL('image/jpeg', 0.92)
-  })
+  }, degrees)
   return scannedPdf(Buffer.from(dataUrl.split(',')[1], 'base64'), 1654, 2339)
 }
 
@@ -80,7 +80,7 @@ test('the page list straightens a page from its menu, and leaves a straight one 
   // Straight now: nothing more to do.
   await page.locator('.page-card').first().click({ button: 'right' })
   await page.getByRole('menuitem', { name: /기울기 바로잡기/ }).click()
-  await expect(page.locator('.info-banner[role=status]').last()).toContainText('바로잡을 만큼 기운 스캔 쪽이 없습니다')
+  await expect(page.locator('.info-banner[role=status]').last()).toContainText('바로잡을 만큼 기울거나 뒤집힌 스캔 쪽이 없습니다')
   expect(await firstPageDocument(page)).toBe(once)
 })
 
@@ -118,4 +118,20 @@ test('the editor sets an askew page straight before reading it, and shows the st
   await expect(page.getByText('1쪽의 기울기를 바로잡았습니다')).toBeVisible()
   const src = await page.locator('.te-canvas img').first().getAttribute('src')
   expect(src).not.toContain(before)
+})
+
+test('a page scanned upside down is turned the right way up before it is read', async ({ page }) => {
+  await page.goto('/')
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'upside-down.pdf',
+    mimeType: 'application/pdf',
+    buffer: await askewScan(page, 180),
+  })
+  await page.getByRole('button', { name: '글자 인식', exact: true }).click()
+
+  const banner = page.locator('.info-banner[role=status]').last()
+  await expect(banner).toContainText('1쪽의 방향·기울기를 바로잡았습니다 (뒤집히거나 누운 쪽 1쪽)', { timeout: 60_000 })
+  const after = await firstPageDocument(page)
+  const lines = (await (await page.request.get(`/api/v1/pdf/documents/${after}/pages/0/ocr`)).json()).lines
+  expect(lines.map((l: { text: string }) => l.text.replace(/\s+/g, '')).join('|')).toContain('010-2345-6789')
 })

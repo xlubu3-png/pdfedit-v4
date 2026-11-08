@@ -243,8 +243,12 @@ export async function correctOcrLine(documentId: string, pageIndex: number, line
 export async function straightenPage(
   documentId: string,
   pageIndex: number,
-): Promise<{ documentId: string | null; degrees: number }> {
-  const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/straighten`, { method: 'POST' })
+  shown = 0,
+): Promise<{ documentId: string | null; degrees: number; quarter: number }> {
+  // How the list shows the page turned: turned by the user, its way up is theirs (only its slant is set straight).
+  const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/straighten?shown=${shown}`, {
+    method: 'POST',
+  })
   if (!response.ok) {
     throw await failure(response, '쪽의 기울기를 바로잡지 못했습니다')
   }

@@ -43,6 +43,18 @@ public final class OcrEngine implements AutoCloseable {
     private static final int RULE_DARKNESS = 215;
     /** A reading this confident is taken as right (for choosing how to read a vertical line). */
     private static final float SURE = 0.9f;
+    /** A line at least this many times longer than thick shows which way the page's text runs. */
+    private static final double ORIENT_SHAPE = 2.5;
+    /** ... and at least this long (pixels). */
+    private static final int ORIENT_MIN_PX = 60;
+    /** Fewer such lines than this tell nothing of the page's way up. */
+    private static final int ORIENT_MIN_LINES = 3;
+    /** The longest this many lines are read to tell the way up. */
+    private static final int ORIENT_LINES = 8;
+    /** The way up must read at least this surely ... */
+    private static final double ORIENT_SURE = 0.75;
+    /** ... and, to turn a page of lying lines upside down, this much more surely than as it is. */
+    private static final double ORIENT_MARGIN = 0.12;
 
     private final OrtEnvironment env;
     private final OrtSession detector;
@@ -158,6 +170,82 @@ public final class OcrEngine implements AutoCloseable {
             lines.add(new OcrLine(reads[k].text(), reads[k].score(), corners, reads[k].centers(), reads[k].orientation()));
         }
         return lines;
+    }
+
+    /**
+     * Quarter turns clockwise (0, 90, 180 or 270) that set the page's text upright - for a sheet scanned on its
+     * side or upside down; 0 when it is upright or cannot be told. Lines found mostly standing (taller than wide)
+     * say the page lies on its side; which way, and whether a page of lying lines is upside down, the reader tells:
+     * the longest lines are read both ways and the way it reads far more surely wins.
+     */
+    public synchronized int uprightTurn(BufferedImage picture) throws OrtException {
+        BufferedImage image = picture;
+        if (Math.max(picture.getWidth(), picture.getHeight()) > MAX_SIDE) {
+            double scale = (double) MAX_SIDE / Math.max(picture.getWidth(), picture.getHeight());
+            image = scaled(picture, (int) (picture.getWidth() * scale), (int) (picture.getHeight() * scale));
+        }
+        int width = image.getWidth();
+        int height = image.getHeight();
+        List<float[]> boxes = new ArrayList<>(detect(image.getRGB(0, 0, width, height, null, 0, width), width, height));
+        List<BufferedImage> lying = new ArrayList<>();
+        List<BufferedImage> standing = new ArrayList<>();
+        boxes.sort(Comparator.comparingDouble(b -> -Math.max(Math.hypot(b[2] - b[0], b[3] - b[1]),
+                Math.hypot(b[6] - b[0], b[7] - b[1]))));
+        for (float[] box : boxes) {
+            BufferedImage crop = crop(image, box);
+            if (crop.getWidth() >= ORIENT_SHAPE * crop.getHeight() && crop.getWidth() >= ORIENT_MIN_PX) {
+                lying.add(crop);
+            } else if (crop.getHeight() >= ORIENT_SHAPE * crop.getWidth() && crop.getHeight() >= ORIENT_MIN_PX) {
+                standing.add(crop);
+            }
+        }
+        boolean onItsSide = standing.size() >= ORIENT_MIN_LINES && standing.size() > 2 * lying.size();
+        List<BufferedImage> lines = onItsSide ? standing : lying;
+        if (lines.size() < ORIENT_MIN_LINES) {
+            return 0;
+        }
+        lines = lines.subList(0, Math.min(ORIENT_LINES, lines.size()));
+        // Lying lines: as they are (0) or upside down (180). Standing ones: what runs upwards, turned a quarter
+        // right, reads when the page is turned 90 clockwise; what runs downwards, turned left, at 270.
+        double first = sureness(lines, onItsSide ? l -> turned(l, false) : l -> l);
+        double second = sureness(lines, onItsSide ? l -> turned(l, true) : OcrEngine::upsideDown);
+        if (onItsSide) {
+            return Math.max(first, second) < ORIENT_SURE ? 0 : first >= second ? 90 : 270;
+        }
+        return second >= ORIENT_SURE && second > first + ORIENT_MARGIN ? 180 : 0;
+    }
+
+    /** How surely the reader reads the lines laid out so: the mean score, weighted by the letters read. */
+    private double sureness(List<BufferedImage> lines, java.util.function.UnaryOperator<BufferedImage> layout)
+            throws OrtException {
+        List<int[]> crops = new ArrayList<>();
+        List<int[]> sizes = new ArrayList<>();
+        List<Way> ways = new ArrayList<>();
+        for (int k = 0; k < lines.size(); k++) {
+            addCrop(crops, sizes, ways, layout.apply(lines.get(k)), new Way(k, Way.ACROSS, null));
+        }
+        Read[] reads = new Read[crops.size()];
+        recognize(crops, sizes, reads);
+        double sum = 0;
+        int letters = 0;
+        for (Read read : reads) {
+            int n = read.text().strip().length();
+            sum += read.score() * n;
+            letters += n;
+        }
+        return letters == 0 ? 0 : sum / letters;
+    }
+
+    private static BufferedImage upsideDown(BufferedImage picture) {
+        int w = picture.getWidth();
+        int h = picture.getHeight();
+        BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                out.setRGB(w - 1 - x, h - 1 - y, picture.getRGB(x, y));
+            }
+        }
+        return out;
     }
 
     /**

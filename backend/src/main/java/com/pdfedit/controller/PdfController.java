@@ -195,35 +195,63 @@ public class PdfController {
 
     /**
      * @param documentId the straightened page as a document of its own (one page), or null when the page was left
-     *                   as it is (straight already, its slant not told, or not a scan)
-     * @param degrees    how far it was turned clockwise
+     *                   as it is (upright and straight already, its slant not told, or not a scan)
+     * @param degrees    how far it was turned clockwise to lie straight (a sheet fed askew)
+     * @param quarter    quarter turns clockwise it was set upright by first (on its side: 90, 270; upside down: 180)
      */
-    public record StraightenResponse(String documentId, double degrees) {
+    public record StraightenResponse(String documentId, double degrees, int quarter) {
     }
 
     /**
-     * A scanned page fed askew, set straight: a copy turned back by the slant measured on it, with the page's edits.
-     * What was recognized on it is not kept (its places were the askew ones): the page is to be recognized again.
+     * A scanned page set upright and straight: scanned on its side or upside down it is turned the right way up (as
+     * the text reader tells), and fed askew it is turned back by the slant measured on it. A copy is made; what was
+     * recognized on the page is not kept (its places were the old ones), the page is to be recognized again.
+     *
+     * @param shown how the page list shows the page turned (0, 90, 180, 270): the user turned it already, so its way
+     *              up is theirs and only its slant is set straight
      */
     @PostMapping("/documents/{documentId}/pages/{pageIndex}/straighten")
-    public StraightenResponse straightenPage(@PathVariable String documentId, @PathVariable int pageIndex)
-            throws IOException {
+    public StraightenResponse straightenPage(@PathVariable String documentId, @PathVariable int pageIndex,
+            @RequestParam(defaultValue = "0") int shown) throws IOException {
         PdfDocumentStore.DocumentInfo info = store.getInfo(documentId);
         if (pageIndex < 0 || pageIndex >= info.pageCount()) {
             throw new InvalidEditException("없는 페이지는 바로잡을 수 없습니다.");
         }
         byte[] pdf = store.getContent(documentId);
-        double degrees;
         try (PDDocument doc = Loader.loadPDF(pdf)) {
-            degrees = PageStraightener.angle(doc, pageIndex);
+            if (!PageStraightener.isScan(doc, pageIndex)) {
+                return new StraightenResponse(null, 0, 0);
+            }
         }
-        if (degrees == 0) {
-            return new StraightenResponse(null, 0);
+        int quarter = 0;
+        if (shown % 360 == 0 && pageOcr != null) {
+            try {
+                quarter = pageOcr.uprightTurn(pdf, pageIndex);
+            } catch (com.pdfedit.ocr.OcrUnavailableException e) {
+                // Without the reader the way up cannot be told; the slant still can.
+            }
         }
-        String copyId = store.store(info.fileName(), PageStraightener.straightened(pdf, pageIndex, degrees), 1);
-        store.copyPageEdits(documentId, pageIndex, copyId, 0);
+        byte[] page = pdf;
+        int index = pageIndex;
+        if (quarter != 0) {
+            page = PageRotationBaker.bake(PageStraightener.quarterTurned(pdf, pageIndex, quarter));
+            index = 0;
+        }
+        double degrees;
+        try (PDDocument doc = Loader.loadPDF(page)) {
+            degrees = PageStraightener.angle(doc, index);
+        }
+        if (quarter == 0 && degrees == 0) {
+            return new StraightenResponse(null, 0, 0);
+        }
+        byte[] straight = degrees == 0 ? page : PageStraightener.straightened(page, index, degrees);
+        String copyId = store.store(info.fileName(), straight, 1);
+        if (quarter == 0) {
+            // Turned a little, the page's edits still sit where they were; turned a quarter or more they would not.
+            store.copyPageEdits(documentId, pageIndex, copyId, 0);
+        }
         store.setOcr(copyId, 0, List.of());
-        return new StraightenResponse(copyId, degrees);
+        return new StraightenResponse(copyId, degrees, quarter);
     }
 
     @GetMapping(value = "/documents/{documentId}/pages/{pageIndex}/thumbnail", produces = MediaType.IMAGE_PNG_VALUE)

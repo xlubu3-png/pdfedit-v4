@@ -40,6 +40,14 @@ class TextEditControllerTest {
     }
 
     @Test
+    void thePagesSizeComesFirstAndAPreviewOfTextIsAPng() throws Exception {
+        mvc.perform(get(base() + "/size")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.width").isNumber()).andExpect(jsonPath("$.height").isNumber());
+        mvc.perform(get(base() + "/preview")).andExpect(status().isOk())
+                .andExpect(content().contentType(MediaType.IMAGE_PNG));
+    }
+
+    @Test
     void tablesSetOutByHandAreKeptAndCleared() throws Exception {
         mvc.perform(get(base() + "/table-grids")).andExpect(status().isOk()).andExpect(content().json("[]"));
 

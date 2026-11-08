@@ -20,6 +20,7 @@ import {
   uploadImage,
   fetchRulings,
   fetchTableGrids,
+  fetchPageSize,
   saveTableGrids,
 } from '../api'
 import type { TextEditPayload } from '../api'
@@ -48,7 +49,8 @@ import type { SnapTargets } from '../snap'
 import { clearField, formatRange, lookAt, remapSpans, toggleFor } from '../spans'
 import type { LookPatch } from '../spans'
 import type { AddedImage, AddedText, AppInfo, FontChoice, OcrText, PageItem, PageText, RunState, TextRun } from '../types'
-import { fitPageZoom, fitZoom, previewDpi, PX_PER_PT_AT_100, zoomStep } from '../zoom'
+import { fitPageZoom, fitZoom, previewDpi, PX_PER_PT_AT_100, rememberedZoom, rememberZoom, zoomStep } from '../zoom'
+import type { ZoomMode } from '../zoom'
 import { HelpDialog } from './HelpDialog'
 import { MissingFontDialog } from './MissingFontDialog'
 import { OcrLineText, TextSelectLayer } from './TextSelectLayer'
@@ -300,7 +302,9 @@ export function TextEditor({
   }
   const [guides, setGuides] = useState<Guides | null>(null)
   /** 'fit' follows the window width, 'page' shows the whole page; a number is a fixed zoom (1 = 100%). */
-  const [zoomMode, setZoomMode] = useState<'fit' | 'page' | number>('fit')
+  // The zoom last chosen: turning to the next page (a new editor) or opening the editor again keeps it.
+  const [zoomMode, setZoomMode] = useState<ZoomMode>(rememberedZoom)
+  useEffect(() => rememberZoom(zoomMode), [zoomMode])
   const [containerWidth, setContainerWidth] = useState(1000)
   const [containerHeight, setContainerHeight] = useState(800)
   const mainRef = useRef<HTMLElement>(null)
@@ -367,6 +371,19 @@ export function TextEditor({
   const [history, setHistory] = useState({ undo: 0, redo: 0 })
   /** Reading a scanned page can take a while; say so instead of leaving a bare "loading". */
   const [slow, setSlow] = useState(false)
+  /** The page's size, asked first (it comes at once): its picture is shown while its lines are still being read. */
+  const [earlySize, setEarlySize] = useState<{ page: string; width: number; height: number } | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    fetchPageSize(documentId, pageIndex)
+      .then((size) => {
+        if (!cancelled) setEarlySize({ page: `${documentId}/${pageIndex}`, ...size })
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [documentId, pageIndex])
   /** Set after render so a save that fails for a refused edit can take the edit back. */
   const rollbackRef = useRef<() => void>(() => {})
 
@@ -1814,13 +1831,17 @@ export function TextEditor({
     return () => window.removeEventListener('beforeunload', warn)
   }, [])
 
-  const fit = data ? fitZoom(containerWidth, data.pageWidth) : 1
+  // The page's size: from its lines once read, else from the quick look taken first (its picture is shown meanwhile).
+  const early = earlySize?.page === `${documentId}/${pageIndex}` ? earlySize : null
+  const pageWidth = data?.pageWidth ?? early?.width ?? 0
+  const pageHeight = data?.pageHeight ?? early?.height ?? 0
+  const fit = pageWidth > 0 ? fitZoom(containerWidth, pageWidth) : 1
   const zoom =
     zoomMode === 'fit'
       ? fit
       : zoomMode === 'page'
-        ? data
-          ? fitPageZoom(containerWidth, containerHeight, data.pageWidth, data.pageHeight)
+        ? pageWidth > 0
+          ? fitPageZoom(containerWidth, containerHeight, pageWidth, pageHeight)
           : 1
         : zoomMode
   const missingFonts = useMemo(() => missingFontNames(data?.runs ?? []), [data])
@@ -1860,7 +1881,8 @@ export function TextEditor({
     () => (selecting && data && scale > 0 ? selectableLines(data, runStates, ocrLines, rewritten, added, scale) : []),
     [selecting, data, runStates, ocrLines, rewritten, added, scale],
   )
-  const dpi = previewDpi(scale, window.devicePixelRatio || 1)
+  // The same resolution before and after the lines are read: the picture shown first is the one kept.
+  const dpi = previewDpi(pageWidth > 0 ? zoom * PX_PER_PT_AT_100 : 0, window.devicePixelRatio || 1)
   const stale = loadedRevision !== revision
 
   const zoomRef = useRef(zoom)
@@ -2748,7 +2770,7 @@ export function TextEditor({
       <main className="te-main" ref={mainRef}>
         {!data && !error && (
           <p className="te-notice">
-            불러오는 중…
+            {early ? '글자 정보를 불러오는 중… (쪽 그림은 먼저 보여 드립니다)' : '불러오는 중…'}
             {slow && (
               <>
                 <br />
@@ -2756,6 +2778,16 @@ export function TextEditor({
               </>
             )}
           </p>
+        )}
+        {!data && !error && early && (
+          // The page's picture while its lines are read: the same picture the editor then shows, so nothing jumps.
+          <div className="te-canvas te-canvas-early">
+            <img
+              src={previewUrl(documentId, pageIndex, revision, dpi)}
+              alt={`${page.sourceFileName} ${pageIndex + 1}쪽`}
+              style={{ width: early.width * zoom * PX_PER_PT_AT_100 }}
+            />
+          </div>
         )}
         {data?.rotated && (
           <p className="te-notice">

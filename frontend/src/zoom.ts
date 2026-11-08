@@ -42,3 +42,42 @@ export function previewDpi(pxPerPt: number, devicePixelRatio: number): number {
   const needed = pxPerPt * 72 * Math.max(1, devicePixelRatio)
   return PREVIEW_DPI_STEPS.find((dpi) => dpi >= needed - 1) ?? PREVIEW_DPI_STEPS[PREVIEW_DPI_STEPS.length - 1]
 }
+
+/** How the editor shows the page: 'fit' to the window's width, 'page' whole; a number is a fixed zoom (1 = 100%). */
+export type ZoomMode = 'fit' | 'page' | number
+
+const ZOOM_KEY = 'wintech-pdf-zoom'
+/** The zoom last chosen in the editor: the next page, and the editor opened again, keep it. */
+let rememberedMode: ZoomMode | null = null
+
+export function rememberedZoom(): ZoomMode {
+  if (rememberedMode !== null) return rememberedMode
+  try {
+    const stored = localStorage.getItem(ZOOM_KEY)
+    if (stored === 'fit' || stored === 'page') return stored
+    const n = Number(stored)
+    if (stored !== null && Number.isFinite(n) && n > 0) return clampZoom(n)
+  } catch {
+    // no storage (private window): the editor starts at the window's width
+  }
+  return 'fit'
+}
+
+export function rememberZoom(mode: ZoomMode): void {
+  rememberedMode = mode
+  try {
+    localStorage.setItem(ZOOM_KEY, String(mode))
+  } catch {
+    // kept for this run only
+  }
+}
+
+/** Forgets the remembered zoom (for tests). */
+export function forgetZoom(): void {
+  rememberedMode = null
+  try {
+    localStorage.removeItem(ZOOM_KEY)
+  } catch {
+    // nothing kept
+  }
+}

@@ -1,5 +1,6 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { clampZoom, fitPageZoom, fitZoom, MAX_ZOOM, MIN_ZOOM, previewDpi, PX_PER_PT_AT_100, zoomStep } from './zoom'
+import { clampZoom, fitPageZoom, fitZoom, MAX_ZOOM, MIN_ZOOM, previewDpi, PX_PER_PT_AT_100, zoomStep, forgetZoom, rememberedZoom, rememberZoom } from './zoom'
 
 describe('fitPageZoom', () => {
   it('shows a whole A4 page (595 x 842pt) in a wide, low window: the height decides', () => {
@@ -47,5 +48,23 @@ describe('zoom', () => {
     expect(previewDpi(at100 * 1.5, 1)).toBe(150)
     expect(previewDpi(at100, 2)).toBe(200)
     expect(previewDpi(at100 * 4, 2)).toBe(300)
+  })
+})
+
+describe('remembered zoom', () => {
+  it('is the width of the window until a zoom is chosen, then that zoom, stored for the next start too', () => {
+    forgetZoom()
+    expect(rememberedZoom()).toBe('fit')
+    rememberZoom(1.5)
+    expect(rememberedZoom()).toBe(1.5)
+    rememberZoom('page')
+    expect(rememberedZoom()).toBe('page')
+    expect(localStorage.getItem('wintech-pdf-zoom')).toBe('page')
+    forgetZoom()
+    localStorage.setItem('wintech-pdf-zoom', '2')
+    expect(rememberedZoom()).toBe(2)
+    localStorage.setItem('wintech-pdf-zoom', 'nonsense')
+    expect(rememberedZoom()).toBe('fit')
+    forgetZoom()
   })
 })

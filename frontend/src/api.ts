@@ -286,6 +286,15 @@ export async function fetchProblemReport(): Promise<{ blob: Blob; fileName: stri
   return { blob: await response.blob(), fileName: named ? decodeURIComponent(named[1]) : 'WINTECH_문제보고.zip' }
 }
 
+/** How big the page is (points): fast, for its picture to be shown before its lines are read. */
+export async function fetchPageSize(documentId: string, pageIndex: number): Promise<{ width: number; height: number }> {
+  const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/size`)
+  if (!response.ok) {
+    throw await failure(response, '페이지를 불러오지 못했습니다')
+  }
+  return response.json()
+}
+
 export async function duplicatePage(documentId: string, pageIndex: number): Promise<UploadResponse> {
   const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/duplicate`, { method: 'POST' })
   if (!response.ok) {

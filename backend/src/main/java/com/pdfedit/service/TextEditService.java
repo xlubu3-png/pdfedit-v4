@@ -395,7 +395,65 @@ public class TextEditService {
             int renderIndex = singlePage != null ? 0 : pageIndex;
             float shownDpi = RenderLimits.cappedDpi(doc.getPage(renderIndex).getCropBox(), dpi);
             BufferedImage image = new PDFRenderer(doc).renderImageWithDPI(renderIndex, shownDpi);
-            return quickPng(image);
+            return photographic(image) ? jpeg(image) : quickPng(image);
+        }
+    }
+
+    /** Distinct colours (4 bits a channel) among the sampled points above which a page has photographs on it. */
+    private static final int PHOTO_COLOURS = 120;
+    /** The points sampled across and down the picture to tell. */
+    private static final int PHOTO_SAMPLES = 80;
+
+    /**
+     * Whether the picture is mostly photographs (many colours): sent as a JPEG it is a fifth of a PNG's size and as
+     * clear. Letters, lines and grey scans have few colours and stay PNG, sharp.
+     */
+    static boolean photographic(BufferedImage image) {
+        java.util.BitSet seen = new java.util.BitSet(4096);
+        int colours = 0;
+        for (int i = 0; i < PHOTO_SAMPLES; i++) {
+            int y = (int) ((i + 0.5) * image.getHeight() / PHOTO_SAMPLES);
+            for (int j = 0; j < PHOTO_SAMPLES; j++) {
+                int rgb = image.getRGB((int) ((j + 0.5) * image.getWidth() / PHOTO_SAMPLES), y);
+                int r = (rgb >> 16) & 0xff;
+                int g = (rgb >> 8) & 0xff;
+                int b = rgb & 0xff;
+                if (Math.abs(r - g) < 16 && Math.abs(g - b) < 16) {
+                    continue; // grey: paper, ink, a grey scan
+                }
+                int key = (r >> 4) << 8 | (g >> 4) << 4 | (b >> 4);
+                if (!seen.get(key)) {
+                    seen.set(key);
+                    if (++colours > PHOTO_COLOURS) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private static byte[] jpeg(BufferedImage image) throws IOException {
+        BufferedImage rgb = image;
+        if (image.getType() != BufferedImage.TYPE_INT_RGB) {
+            rgb = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_RGB);
+            java.awt.Graphics2D g = rgb.createGraphics();
+            g.drawImage(image, 0, 0, java.awt.Color.WHITE, null);
+            g.dispose();
+        }
+        javax.imageio.ImageWriter writer = ImageIO.getImageWritersByFormatName("jpeg").next();
+        try {
+            javax.imageio.ImageWriteParam param = writer.getDefaultWriteParam();
+            param.setCompressionMode(javax.imageio.ImageWriteParam.MODE_EXPLICIT);
+            param.setCompressionQuality(0.88f);
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            try (javax.imageio.stream.ImageOutputStream out = ImageIO.createImageOutputStream(bos)) {
+                writer.setOutput(out);
+                writer.write(null, new javax.imageio.IIOImage(rgb, null, null), param);
+            }
+            return bos.toByteArray();
+        } finally {
+            writer.dispose();
         }
     }
 

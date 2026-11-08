@@ -38,6 +38,7 @@ import com.pdfedit.service.PageCopies;
 import com.pdfedit.service.PageEdits;
 import com.pdfedit.service.PageImages;
 import com.pdfedit.service.PageRotationBaker;
+import com.pdfedit.service.PageWarmer;
 import com.pdfedit.service.PasswordRequiredException;
 import com.pdfedit.service.PdfProtector;
 import com.pdfedit.service.PdfUnlocker;
@@ -81,6 +82,14 @@ public class PdfController {
         this.pageOcr = pageOcr;
     }
 
+    /** Reads a document's pages ahead once it is opened, so the editor shows them at once. */
+    private PageWarmer pageWarmer;
+
+    @Autowired(required = false)
+    void setPageWarmer(PageWarmer pageWarmer) {
+        this.pageWarmer = pageWarmer;
+    }
+
     @GetMapping("/health")
     public String health() {
         return "ok";
@@ -119,6 +128,10 @@ public class PdfController {
         if (scanned && pageOcr != null) {
             // The screen offers text recognition for a scan: the engine gets ready while the user decides.
             pageOcr.prepareInBackground();
+        }
+        if (pageWarmer != null && !scanned) {
+            // A scan has no text to read ahead; its pages are recognized instead.
+            pageWarmer.wholeDocument(documentId, pageCount);
         }
         return new UploadResponse(documentId, file.getOriginalFilename(), pageCount, unlocked, permissions, scanned);
     }

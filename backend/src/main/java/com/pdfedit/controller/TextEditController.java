@@ -21,6 +21,7 @@ import com.pdfedit.dto.PageTextDto;
 import com.pdfedit.dto.TableGrid;
 import com.pdfedit.dto.TextEditItem;
 import com.pdfedit.service.InvalidEditException;
+import com.pdfedit.service.PageWarmer;
 import com.pdfedit.service.PdfDocumentStore;
 import com.pdfedit.service.TextEditService;
 import com.pdfedit.text.AddedText;
@@ -38,13 +39,27 @@ public class TextEditController {
     private final PdfDocumentStore store;
     private final TextEditService textEditService;
 
+    /** Reads the pages next to the one opened ahead; null in tests. */
+    private final PageWarmer pageWarmer;
+
     public TextEditController(PdfDocumentStore store, TextEditService textEditService) {
+        this(store, textEditService, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public TextEditController(PdfDocumentStore store, TextEditService textEditService, PageWarmer pageWarmer) {
         this.store = store;
         this.textEditService = textEditService;
+        this.pageWarmer = pageWarmer;
     }
 
     @GetMapping("/text-runs")
     public PageTextDto textRuns(@PathVariable String documentId, @PathVariable int pageIndex) throws IOException {
+        if (pageWarmer != null) {
+            // The editor is on this page: the ones the user turns to next are read meanwhile.
+            pageWarmer.read(documentId, pageIndex);
+            pageWarmer.around(documentId, pageIndex, store.getInfo(documentId).pageCount());
+        }
         return textEditService.describePage(store.getContent(documentId), pageIndex,
                 store.pageEditsSnapshot(documentId, pageIndex));
     }
@@ -74,6 +89,21 @@ public class TextEditController {
                 }
             }
             return drawn;
+        }
+    }
+
+    /** How big the page is (points, its visible area): the editor shows its picture before its lines are read. */
+    public record PageSize(float width, float height) {
+    }
+
+    @GetMapping("/size")
+    public PageSize size(@PathVariable String documentId, @PathVariable int pageIndex) throws IOException {
+        try (PDDocument document = Loader.loadPDF(store.getContent(documentId))) {
+            if (pageIndex < 0 || pageIndex >= document.getNumberOfPages()) {
+                throw new InvalidEditException("페이지 번호가 잘못되었습니다.");
+            }
+            PDRectangle crop = document.getPage(pageIndex).getCropBox();
+            return new PageSize(crop.getWidth(), crop.getHeight());
         }
     }
 
@@ -127,10 +157,13 @@ public class TextEditController {
         return ResponseEntity.noContent().build();
     }
 
-    @GetMapping(value = "/preview", produces = MediaType.IMAGE_PNG_VALUE)
-    public byte[] preview(@PathVariable String documentId, @PathVariable int pageIndex,
+    /** The page as it now looks: a JPEG for a page of photographs (much smaller), else a PNG (sharp letters). */
+    @GetMapping(value = "/preview", produces = {MediaType.IMAGE_PNG_VALUE, MediaType.IMAGE_JPEG_VALUE})
+    public ResponseEntity<byte[]> preview(@PathVariable String documentId, @PathVariable int pageIndex,
             @RequestParam(defaultValue = "150") int dpi) throws IOException {
-        return textEditService.renderPreview(store.getContent(documentId), pageIndex,
+        byte[] picture = textEditService.renderPreview(store.getContent(documentId), pageIndex,
                 store.pageEditsSnapshot(documentId, pageIndex), Math.max(72, Math.min(300, dpi)));
+        boolean jpeg = picture.length > 2 && (picture[0] & 0xff) == 0xff && (picture[1] & 0xff) == 0xd8;
+        return ResponseEntity.ok().contentType(jpeg ? MediaType.IMAGE_JPEG : MediaType.IMAGE_PNG).body(picture);
     }
 }

@@ -2398,3 +2398,32 @@ kbd {
   flex: 1 1 240px;
   color: #4b5563;
 }
+
+/* 파일마다 처리 */
+.batch-dialog fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.batch-dialog legend {
+  font-size: 12px;
+  color: #6b7280;
+  padding: 0 4px;
+}
+
+.batch-dialog .check-row {
+  font-weight: 500;
+}
+
+.batch-pages,
+.batch-note {
+  color: #6b7280;
+  font-size: 12px;
+}

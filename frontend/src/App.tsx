@@ -40,6 +40,10 @@ import { LockDialog } from './components/LockDialog'
 import { PasswordDialog } from './components/PasswordDialog'
 import { RetentionDialog } from './components/RetentionDialog'
 import { ScanSettingsDialog } from './components/ScanSettingsDialog'
+import { BatchDialog } from './components/BatchDialog'
+import type { BatchChoice } from './components/BatchDialog'
+import { batchZipName, filesOf, outputName } from './batch'
+import { zip } from './xlsx'
 import { RedactDialog } from './components/RedactDialog'
 import { RedactEditor } from './components/RedactEditor'
 import { UpdateBanner } from './components/UpdateBanner'
@@ -73,6 +77,7 @@ import {
   SquareCheck,
   Trash,
   Undo2,
+  Files,
 } from 'lucide-react'
 import type { AppInfo, AppSettings, PageItem, ReplaceResult, UpdateInfo, UploadResponse } from './types'
 import { downloadBlob } from './download'
@@ -121,6 +126,7 @@ function App() {
   const [info, setInfo] = useState<AppInfo | null>(null)
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [scanSettingsOpen, setScanSettingsOpen] = useState(false)
+  const [batchOpen, setBatchOpen] = useState(false)
   /** The page the editor is to recognize as soon as it opens on it (a page just set straight for that). */
   const [recognizeOnOpen, setRecognizeOnOpen] = useState<{ key: string; upright: boolean } | null>(null)
   const [retentionOpen, setRetentionOpen] = useState(false)
@@ -381,6 +387,69 @@ function App() {
     } catch (e) {
       setError(errorText(e, '쪽의 기울기를 바로잡지 못했습니다'))
     } finally {
+      setBusy(false)
+    }
+  }
+
+  /**
+   * 파일마다 처리: for each chosen file, its scanned pages recognized (set straight first) if asked, then saved on its
+   * own - a PDF (smaller if asked) and/or a workbook. One result is downloaded as it is; several come in one ZIP.
+   */
+  async function handleBatch(choice: BatchChoice) {
+    setBatchOpen(false)
+    if (busy) return
+    const groups = filesOf(pages).filter((f) => choice.files.includes(f.name))
+    if (groups.length === 0) return
+    setBusy(true)
+    setError(null)
+    const results: [string, Uint8Array][] = []
+    const taken = new Set<string>()
+    let recognizedLines = 0
+    let turned = 0
+    try {
+      for (const [i, group] of groups.entries()) {
+        let filePages = group.pages
+        if (choice.ocr) {
+          setNotice(`파일마다 처리 중… ${i + 1}/${groups.length} ${group.name}: 글자 인식`)
+          const { copies } =
+            settings?.straightenOnOcr === false ? { copies: new Map<string, PageItem>() } : await straighten(filePages)
+          turned += copies.size
+          filePages = filePages.map((p) => copies.get(p.key) ?? p)
+          const summary = await recognizeAll(filePages, recognizePage, (done, total) => setOcrProgress({ done, total }), () => ocrStop.current)
+          setOcrProgress(null)
+          recognizedLines += summary.lines
+          setPages((prev) =>
+            prev.map((p) => (p.key in summary.linesByKey ? { ...p, ocrLines: summary.linesByKey[p.key] } : p)),
+          )
+          if (summary.stopped) break
+        }
+        setNotice(`파일마다 처리 중… ${i + 1}/${groups.length} ${group.name}: 저장`)
+        if (choice.pdf) {
+          const name = outputName(group.name, 'pdf', taken)
+          const { blob } = await exportPdf(filePages, name, flatten, undefined, choice.shrink)
+          results.push([name, new Uint8Array(await blob.arrayBuffer())])
+        }
+        if (choice.excel) {
+          const name = outputName(group.name, 'xlsx', taken)
+          results.push([name, new Uint8Array(await (await pagesToXlsx(filePages, filePages)).arrayBuffer())])
+        }
+      }
+      if (results.length === 1) {
+        downloadBlob(new Blob([results[0][1] as Uint8Array<ArrayBuffer>]), results[0][0])
+      } else if (results.length > 1) {
+        downloadBlob(new Blob([zip(results)], { type: 'application/zip' }), batchZipName(new Date()))
+      }
+      const did = [
+        `파일 ${groups.length}개를 처리해 ${results.length}개로 저장했습니다`,
+        choice.ocr ? `글자 ${recognizedLines}줄 인식` : '',
+        turned > 0 ? `${turned}쪽 방향·기울기 바로잡음` : '',
+      ].filter(Boolean)
+      setNotice(`${did.join(' · ')}.`)
+    } catch (e) {
+      setNotice(null)
+      setError(errorText(e, '파일마다 처리하지 못했습니다'))
+    } finally {
+      setOcrProgress(null)
       setBusy(false)
     }
   }
@@ -1182,6 +1251,16 @@ function App() {
                   disabled={busy}
                 />
                 <RibbonButton
+                  icon={<Files />}
+                  label="파일마다 처리"
+                  title="연 파일마다 글자 인식·용량 줄이기를 하고, 파일마다 따로 PDF·엑셀로 저장합니다 (여러 개면 ZIP 하나로)"
+                  onClick={() => {
+                    ocrStop.current = false
+                    setBatchOpen(true)
+                  }}
+                  disabled={busy || pages.length === 0}
+                />
+                <RibbonButton
                   icon={<GitCompareArrows />}
                   label="문서 비교"
                   title="올린 두 PDF(이전 판과 새 판)의 바뀐 글자를 나란히 표시합니다"
@@ -1341,6 +1420,14 @@ function App() {
       )}
 
       {compareOpen && <CompareView pages={pages} onClose={() => setCompareOpen(false)} />}
+
+      {batchOpen && (
+        <BatchDialog
+          files={filesOf(pages).map((f) => ({ name: f.name, pages: f.pages.length }))}
+          onRun={(choice) => void handleBatch(choice)}
+          onClose={() => setBatchOpen(false)}
+        />
+      )}
 
       {scanSettingsOpen && settings && (
         <ScanSettingsDialog

@@ -248,10 +248,16 @@ export function crc32(data: Uint8Array): number {
   return (crc ^ 0xffffffff) >>> 0
 }
 
-/** A ZIP of the files, stored as they are (Excel reads stored entries as well as compressed ones). */
-export function zip(files: [string, string][]): Uint8Array<ArrayBuffer> {
+/**
+ * A ZIP of the files - text (written as UTF-8) or bytes - stored as they are (Excel and Windows read stored entries
+ * as well as compressed ones; a PDF or workbook inside is compressed already).
+ */
+export function zip(files: [string, string | Uint8Array][]): Uint8Array<ArrayBuffer> {
   const encoder = new TextEncoder()
-  const entries = files.map(([name, text]) => ({ name: encoder.encode(name), data: encoder.encode(text) }))
+  const entries = files.map(([name, body]) => ({
+    name: encoder.encode(name),
+    data: typeof body === 'string' ? encoder.encode(body) : body,
+  }))
   const size = entries.reduce((n, e) => n + 30 + e.name.length + e.data.length + 46 + e.name.length, 0) + 22
   const out = new Uint8Array(new ArrayBuffer(size))
   const view = new DataView(out.buffer)

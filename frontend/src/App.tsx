@@ -5,6 +5,7 @@ import {
   createBlankDocument,
   deleteDocument,
   duplicatePage,
+  fetchProblemReport,
   straightenPage,
   exportImages,
   exportPdf,
@@ -451,6 +452,20 @@ function App() {
     } finally {
       setOcrProgress(null)
       setBusy(false)
+    }
+  }
+
+  /** 문제 보고: the logs and a page about this PC, saved as a ZIP for the user to send to whoever looks into it. */
+  async function handleProblemReport() {
+    try {
+      const { blob, fileName } = await fetchProblemReport()
+      downloadBlob(blob, fileName)
+      setNotice(
+        `문제 보고 파일을 내려받았습니다: 다운로드 폴더의 ${fileName}을(를) 담당자에게 보내 주세요. ` +
+          '프로그램 기록과 PC 정보만 들어 있고, 문서 내용은 들어 있지 않습니다.',
+      )
+    } catch (e) {
+      setError(errorText(e, '문제 보고 파일을 만들지 못했습니다'))
     }
   }
 
@@ -999,6 +1014,15 @@ function App() {
                 title="스캔 문서를 열면 바로 인식할지, 인식할 때 방향·기울기를 바로잡을지 정합니다"
               >
                 글자 인식 설정
+              </button>
+              {' · '}
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => void handleProblemReport()}
+                title="프로그램이 이상할 때: 기록 파일과 PC 정보를 ZIP 하나로 내려받아 담당자에게 보낼 수 있습니다 (문서 내용은 들어 있지 않음)"
+              >
+                문제 보고
               </button>
             </>
           )}

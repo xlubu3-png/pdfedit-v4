@@ -275,6 +275,17 @@ export async function saveTableGrids(documentId: string, pageIndex: number, grid
   }
 }
 
+/** 문제 보고: the app's logs and a page about this PC, as a ZIP to send (no document is in it). */
+export async function fetchProblemReport(): Promise<{ blob: Blob; fileName: string }> {
+  const response = await call(`${BASE}/support/report`)
+  if (!response.ok) {
+    throw await failure(response, '문제 보고 파일을 만들지 못했습니다')
+  }
+  const disposition = response.headers.get('Content-Disposition') ?? ''
+  const named = /filename\*=UTF-8''([^;]+)/i.exec(disposition)
+  return { blob: await response.blob(), fileName: named ? decodeURIComponent(named[1]) : 'WINTECH_문제보고.zip' }
+}
+
 export async function duplicatePage(documentId: string, pageIndex: number): Promise<UploadResponse> {
   const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/duplicate`, { method: 'POST' })
   if (!response.ok) {

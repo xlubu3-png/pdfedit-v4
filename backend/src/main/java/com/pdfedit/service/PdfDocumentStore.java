@@ -112,6 +112,18 @@ public class PdfDocumentStore {
         }
     }
 
+    /** How many documents are held (open in the page list, or kept from earlier). */
+    public int documentCount() {
+        return documents.size();
+    }
+
+    /** The settings as the settings file has them, for a problem report. */
+    public java.util.Map<String, String> settingsForReport() {
+        java.util.Map<String, String> all = new java.util.TreeMap<>(switches);
+        all.put(RETENTION_KEY, String.valueOf(retentionDays()));
+        return all;
+    }
+
     /** How many days a document nobody opens is kept. */
     public int retentionDays() {
         return (int) retention.toDays();

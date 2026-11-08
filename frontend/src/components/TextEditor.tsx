@@ -30,7 +30,7 @@ import { copyRich, copyText } from '../clipboard'
 import { downloadBlob } from '../download'
 import { sheetWith, workbookName } from '../excelExport'
 import { sheetsToXlsx } from '../xlsx'
-import { ocrMessage, recognizeAll } from '../ocr'
+import { ocrMessage, recognizeAll, straightenedNote } from '../ocr'
 import { lineOfCover, refitted } from '../refit'
 import { asLines, asTable, placed, rewrittenLines, selectableLines } from '../textSelect'
 import type { PlacedText } from '../textSelect'
@@ -122,6 +122,14 @@ interface TextEditorProps {
   onRecognized: (pageKey: string, lines: number) => void
   /** Recognizes every page of the list; resolves to what was done, or null when nothing ran. */
   onRecognizeAll: () => Promise<string | null>
+  /**
+   * Before this page is recognized: sets it straight if it was scanned askew. True when it was - the editor then
+   * opens again on the straight copy, with {@link recognizeOnOpen}, and this one does nothing more.
+   */
+  onStraightenFirst?: () => Promise<boolean>
+  /** Recognize the page as soon as the editor opens (it was just set straight to be recognized). */
+  recognizeOnOpen?: boolean
+  onRecognizedOnOpen?: () => void
   /** How far recognizing every page has got, while it runs. */
   ocrProgress: { done: number; total: number } | null
   onStopRecognize: () => void
@@ -239,6 +247,9 @@ export function TextEditor({
   onFontsReloaded,
   onRecognized,
   onRecognizeAll,
+  onStraightenFirst,
+  recognizeOnOpen,
+  onRecognizedOnOpen,
   ocrProgress,
   onStopRecognize,
   busy,
@@ -355,6 +366,15 @@ export function TextEditor({
   const [slow, setSlow] = useState(false)
   /** Set after render so a save that fails for a refused edit can take the edit back. */
   const rollbackRef = useRef<() => void>(() => {})
+
+  // Opened on a page just set straight to be read: read it now.
+  const recognizedOnOpen = useRef(false)
+  useEffect(() => {
+    if (!recognizeOnOpen || recognizedOnOpen.current) return
+    recognizedOnOpen.current = true
+    onRecognizedOnOpen?.()
+    void recognizeThisPage(true)
+  })
 
   // A menu item's action on the line, box or picture it picked, once the editor shows it picked.
   useEffect(() => {
@@ -1683,12 +1703,16 @@ export function TextEditor({
   }
 
   /** Recognizes the text of this page (a second or two), outlines what was found and tells the page list. */
-  async function recognizeThisPage() {
+  async function recognizeThisPage(straightened = false) {
     setOcrBusy(true)
     setOcrNote(null)
     setError(null)
     let found: OcrText[] = []
     try {
+      if (!straightened && onStraightenFirst) {
+        await flush()
+        if (await onStraightenFirst()) return
+      }
       const summary = await recognizeAll(
         [page],
         async (id, index) => {
@@ -1704,7 +1728,8 @@ export function TextEditor({
       setShowOcr(true)
       const unsure = found.filter((l) => l.score < UNSURE).length
       setOcrNote(
-        ocrMessage(summary) +
+        (straightened ? straightenedNote(1) : '') +
+          ocrMessage(summary) +
           (found.length > 0 ? ' 점선 줄을 클릭해 Ctrl+C로 복사하거나, 두 번 클릭해 고쳐 쓸 수 있습니다.' : '') +
           (unsure > 0 ? ` 주황색 ${unsure}줄은 인식이 불확실하니 확인하세요.` : ''),
       )

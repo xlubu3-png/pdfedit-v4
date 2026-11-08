@@ -45,6 +45,7 @@ import com.pdfedit.service.PdfDocumentStore;
 import com.pdfedit.service.PdfExportService;
 import com.pdfedit.service.PdfThumbnailService;
 import com.pdfedit.service.TextEditService;
+import com.pdfedit.text.PageStraightener;
 
 @RestController
 @RequestMapping("/api/v1/pdf")
@@ -190,6 +191,39 @@ public class PdfController {
         String copyId = store.store(info.fileName(), content, 1);
         store.copyPageEdits(documentId, pageIndex, copyId, 0);
         return new UploadResponse(copyId, info.fileName(), 1);
+    }
+
+    /**
+     * @param documentId the straightened page as a document of its own (one page), or null when the page was left
+     *                   as it is (straight already, its slant not told, or not a scan)
+     * @param degrees    how far it was turned clockwise
+     */
+    public record StraightenResponse(String documentId, double degrees) {
+    }
+
+    /**
+     * A scanned page fed askew, set straight: a copy turned back by the slant measured on it, with the page's edits.
+     * What was recognized on it is not kept (its places were the askew ones): the page is to be recognized again.
+     */
+    @PostMapping("/documents/{documentId}/pages/{pageIndex}/straighten")
+    public StraightenResponse straightenPage(@PathVariable String documentId, @PathVariable int pageIndex)
+            throws IOException {
+        PdfDocumentStore.DocumentInfo info = store.getInfo(documentId);
+        if (pageIndex < 0 || pageIndex >= info.pageCount()) {
+            throw new InvalidEditException("없는 페이지는 바로잡을 수 없습니다.");
+        }
+        byte[] pdf = store.getContent(documentId);
+        double degrees;
+        try (PDDocument doc = Loader.loadPDF(pdf)) {
+            degrees = PageStraightener.angle(doc, pageIndex);
+        }
+        if (degrees == 0) {
+            return new StraightenResponse(null, 0);
+        }
+        String copyId = store.store(info.fileName(), PageStraightener.straightened(pdf, pageIndex, degrees), 1);
+        store.copyPageEdits(documentId, pageIndex, copyId, 0);
+        store.setOcr(copyId, 0, List.of());
+        return new StraightenResponse(copyId, degrees);
     }
 
     @GetMapping(value = "/documents/{documentId}/pages/{pageIndex}/thumbnail", produces = MediaType.IMAGE_PNG_VALUE)

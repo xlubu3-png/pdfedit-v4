@@ -5,6 +5,7 @@ import {
   createBlankDocument,
   deleteDocument,
   duplicatePage,
+  straightenPage,
   exportImages,
   exportPdf,
   fetchAppInfo,
@@ -26,7 +27,7 @@ import { LICENSE_LINKS } from './licenses'
 import { pagesToXlsx, workbookName } from './excelExport'
 import { DEFAULT_IMAGE_CHOICE, imageExportFileName, imageExportStem } from './imageExport'
 import type { ImageChoice } from './imageExport'
-import { ocrMessage, recognizeAll } from './ocr'
+import { ocrMessage, recognizeAll, straightenedNote } from './ocr'
 import { keyCode } from './keys'
 import { dragHasFiles, pickPdfs } from './pdfFiles'
 import { clearSession, loadSession, saveSession } from './session'
@@ -38,6 +39,7 @@ import { ImageExportDialog } from './components/ImageExportDialog'
 import { LockDialog } from './components/LockDialog'
 import { PasswordDialog } from './components/PasswordDialog'
 import { RetentionDialog } from './components/RetentionDialog'
+import { ScanSettingsDialog } from './components/ScanSettingsDialog'
 import { RedactDialog } from './components/RedactDialog'
 import { RedactEditor } from './components/RedactEditor'
 import { UpdateBanner } from './components/UpdateBanner'
@@ -118,6 +120,9 @@ function App() {
   const [editorNonce, setEditorNonce] = useState(0)
   const [info, setInfo] = useState<AppInfo | null>(null)
   const [settings, setSettings] = useState<AppSettings | null>(null)
+  const [scanSettingsOpen, setScanSettingsOpen] = useState(false)
+  /** The page the editor is to recognize as soon as it opens on it (a page just set straight for that). */
+  const [recognizeOnOpen, setRecognizeOnOpen] = useState<string | null>(null)
   const [retentionOpen, setRetentionOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [passwordAsk, setPasswordAsk] = useState<PasswordAsk | null>(null)
@@ -285,18 +290,10 @@ function App() {
     setBusy(true)
     setError(null)
     setScanSuggest(null)
-    ocrStop.current = false
     try {
-      const summary = await recognizeAll(
-        chosen,
-        recognizePage,
-        (done, total) => setOcrProgress({ done, total }),
-        () => ocrStop.current,
-      )
-      setPages((prev) =>
-        prev.map((p) => (p.key in summary.linesByKey ? { ...p, ocrLines: summary.linesByKey[p.key] } : p)),
-      )
-      const message = ocrMessage(summary)
+      // Pages fed askew are set straight first: they are read better, and their lines then lie level.
+      const turned = settings?.straightenOnOcr === false ? new Map<string, PageItem>() : await straighten(chosen)
+      const message = straightenedNote(turned.size) + (await recognize(chosen.map((p) => turned.get(p.key) ?? p)))
       setNotice(message)
       return message
     } catch (e) {
@@ -304,6 +301,76 @@ function App() {
       return null
     } finally {
       setOcrProgress(null)
+      setBusy(false)
+    }
+  }
+
+  /** Recognizes the pages' text, showing how far it got; what it found, said for the user. */
+  async function recognize(reading: PageItem[]): Promise<string> {
+    ocrStop.current = false
+    try {
+      const summary = await recognizeAll(
+        reading,
+        recognizePage,
+        (done, total) => setOcrProgress({ done, total }),
+        () => ocrStop.current,
+      )
+      setPages((prev) =>
+        prev.map((p) => (p.key in summary.linesByKey ? { ...p, ocrLines: summary.linesByKey[p.key] } : p)),
+      )
+      return ocrMessage(summary)
+    } finally {
+      setOcrProgress(null)
+    }
+  }
+
+  /**
+   * The scanned pages fed askew, each replaced in the list by its straightened copy (one step Ctrl+Z takes back);
+   * the copies by the key of the page they replace. Pages straight already, or not scans, are left as they are.
+   */
+  async function straighten(targets: PageItem[]): Promise<Map<string, PageItem>> {
+    const copies = new Map<string, PageItem>()
+    for (const p of targets) {
+      const result = await straightenPage(p.documentId, p.pageIndex)
+      if (!result.documentId) continue
+      copies.set(p.key, {
+        key: `${result.documentId}-0`,
+        documentId: result.documentId,
+        sourceFileName: p.sourceFileName,
+        pageIndex: 0,
+        rotation: p.rotation,
+        textRevision: 0,
+        ...(p.lockedPermissions === undefined ? {} : { lockedPermissions: p.lockedPermissions }),
+      })
+    }
+    if (copies.size > 0) {
+      changePages((prev) => prev.map((p) => copies.get(p.key) ?? p))
+      setSelectedKeys((prev) => new Set([...prev].map((k) => copies.get(k)?.key ?? k)))
+    }
+    return copies
+  }
+
+  /**
+   * The menu's 기울기 바로잡기: the pages set straight; those whose text was recognized are recognized again, as
+   * their lines' places were the askew ones.
+   */
+  async function handleStraighten(keys: string[]) {
+    const targets = pages.filter((p) => keys.includes(p.key))
+    if (targets.length === 0 || busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      const turned = await straighten(targets)
+      if (turned.size === 0) {
+        setNotice('바로잡을 만큼 기운 스캔 쪽이 없습니다 (글자로 된 쪽은 그대로 둡니다).')
+        return
+      }
+      const again = targets.filter((p) => turned.has(p.key) && (p.ocrLines ?? 0) > 0).map((p) => turned.get(p.key)!)
+      const note = straightenedNote(turned.size)
+      setNotice(again.length > 0 ? note + (await recognize(again)) : note.trim())
+    } catch (e) {
+      setError(errorText(e, '쪽의 기울기를 바로잡지 못했습니다'))
+    } finally {
       setBusy(false)
     }
   }
@@ -845,6 +912,15 @@ function App() {
               >
                 작업 보관 {settings.retentionDays}일
               </button>
+              {' · '}
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => setScanSettingsOpen(true)}
+                title="글자 인식할 때 기운 스캔 쪽을 바로잡을지 정합니다"
+              >
+                글자 인식 설정
+              </button>
             </>
           )}
           {update?.enabled && (
@@ -1182,6 +1258,7 @@ function App() {
             onDuplicate={(key) => void handleDuplicate([key])}
             onEditText={setEditingKey}
             onRedact={setDrawKey}
+            onStraighten={(key) => void handleStraighten(selectedKeys.has(key) ? [...selectedKeys] : [key])}
             onOcr={(key) => {
               const page = pages.find((p) => p.key === key)
               if (page) void handleOcr([page])
@@ -1224,6 +1301,19 @@ function App() {
           onFontsReloaded={handleFontsReloaded}
           onRecognized={(key, lines) => setPages((prev) => prev.map((p) => (p.key === key ? { ...p, ocrLines: lines } : p)))}
           onRecognizeAll={() => handleOcr(pages)}
+          onStraightenFirst={async () => {
+            // The page in the editor, set straight before it is read: the editor opens again on the straight copy
+            // and recognizes it there.
+            if (settings?.straightenOnOcr === false || busy) return false
+            const turned = await straighten([editingPage])
+            const copy = turned.get(editingPage.key)
+            if (!copy) return false
+            setRecognizeOnOpen(copy.key)
+            setEditingKey(copy.key)
+            return true
+          }}
+          recognizeOnOpen={recognizeOnOpen === editingPage.key}
+          onRecognizedOnOpen={() => setRecognizeOnOpen(null)}
           ocrProgress={ocrProgress}
           onStopRecognize={() => (ocrStop.current = true)}
           busy={busy}
@@ -1241,6 +1331,14 @@ function App() {
       )}
 
       {compareOpen && <CompareView pages={pages} onClose={() => setCompareOpen(false)} />}
+
+      {scanSettingsOpen && settings && (
+        <ScanSettingsDialog
+          settings={settings}
+          onSave={async (next) => setSettings(await saveSettings(next))}
+          onClose={() => setScanSettingsOpen(false)}
+        />
+      )}
 
       {retentionOpen && settings && (
         <RetentionDialog

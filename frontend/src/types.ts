@@ -10,6 +10,8 @@ export interface AppInfo {
 export interface AppSettings {
   /** Days an uploaded document nobody opens is kept before it is cleaned up. */
   retentionDays: number
+  /** Whether recognizing a scan's text first sets its pages straight (fed askew). */
+  straightenOnOcr?: boolean
 }
 
 /** Whether a newer version of the app is published; `enabled` is false outside the installed app. */

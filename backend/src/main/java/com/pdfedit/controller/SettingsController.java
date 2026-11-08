@@ -14,6 +14,8 @@ import com.pdfedit.service.PdfDocumentStore;
 @RequestMapping("/api/v1/pdf/settings")
 public class SettingsController {
 
+    static final String STRAIGHTEN_ON_OCR = "straightenOnOcr";
+
     private final PdfDocumentStore store;
 
     public SettingsController(PdfDocumentStore store) {
@@ -22,12 +24,15 @@ public class SettingsController {
 
     @GetMapping
     public AppSettings settings() {
-        return new AppSettings(store.retentionDays());
+        return new AppSettings(store.retentionDays(), store.flag(STRAIGHTEN_ON_OCR, true));
     }
 
     @PutMapping
     public AppSettings save(@RequestBody AppSettings settings) {
         store.setRetentionDays(settings.retentionDays());
+        if (settings.straightenOnOcr() != null) {
+            store.setFlag(STRAIGHTEN_ON_OCR, settings.straightenOnOcr());
+        }
         return settings();
     }
 }

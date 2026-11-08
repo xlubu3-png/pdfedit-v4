@@ -1476,6 +1476,14 @@ button.primary:disabled {
   font-size: 14px;
 }
 
+.retention-dialog .check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
 .retention-warn {
   color: #b45309;
   font-weight: 600;

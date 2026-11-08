@@ -12,7 +12,7 @@ test('the retention is shown on the first screen and can be changed there', asyn
 
   await expect(dialog).toBeHidden()
   await expect(page.getByRole('button', { name: '작업 보관 90일' })).toBeVisible()
-  expect(await (await page.request.get('/api/v1/pdf/settings')).json()).toEqual({ retentionDays: 90 })
+  expect(await (await page.request.get('/api/v1/pdf/settings')).json()).toMatchObject({ retentionDays: 90 })
 
   // Back to the default, so the other tests see the app as it starts.
   await page.request.put('/api/v1/pdf/settings', { data: { retentionDays: 30 } })

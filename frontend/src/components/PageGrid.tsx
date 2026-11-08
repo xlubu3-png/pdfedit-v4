@@ -24,6 +24,8 @@ interface PageGridProps {
   onRedact: (key: string) => void
   /** Recognizes the page's text (a scan). */
   onOcr: (key: string) => void
+  /** Sets the page (or the picked pages, when it is one of them) straight, if scanned askew. */
+  onStraighten: (key: string) => void
   onPrint: (key: string) => void
   /** Saves the page as a picture (사진으로 내보내기). */
   onSaveImage: (key: string) => void
@@ -77,6 +79,7 @@ export function PageGrid({
   onEditText,
   onRedact,
   onOcr,
+  onStraighten,
   onPrint,
   onSaveImage,
   onSaveExcel,
@@ -224,6 +227,7 @@ export function PageGrid({
       'separator',
       { label: '왼쪽으로 회전', disabled: busy, onSelect: () => onRotate(key, -90) },
       { label: '오른쪽으로 회전', disabled: busy, onSelect: () => onRotate(key, 90) },
+      { label: `기울기 바로잡기 (스캔)${many}`, disabled: busy, onSelect: () => onStraighten(key) },
       'separator',
       { label: '페이지 복제 (고친 내용째로)', disabled: busy, onSelect: () => onDuplicate(key) },
       { label: '뒤에 빈 페이지 삽입', disabled: busy, onSelect: () => onInsertBlankAfter(key) },

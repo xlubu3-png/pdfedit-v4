@@ -63,6 +63,8 @@ public class PdfDocumentStore {
     private final Path dataDir;
     /** The configured one until the user chooses another. */
     private volatile Duration retention;
+    /** The other settings (switches the screen offers), as the settings file has them. */
+    private final java.util.Map<String, String> switches = new java.util.concurrent.ConcurrentHashMap<>();
     private final JsonMapper mapper = JsonMapper.builder()
             .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
             .build();
@@ -124,11 +126,28 @@ public class PdfDocumentStore {
             throw new InvalidEditException("보관 기간은 1일에서 " + MAX_RETENTION_DAYS + "일 사이로 정할 수 있습니다.");
         }
         retention = Duration.ofDays(days);
+        saveSettings();
+    }
+
+    /** A switch the user set, or {@code otherwise} when it was never set. */
+    public boolean flag(String name, boolean otherwise) {
+        String value = switches.get(name);
+        return value == null ? otherwise : Boolean.parseBoolean(value);
+    }
+
+    /** Sets a switch, remembered across restarts. */
+    public void setFlag(String name, boolean on) {
+        switches.put(name, String.valueOf(on));
+        saveSettings();
+    }
+
+    private synchronized void saveSettings() {
         if (dataDir == null) {
             return;
         }
         Properties settings = new Properties();
-        settings.setProperty(RETENTION_KEY, String.valueOf(days));
+        settings.putAll(switches);
+        settings.setProperty(RETENTION_KEY, String.valueOf(retentionDays()));
         Path target = dataDir.resolve(SETTINGS_FILE);
         Path temp = dataDir.resolve(SETTINGS_FILE + ".tmp");
         try {
@@ -149,6 +168,11 @@ public class PdfDocumentStore {
         Properties settings = new Properties();
         try (var in = Files.newBufferedReader(file)) {
             settings.load(in);
+            for (String name : settings.stringPropertyNames()) {
+                if (!name.equals(RETENTION_KEY)) {
+                    switches.put(name, settings.getProperty(name));
+                }
+            }
             int days = Integer.parseInt(settings.getProperty(RETENTION_KEY, "").trim());
             if (days >= 1 && days <= MAX_RETENTION_DAYS) {
                 retention = Duration.ofDays(days);

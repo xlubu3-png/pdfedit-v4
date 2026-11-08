@@ -22,17 +22,29 @@ class SettingsControllerTest {
     void theRetentionComesFromTheConfigurationUntilTheUserChoosesOne(@TempDir Path folder) {
         SettingsController settings = new SettingsController(new PdfDocumentStore(folder, Duration.ofDays(30)));
 
-        assertThat(settings.settings()).isEqualTo(new AppSettings(30));
+        assertThat(settings.settings()).isEqualTo(new AppSettings(30, true));
     }
 
     @Test
     void aChosenRetentionIsUsedAndOutlastsARestart(@TempDir Path folder) {
         SettingsController settings = new SettingsController(new PdfDocumentStore(folder, Duration.ofDays(30)));
 
-        assertThat(settings.save(new AppSettings(90))).isEqualTo(new AppSettings(90));
+        assertThat(settings.save(new AppSettings(90))).isEqualTo(new AppSettings(90, true));
 
         PdfDocumentStore restarted = new PdfDocumentStore(folder, Duration.ofDays(30));
         assertThat(restarted.retentionDays()).isEqualTo(90);
+    }
+
+    @Test
+    void straighteningScansIsOnUntilSwitchedOffAndStaysOffAfterARestart(@TempDir Path folder) {
+        SettingsController settings = new SettingsController(new PdfDocumentStore(folder, Duration.ofDays(30)));
+
+        assertThat(settings.save(new AppSettings(30, false))).isEqualTo(new AppSettings(30, false));
+        // The retention alone, as before: the switch is left as it is.
+        assertThat(settings.save(new AppSettings(60))).isEqualTo(new AppSettings(60, false));
+
+        SettingsController restarted = new SettingsController(new PdfDocumentStore(folder, Duration.ofDays(30)));
+        assertThat(restarted.settings()).isEqualTo(new AppSettings(60, false));
     }
 
     @Test
@@ -55,7 +67,7 @@ class SettingsControllerTest {
 
         assertThatThrownBy(() -> settings.save(new AppSettings(0))).isInstanceOf(InvalidEditException.class);
         assertThatThrownBy(() -> settings.save(new AppSettings(5000))).isInstanceOf(InvalidEditException.class);
-        assertThat(settings.settings()).isEqualTo(new AppSettings(30));
+        assertThat(settings.settings()).isEqualTo(new AppSettings(30, true));
     }
 
     @Test

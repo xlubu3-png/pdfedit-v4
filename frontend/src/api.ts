@@ -239,6 +239,18 @@ export async function correctOcrLine(documentId: string, pageIndex: number, line
 }
 
 /** A copy of the page, with everything done to it, as a one-page document of its own. */
+/** A scanned page set straight: its straightened copy (one page), or null when it was straight already or no scan. */
+export async function straightenPage(
+  documentId: string,
+  pageIndex: number,
+): Promise<{ documentId: string | null; degrees: number }> {
+  const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/straighten`, { method: 'POST' })
+  if (!response.ok) {
+    throw await failure(response, '쪽의 기울기를 바로잡지 못했습니다')
+  }
+  return response.json()
+}
+
 export async function duplicatePage(documentId: string, pageIndex: number): Promise<UploadResponse> {
   const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/duplicate`, { method: 'POST' })
   if (!response.ok) {

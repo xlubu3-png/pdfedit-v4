@@ -3,7 +3,7 @@
 # Shown in the UI. Raise it by 0.001 with every change to the app. Keep it in quotes: unquoted, YAML reads
 # 0.050 as the number 0.05 and the screen would show "v0.05".
 app:
-  version: "0.130"
+  version: "0.131"
   # Uploaded documents and their edits are kept here, so they survive a restart of the app.
   # PDFEDIT_DATA_DIR moves it; documents untouched for this many days are deleted.
   data-dir: ${PDFEDIT_DATA_DIR:${user.home}/WINTECH_PDF/data}
@@ -15,6 +15,12 @@ app:
   # When set (PDFEDIT_PASSWORD), every request must carry this password (HTTP Basic, any user name):
   # for an app reachable by others, e.g. on a NAS. Empty = no login.
   password: ${PDFEDIT_PASSWORD:}
+
+logging:
+  level:
+    # Reading the PC's font files, FontBox notes every table it does not use ("Format 14 cmap table is not
+    # supported", "cmap format 4 subtable is empty"): dozens of lines at every start that hide what matters.
+    org.apache.fontbox: error
 
 spring:
   application:

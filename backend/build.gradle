@@ -92,4 +92,13 @@ tasks.register('bootJarWindows', org.springframework.boot.gradle.tasks.bundling.
     archiveClassifier = 'windows'
 }
 
+// The app's own version (application.yml app.version, what the screen shows) as the jars' Implementation-Version:
+// the log's "Starting PdfEditApplication v..." then says which version ran, not the build's 0.1.0.
+def appVersion = (file('src/main/resources/application.yml').text =~ /(?m)^\s*version:\s*"?([0-9.]+)/)[0][1]
+tasks.withType(org.springframework.boot.gradle.tasks.bundling.BootJar).configureEach {
+    manifest {
+        attributes('Implementation-Version': appVersion)
+    }
+}
+
 apply from: 'notices.gradle'

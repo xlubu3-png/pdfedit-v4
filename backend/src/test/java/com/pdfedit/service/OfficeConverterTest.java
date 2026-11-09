@@ -45,4 +45,40 @@ class OfficeConverterTest {
         assertThat(OfficeConverter.SCRIPT).contains("Word.Application", "Excel.Application", "PowerPoint.Application",
                 "ExportAsFixedFormat($dst, 17)", "ExportAsFixedFormat(0, $dst)", "SaveAs($dst, 32)", "$app.Quit()");
     }
+
+    @Test
+    void theScriptSwitchesMacrosOffAndNeverAsksForAPassword() {
+        // Macros off in each program, before the document is opened.
+        assertThat(OfficeConverter.SCRIPT.split("AutomationSecurity = 3", -1)).hasSize(4);
+        for (String open : new String[] {"Documents.Open(", "Workbooks.Open(", "Presentations.Open("}) {
+            assertThat(OfficeConverter.SCRIPT.indexOf("AutomationSecurity = 3"))
+                    .isLessThan(OfficeConverter.SCRIPT.indexOf(open));
+        }
+        assertThat(OfficeConverter.SCRIPT).contains("'::__wintech_no_password__::'");
+        // A PowerPoint the user already had open is not closed.
+        assertThat(OfficeConverter.SCRIPT).contains("if ($mine) { $app.Quit() }");
+    }
+
+    @Test
+    void onlyAnOfficeProgramTheScriptStartedIsEnded(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir)
+            throws java.io.IOException {
+        // No number written: nothing to end.
+        OfficeConverter.endOffice(dir.resolve("none.pid"));
+        // A number that is not an Office program (this test itself) is left alone.
+        java.nio.file.Path pid = dir.resolve("office.pid");
+        java.nio.file.Files.writeString(pid, ProcessHandle.current().pid() + "\r\n");
+        OfficeConverter.endOffice(pid);
+        java.nio.file.Files.writeString(pid, "not a number");
+        OfficeConverter.endOffice(pid);
+        assertThat(ProcessHandle.current().isAlive()).isTrue();
+    }
+
+    @Test
+    void whatTheScriptSaidIsReadFromItsFile(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir)
+            throws java.io.IOException {
+        java.nio.file.Path output = dir.resolve("said.txt");
+        java.nio.file.Files.writeString(output, "The password is incorrect");
+        assertThat(OfficeConverter.said(output)).isEqualTo("The password is incorrect");
+        assertThat(OfficeConverter.said(dir.resolve("missing.txt"))).isEmpty();
+    }
 }

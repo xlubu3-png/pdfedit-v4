@@ -27,6 +27,16 @@ public class OfficeConverter {
     /** A document Office has not printed in this long is not coming (a dialog it waits on, a broken file). */
     private static final long TIMEOUT_SECONDS = 180;
 
+    private final long timeoutSeconds;
+
+    public OfficeConverter() {
+        this(TIMEOUT_SECONDS);
+    }
+
+    OfficeConverter(long timeoutSeconds) {
+        this.timeoutSeconds = timeoutSeconds;
+    }
+
     /** Which Office program opens a file of this name; null when none does. */
     public static String programFor(String fileName) {
         String name = fileName == null ? "" : fileName.toLowerCase(Locale.ROOT);
@@ -75,17 +85,24 @@ public class OfficeConverter {
             Files.write(source, content);
             // UTF-8 with a byte order mark: Windows PowerShell 5 reads a script without one as the PC's code page.
             Files.writeString(script, "﻿" + SCRIPT, StandardCharsets.UTF_8);
+            Path output = dir.resolve("said.txt");
+            Path started = dir.resolve("office.pid");
+            // What the script says goes to a file: reading its pipe would wait for a script that never ends.
             Process process = new ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy",
-                    "Bypass", "-File", script.toString(), source.toString(), target.toString(), program)
-                    .redirectErrorStream(true).start();
-            boolean done = process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            String said = new String(process.getInputStream().readNBytes(4000), StandardCharsets.UTF_8);
+                    "Bypass", "-File", script.toString(), source.toString(), target.toString(), program,
+                    started.toString())
+                    .redirectErrorStream(true).redirectOutput(output.toFile()).start();
+            boolean done = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
             if (!done) {
                 process.descendants().forEach(ProcessHandle::destroyForcibly);
                 process.destroyForcibly();
-                throw new InvalidEditException("MS Office가 " + TIMEOUT_SECONDS / 60 + "분 안에 문서를 PDF로 바꾸지 못했습니다. "
+                process.waitFor(5, TimeUnit.SECONDS);
+                // The Office program the script started is not its child (Windows starts it): ended by its number.
+                endOffice(started);
+                throw new InvalidEditException("MS Office가 " + Math.max(1, timeoutSeconds / 60) + "분 안에 문서를 PDF로 바꾸지 못했습니다. "
                         + "암호가 걸렸거나 Office가 무언가를 묻고 있을 수 있습니다. Office에서 열어 확인해 주세요.");
             }
+            String said = said(output);
             if (process.exitValue() != 0 || !Files.isRegularFile(target) || Files.size(target) == 0) {
                 log.warn("Office could not print {} ({}): {}", fileName, program, said.strip());
                 throw new InvalidEditException(reason(said, program));
@@ -102,6 +119,34 @@ public class OfficeConverter {
             } catch (IOException e) {
                 // a temporary folder left behind
             }
+        }
+    }
+
+    /** What the script wrote, as far as it matters (its first 4000 bytes); empty when it wrote nothing. */
+    static String said(Path output) {
+        try (java.io.InputStream in = Files.newInputStream(output)) {
+            return new String(in.readNBytes(4000), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            return "";
+        }
+    }
+
+    /**
+     * Ends the Office program whose process number the script wrote down - only one the script itself started, so
+     * a Word or PowerPoint the user has open is never touched. Nothing happens when no number was written.
+     */
+    static void endOffice(Path started) {
+        try {
+            long pid = Long.parseLong(Files.readString(started).strip());
+            ProcessHandle.of(pid).ifPresent(office -> {
+                String command = office.info().command().orElse("").toLowerCase(Locale.ROOT);
+                if (command.endsWith("winword.exe") || command.endsWith("excel.exe") || command.endsWith("powerpnt.exe")) {
+                    office.destroyForcibly();
+                    log.warn("Ended the Office program left waiting (pid {})", pid);
+                }
+            });
+        } catch (IOException | RuntimeException e) {
+            // no number written: the script had not started Office yet, or it used one already open
         }
     }
 
@@ -124,17 +169,33 @@ public class OfficeConverter {
     }
 
     /**
-     * Opens the document read-only in Office, without showing it or asking anything (a wrong password is given for
-     * a protected file, so Office fails at once instead of asking), prints it to PDF and quits Office.
+     * Opens the document read-only in Office, without showing it or asking anything, prints it to PDF and quits
+     * Office.
+     * <ul>
+     * <li>Macros are switched off first (AutomationSecurity 3, msoAutomationSecurityForceDisable): a program driving
+     * Office otherwise runs a document's macros without asking.</li>
+     * <li>A wrong password is given for a protected file, so Office fails at once instead of asking.</li>
+     * <li>The process number of the Office program the script started is written down (the one that was not
+     * running before), so one left waiting can be ended. PowerPoint runs once per PC: when the user already has it
+     * open, that one is used and left open.</li>
+     * </ul>
      */
     static final String SCRIPT = String.join("\n", List.of(
             "$ErrorActionPreference = 'Stop'",
-            "$src = $args[0]; $dst = $args[1]; $kind = $args[2]",
+            "$src = $args[0]; $dst = $args[1]; $kind = $args[2]; $pidFile = $args[3]",
             "$missing = [Type]::Missing",
+            "$exe = @{ word = 'WINWORD'; excel = 'EXCEL'; powerpoint = 'POWERPNT' }[$kind]",
+            "$before = @(Get-Process -Name $exe -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })",
+            "function Note-Started {",
+            "  $new = @(Get-Process -Name $exe -ErrorAction SilentlyContinue | Where-Object { $before -notcontains $_.Id })",
+            "  if ($new.Count -ge 1) { Set-Content -Path $pidFile -Value $new[0].Id -Encoding ASCII }",
+            "  return $new.Count -ge 1",
+            "}",
             "switch ($kind) {",
             "  'word' {",
             "    $app = New-Object -ComObject Word.Application",
-            "    $app.Visible = $false; $app.DisplayAlerts = 0",
+            "    [void](Note-Started)",
+            "    $app.Visible = $false; $app.DisplayAlerts = 0; $app.AutomationSecurity = 3",
             "    try {",
             "      $doc = $app.Documents.Open($src, $false, $true, $false, '__wintech_no_password__')",
             "      $doc.ExportAsFixedFormat($dst, 17)",
@@ -143,7 +204,9 @@ public class OfficeConverter {
             "  }",
             "  'excel' {",
             "    $app = New-Object -ComObject Excel.Application",
+            "    [void](Note-Started)",
             "    $app.Visible = $false; $app.DisplayAlerts = $false; $app.AskToUpdateLinks = $false",
+            "    $app.AutomationSecurity = 3",
             "    try {",
             "      $book = $app.Workbooks.Open($src, 0, $true, $missing, '__wintech_no_password__')",
             "      $book.ExportAsFixedFormat(0, $dst)",
@@ -152,11 +215,18 @@ public class OfficeConverter {
             "  }",
             "  'powerpoint' {",
             "    $app = New-Object -ComObject PowerPoint.Application",
+            "    $mine = Note-Started",
+            "    $app.AutomationSecurity = 3",
             "    try {",
-            "      $show = $app.Presentations.Open($src, -1, 0, 0)",
+            "      # 'file::password::' gives a password without asking: a protected file fails at once.",
+            "      try { $show = $app.Presentations.Open($src + '::__wintech_no_password__::', -1, 0, 0) }",
+            "      catch {",
+            "        if ($_.Exception.Message -match 'password|암호') { throw }",
+            "        $show = $app.Presentations.Open($src, -1, 0, 0)",
+            "      }",
             "      $show.SaveAs($dst, 32)",
             "      $show.Close()",
-            "    } finally { $app.Quit() }",
+            "    } finally { if ($mine) { $app.Quit() } }",
             "  }",
             "}",
             "[System.GC]::Collect()",

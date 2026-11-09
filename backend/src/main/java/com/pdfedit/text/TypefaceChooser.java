@@ -35,6 +35,11 @@ final class TypefaceChooser {
     /** Bitmaps of characters in installed fonts, by font file and character. */
     private static final Map<String, boolean[]> GLYPH_CACHE = new ConcurrentHashMap<>();
 
+    /** Whether anything was learned since the results were last saved. */
+    private static final java.util.concurrent.atomic.AtomicBoolean CHANGED = new java.util.concurrent.atomic.AtomicBoolean();
+
+    private static final int SAVED_MAGIC = 0x54434831; // "TCH1"
+
     private final FontMatcher fontMatcher;
 
     TypefaceChooser(FontMatcher fontMatcher) {
@@ -107,6 +112,7 @@ final class TypefaceChooser {
                 }
             }
             CACHE.put(key, winner);
+            CHANGED.set(true);
             return Optional.of(winner);
         } catch (IOException | RuntimeException e) {
             return Optional.empty();
@@ -173,6 +179,7 @@ final class TypefaceChooser {
             size = inkSize(new PDFRenderer(doc).renderImage(0, 1f));
         }
         INK_CACHE.put(key, size == null ? new int[0] : size);
+        CHANGED.set(true);
         return size;
     }
 
@@ -257,6 +264,7 @@ final class TypefaceChooser {
                 for (int i = 0; i < missing.size(); i++) {
                     GLYPH_CACHE.put(prefix + missing.get(i), mask(renderer.renderImage(i, 1f)));
                 }
+                CHANGED.set(true);
             }
         }
         List<boolean[]> masks = new ArrayList<>();
@@ -323,5 +331,127 @@ final class TypefaceChooser {
         }
         int total = ink(a) + ink(b);
         return total == 0 ? 0 : 2.0 * overlap / total;
+    }
+
+    /**
+     * Saves what was learned about fonts - which installed font each page font looks like, and the installed
+     * fonts' letters drawn for the comparison - so that after a restart a document opens without drawing them
+     * all again. Nothing is written when nothing new was learned.
+     *
+     * @param fonts what the installed fonts are (their files, sizes and dates): the results hold only for them
+     * @return whether the file was written
+     */
+    static boolean save(java.nio.file.Path file, String fonts) throws IOException {
+        if (!CHANGED.getAndSet(false)) {
+            return false;
+        }
+        java.nio.file.Files.createDirectories(file.getParent());
+        java.nio.file.Path temp = file.resolveSibling(file.getFileName() + ".tmp");
+        try (java.io.DataOutputStream out = new java.io.DataOutputStream(new java.io.BufferedOutputStream(
+                new java.util.zip.GZIPOutputStream(java.nio.file.Files.newOutputStream(temp))))) {
+            out.writeInt(SAVED_MAGIC);
+            out.writeUTF(fonts);
+            Map<Integer, FontMatcher.Match> matches = Map.copyOf(CACHE);
+            out.writeInt(matches.size());
+            for (Map.Entry<Integer, FontMatcher.Match> e : matches.entrySet()) {
+                out.writeInt(e.getKey());
+                out.writeUTF(e.getValue().cssFamily);
+                out.writeBoolean(e.getValue().bold);
+                out.writeDouble(e.getValue().similarity);
+            }
+            Map<String, boolean[]> glyphs = Map.copyOf(GLYPH_CACHE);
+            out.writeInt(glyphs.size());
+            for (Map.Entry<String, boolean[]> e : glyphs.entrySet()) {
+                out.writeUTF(e.getKey());
+                out.writeInt(e.getValue().length);
+                java.util.BitSet bits = new java.util.BitSet(e.getValue().length);
+                for (int i = 0; i < e.getValue().length; i++) {
+                    bits.set(i, e.getValue()[i]);
+                }
+                byte[] packed = bits.toByteArray();
+                out.writeInt(packed.length);
+                out.write(packed);
+            }
+            Map<String, int[]> inks = Map.copyOf(INK_CACHE);
+            out.writeInt(inks.size());
+            for (Map.Entry<String, int[]> e : inks.entrySet()) {
+                out.writeUTF(e.getKey());
+                out.writeInt(e.getValue().length);
+                for (int v : e.getValue()) {
+                    out.writeInt(v);
+                }
+            }
+        } catch (IOException | RuntimeException e) {
+            CHANGED.set(true);
+            java.nio.file.Files.deleteIfExists(temp);
+            throw e;
+        }
+        java.nio.file.Files.move(temp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+        return true;
+    }
+
+    /**
+     * Reads back what {@link #save} wrote, when it was learned about the same installed fonts; a missing, damaged
+     * or out-of-date file is left alone (it is written anew once something is learned).
+     *
+     * @return how many results were read
+     */
+    static int load(java.nio.file.Path file, String fonts) {
+        if (!java.nio.file.Files.isRegularFile(file)) {
+            return 0;
+        }
+        Map<Integer, FontMatcher.Match> matches = new java.util.HashMap<>();
+        Map<String, boolean[]> glyphs = new java.util.HashMap<>();
+        Map<String, int[]> inks = new java.util.HashMap<>();
+        try (java.io.DataInputStream in = new java.io.DataInputStream(new java.io.BufferedInputStream(
+                new java.util.zip.GZIPInputStream(java.nio.file.Files.newInputStream(file))))) {
+            if (in.readInt() != SAVED_MAGIC || !in.readUTF().equals(fonts)) {
+                return 0;
+            }
+            for (int n = in.readInt(); n > 0; n--) {
+                int key = in.readInt();
+                matches.put(key, new FontMatcher.Match(in.readUTF(), in.readBoolean(), in.readDouble()));
+            }
+            for (int n = in.readInt(); n > 0; n--) {
+                String key = in.readUTF();
+                int length = in.readInt();
+                byte[] packed = new byte[in.readInt()];
+                in.readFully(packed);
+                java.util.BitSet bits = java.util.BitSet.valueOf(packed);
+                boolean[] mask = new boolean[length];
+                for (int i = 0; i < length; i++) {
+                    mask[i] = bits.get(i);
+                }
+                glyphs.put(key, mask);
+            }
+            for (int n = in.readInt(); n > 0; n--) {
+                String key = in.readUTF();
+                int[] size = new int[in.readInt()];
+                for (int i = 0; i < size.length; i++) {
+                    size[i] = in.readInt();
+                }
+                inks.put(key, size);
+            }
+        } catch (IOException | RuntimeException damaged) {
+            return 0;
+        }
+        CACHE.putAll(matches);
+        GLYPH_CACHE.putAll(glyphs);
+        INK_CACHE.putAll(inks);
+        return matches.size() + glyphs.size() + inks.size();
+    }
+
+    /** Forgets everything learned (for tests). */
+    static void forget() {
+        CACHE.clear();
+        GLYPH_CACHE.clear();
+        INK_CACHE.clear();
+        CHANGED.set(false);
+    }
+
+    /** How many results are known (for tests). */
+    static int known() {
+        return CACHE.size() + GLYPH_CACHE.size() + INK_CACHE.size();
     }
 }

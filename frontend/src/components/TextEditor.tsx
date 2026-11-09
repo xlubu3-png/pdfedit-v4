@@ -40,6 +40,8 @@ import type { PlacedText } from '../textSelect'
 import { findTables, hasTable, layout, notCovered, straighten, toHtml, toTsv, turnOf, withGrids } from '../tableGrid'
 import type { Grid, Table, Turn } from '../tableGrid'
 import { TableFixLayer } from './TableFixLayer'
+import { checkTables } from '../sumCheck'
+import type { SumProblem } from '../sumCheck'
 import { FITTING } from '../types'
 import { BLOCKED_NOTE, useRightClick } from '../rightClick'
 import { ContextMenu } from './ContextMenu'
@@ -502,6 +504,16 @@ export function TextEditor({
   const usedTurn = grids.length > 0 ? null : tablesTurn
   /** 표 칸 바로잡기 is open. */
   const [fixingTables, setFixingTables] = useState(false)
+  /** 금액 검산: what was said, and the cells whose figures do not agree (outlined red on the page). */
+  const [sumResult, setSumResult] = useState<{ page: string; summary: string; problems: SumProblem[] } | null>(null)
+  const sums = sumResult?.page === tablesPage ? sumResult : null
+
+  /** 금액 검산: the page's tables (found, or set out by hand) checked: 수량 × 단가, 합계, 세액, 총액. */
+  function checkPageSums() {
+    const blocks = layout(straighten(pageText(), usedTurn), usedTables, false)
+    const result = checkTables(blocks.flatMap((b) => (b.kind === 'table' ? [b.table] : [])))
+    setSumResult({ page: tablesPage, summary: result.summary, problems: result.problems })
+  }
 
   async function saveGrids(next: Grid[]) {
     try {
@@ -1607,6 +1619,7 @@ export function TextEditor({
           { label: '표 모양으로 모두 복사 (엑셀)', onSelect: () => void copyTable(pageText(), false, '이 쪽 글자를 표 모양으로') },
           { label: '이 쪽을 엑셀 파일로 저장 (.xlsx)', onSelect: () => void saveExcel() },
           { label: '표 칸 바로잡기…', onSelect: () => setFixingTables(true) },
+          { label: '금액 검산 (수량×단가·합계·세액)', onSelect: () => checkPageSums() },
         ],
       }
     }
@@ -1695,6 +1708,7 @@ export function TextEditor({
         { label: '표 모양으로 모두 복사 (엑셀)', onSelect: () => void copyTable(pageText(), false, '이 쪽 글자를 표 모양으로') },
         { label: '이 쪽을 엑셀 파일로 저장 (.xlsx)', onSelect: () => void saveExcel() },
         { label: '표 칸 바로잡기…', onSelect: () => setFixingTables(true) },
+          { label: '금액 검산 (수량×단가·합계·세액)', onSelect: () => checkPageSums() },
         ...fix,
         'separator',
         { label: '실행 취소', shortcut: 'Ctrl+Z', disabled: history.undo === 0, onSelect: () => undo() },
@@ -2767,6 +2781,26 @@ export function TextEditor({
         </p>
       )}
 
+      {sums && (
+        <div className={`te-notice te-sumcheck-note${sums.problems.length > 0 ? ' wrong' : ''}`} role="status">
+          <span>
+            {sums.problems.length === 0
+              ? sums.summary
+              : `금액 검산: ${sums.problems.length}곳이 맞지 않습니다. 빨간 칸을 확인하세요.`}
+          </span>
+          {sums.problems.length > 0 && (
+            <ul>
+              {sums.problems.map((p, i) => (
+                <li key={i}>{p.message}</li>
+              ))}
+            </ul>
+          )}
+          <button type="button" onClick={() => setSumResult(null)} aria-label="검산 결과 닫기">
+            ✕
+          </button>
+        </div>
+      )}
+
       <main className="te-main" ref={mainRef}>
         {!data && !error && (
           <p className="te-notice">
@@ -2839,6 +2873,23 @@ export function TextEditor({
                 setLoadedRevision(Number.isFinite(loaded) ? loaded : revision)
               }}
             />
+            {sums && scale > 0 && (
+              <div className="te-sumcheck" aria-hidden="true">
+                {sums.problems.map((p, i) => (
+                  <div
+                    key={i}
+                    className="te-sumcheck-cell"
+                    title={p.message}
+                    style={{
+                      left: p.cell.left * scale,
+                      top: p.cell.top * scale,
+                      width: (p.cell.right - p.cell.left) * scale,
+                      height: (p.cell.bottom - p.cell.top) * scale,
+                    }}
+                  />
+                ))}
+              </div>
+            )}
             {fixingTables && scale > 0 && (
               <TableFixLayer
                 found={notCovered(

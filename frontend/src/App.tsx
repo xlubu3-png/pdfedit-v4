@@ -25,7 +25,7 @@ import { redactionMessage } from './redaction'
 import { exportFileName } from './exportName'
 import { keptPermissions } from './lock'
 import { LICENSE_LINKS } from './licenses'
-import { pagesToXlsx, workbookName } from './excelExport'
+import { pagesToWorkbook, pagesToXlsx, workbookName } from './excelExport'
 import { DEFAULT_IMAGE_CHOICE, imageExportFileName, imageExportStem } from './imageExport'
 import type { ImageChoice } from './imageExport'
 import { ocrMessage, recognizeAll, straightenedNote } from './ocr'
@@ -737,8 +737,13 @@ function App() {
       const base = sources.size === 1 ? [...sources][0] : '합친 문서'
       const one = chosen.length === 1 && pages.length > 1 ? pages.findIndex((p) => p.key === chosen[0].key) + 1 : undefined
       const name = workbookName(base, one)
-      downloadBlob(await pagesToXlsx(chosen, pages), name)
-      setNotice(`${name}로 저장했습니다 (${chosen.length === 1 ? '1쪽' : `${chosen.length}쪽, 쪽마다 시트 한 장`}).`)
+      const { blob, joined } = await pagesToWorkbook(chosen, pages)
+      downloadBlob(blob, name)
+      setNotice(
+        `${name}로 저장했습니다 (${chosen.length === 1 ? '1쪽' : `${chosen.length}쪽, 쪽마다 시트 한 장`}` +
+          (joined > 0 ? `, 여러 쪽에 걸친 표 ${joined}개는 맨 앞 '이어진 표' 시트에 한데 모음` : '') +
+          ').',
+      )
     } catch (e) {
       setError(errorText(e, '엑셀 파일로 저장하지 못했습니다'))
     } finally {

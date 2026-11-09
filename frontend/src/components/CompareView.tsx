@@ -3,6 +3,11 @@ import { compareDocuments, compareLook, originalUrl } from '../api'
 import { areaStyle, changedPages, documentsIn, pairCount } from '../compare'
 import type { CompareResult, PageItem, PageSize, TextChange, VisualResult } from '../types'
 import { errorText } from '../errors'
+import { downloadBlob } from '../download'
+import { pageTables, workbookName } from '../excelExport'
+import { compareTables } from '../tableDiff'
+import type { TableChange } from '../tableDiff'
+import { sheetsToXlsx } from '../xlsx'
 
 interface CompareViewProps {
   pages: PageItem[]
@@ -26,6 +31,42 @@ export function CompareView({ pages, onClose }: CompareViewProps) {
   const [index, setIndex] = useState(0)
   const [look, setLook] = useState(false)
   const [visual, setVisual] = useState<Map<number, VisualResult>>(new Map())
+  /** 표 비교: what changed in the documents' item tables (a quote's items, values and totals). */
+  const [tableResult, setTableResult] = useState<{ changes: TableChange[]; compared: boolean } | null>(null)
+
+  const nameOf = (id: string) => documents.find((d) => d.documentId === id)?.fileName ?? ''
+
+  async function runTables() {
+    setBusy(true)
+    setError(null)
+    try {
+      const tablesOf = async (id: string) => {
+        const all = []
+        for (const page of pages.filter((p) => p.documentId === id)) all.push(...(await pageTables(page)))
+        return all
+      }
+      setTableResult(compareTables(await tablesOf(a), await tablesOf(b)))
+    } catch (e) {
+      setError(errorText(e, '표를 비교하지 못했습니다'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** The table changes as a workbook: 구분 · 품목 · 항목 · 이전 · 이후. */
+  function saveTableChanges(changes: TableChange[]) {
+    const word = { changed: '바뀜', added: '추가', removed: '빠짐' }
+    const rows = [['구분', '품목', '항목', `이전 (${nameOf(a)})`, `이후 (${nameOf(b)})`], ...changes.map((c) => [word[c.kind], c.item, c.column, c.before, c.after])]
+    const all = { top: true, right: true, bottom: true, left: true }
+    const sheet = {
+      widths: [40, 140, 70, 150, 150],
+      heights: rows.map(() => 18),
+      cells: rows.flatMap((row, r) =>
+        row.map((text, c) => ({ row: r, col: c, rowSpan: 1, colSpan: 1, lines: [text], borders: all, align: 'left' as const, size: 10 })),
+      ),
+    }
+    downloadBlob(sheetsToXlsx([{ name: '표 비교', sheet }]), workbookName(`${nameOf(a).replace(/\.pdf$/i, '')}_표비교`))
+  }
 
   async function run() {
     setBusy(true)
@@ -134,7 +175,62 @@ export function CompareView({ pages, onClose }: CompareViewProps) {
         </div>
       )}
 
-      {!result && (
+      {tableResult && !result && (
+        <main className="te-main">
+          <div className="cmp-tables" role="region" aria-label="표 비교 결과">
+            <p>
+              <b>표 비교</b>: {nameOf(a)} → {nameOf(b)}
+            </p>
+            {!tableResult.compared ? (
+              <p>비교할 표를 찾지 못했습니다 (품명·품목·항목 같은 제목이 있는 표만 비교합니다).</p>
+            ) : tableResult.changes.length === 0 ? (
+              <p>표의 품목과 값이 모두 같습니다.</p>
+            ) : (
+              <>
+                <p>
+                  바뀜 {tableResult.changes.filter((c) => c.kind === 'changed').length} · 추가{' '}
+                  {tableResult.changes.filter((c) => c.kind === 'added').length} · 빠짐{' '}
+                  {tableResult.changes.filter((c) => c.kind === 'removed').length}
+                </p>
+                <table className="cmp-table">
+                  <thead>
+                    <tr>
+                      <th>구분</th>
+                      <th>품목</th>
+                      <th>항목</th>
+                      <th>이전</th>
+                      <th>이후</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tableResult.changes.map((c, i) => (
+                      <tr key={i} className={`cmp-${c.kind}`}>
+                        <td>{{ changed: '바뀜', added: '추가', removed: '빠짐' }[c.kind]}</td>
+                        <td>{c.item}</td>
+                        <td>{c.column}</td>
+                        <td>{c.before}</td>
+                        <td>{c.after}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+            <div className="find-actions">
+              <button type="button" onClick={() => setTableResult(null)}>
+                다른 문서 고르기
+              </button>
+              {tableResult.changes.length > 0 && (
+                <button type="button" className="primary" onClick={() => saveTableChanges(tableResult.changes)}>
+                  엑셀로 저장
+                </button>
+              )}
+            </div>
+          </div>
+        </main>
+      )}
+
+      {!result && !tableResult && (
         <main className="te-main">
           <div className="cmp-pick">
             {documents.length < 2 ? (
@@ -175,6 +271,14 @@ export function CompareView({ pages, onClose }: CompareViewProps) {
                 </label>
                 <button type="button" className="primary" onClick={() => void run()} disabled={busy || !a || !b || a === b}>
                   {busy ? '비교하는 중…' : '비교하기'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void runTables()}
+                  disabled={busy || !a || !b || a === b}
+                  title="두 문서의 표(견적서 품목 등)를 품목 이름으로 맞춰, 바뀐 단가·수량·금액과 추가·빠진 품목을 보여 줍니다"
+                >
+                  표 비교하기
                 </button>
                 {a === b && <p className="find-message error">서로 다른 두 문서를 고르세요.</p>}
                 <p className="find-note">

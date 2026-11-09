@@ -13,7 +13,7 @@ test('two versions of a document are compared and the changed words are marked o
   const view = page.getByRole('dialog', { name: '문서 비교' })
   await view.getByLabel(/이전 판/).selectOption({ label: 'old.pdf' })
   await view.getByLabel(/새 판/).selectOption({ label: 'new.pdf' })
-  await view.getByRole('button', { name: '비교하기' }).click()
+  await view.getByRole('button', { name: '비교하기', exact: true }).click()
 
   // Both pages of each version changed the same way: 100 -> 120 and a new clause.
   await expect(view.locator('.cmp-summary')).toHaveText('바뀐 쪽 2 · 삭제 2어절 · 추가 6어절')

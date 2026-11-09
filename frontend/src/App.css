@@ -2513,3 +2513,37 @@ kbd {
 .te-layer.stamping {
   cursor: crosshair;
 }
+
+/* 표 비교 */
+.cmp-tables {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 16px;
+  background: #fff;
+  border-radius: 8px;
+}
+
+.cmp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.cmp-table th,
+.cmp-table td {
+  border: 1px solid #e5e7eb;
+  padding: 4px 8px;
+  text-align: left;
+}
+
+.cmp-table tr.cmp-changed td:nth-child(5) {
+  background: #fef3c7;
+}
+
+.cmp-table tr.cmp-added td {
+  background: #dcfce7;
+}
+
+.cmp-table tr.cmp-removed td {
+  background: #fee2e2;
+}

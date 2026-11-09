@@ -34,6 +34,11 @@ export function workbookName(sourceFileName: string, page?: number): string {
  * A page's sheet from what the server holds: its text as edited, the text recognized on a scan and the boxes put
  * on it, and the lines of its tables.
  */
+/** A page's tables, their text in their cells (as Excel gets them), top to bottom. */
+export async function pageTables(page: PageItem): Promise<Table[]> {
+  return (await pageSheet(page)).tables
+}
+
 async function pageSheet(page: PageItem): Promise<{ sheet: Sheet; tables: Table[] }> {
   const [data, rulings, ocr, grids] = await Promise.all([
     fetchPageText(page.documentId, page.pageIndex),

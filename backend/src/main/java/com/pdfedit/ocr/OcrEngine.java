@@ -32,6 +32,14 @@ public final class OcrEngine implements AutoCloseable {
     private static final int DET_MIN_SIDE = 736;
     /** Bigger pictures are reduced first: more pixels than this cost time and add nothing at 200-300 dpi. */
     private static final int MAX_SIDE = 4000;
+    /** A page is looked at again, larger, when at least this many found lines were too unsure to keep... */
+    static final int RETRY_DROPPED = 15;
+    /** ...and they were at least this share of all lines found. */
+    static final double RETRY_SHARE = 0.15;
+    /** How much larger the detector sees the picture the second time. */
+    static final double RETRY_BOOST = 5.0 / 3;
+    /** The detector is not given a picture longer than this, however unsure the first reading was. */
+    private static final int MAX_DET_SIDE = 6000;
     private static final int REC_HEIGHT = 48;
     private static final int REC_MIN_WIDTH = 320;
     private static final int REC_BATCH = 6;
@@ -115,7 +123,39 @@ public final class OcrEngine implements AutoCloseable {
         int height = image.getHeight();
         int[] rgb = image.getRGB(0, 0, width, height, null, 0, width);
 
-        List<float[]> boxes = joinColumns(detect(rgb, width, height), rgb, width);
+        Pass pass = readAt(image, rgb, 1);
+        // Many lines found but too unsure to keep (small print on a dense page, kordoc's low-confidence retry): the
+        // text is looked for again on the picture enlarged for the detector, and the reading keeping more wins.
+        if (lookAgain(pass.dropped(), pass.lines().size(), Math.max(width, height))) {
+            Pass larger = readAt(image, rgb, RETRY_BOOST);
+            if (larger.lines().size() > pass.lines().size()) {
+                pass = larger;
+            }
+        }
+        List<OcrLine> lines = new ArrayList<>(pass.lines().size());
+        for (OcrLine line : pass.lines()) {
+            float[] corners = line.corners().clone();
+            for (int c = 0; c < corners.length; c++) {
+                corners[c] /= (float) scale;
+            }
+            lines.add(new OcrLine(line.text(), line.score(), corners, line.centers(), line.orientation()));
+        }
+        return lines;
+    }
+
+    /** Whether a reading that kept {@code kept} lines and left out {@code dropped} is tried again, larger. */
+    static boolean lookAgain(int dropped, int kept, int longSide) {
+        return dropped >= RETRY_DROPPED && dropped >= RETRY_SHARE * (dropped + kept)
+                && longSide * RETRY_BOOST <= MAX_DET_SIDE;
+    }
+
+    /** The lines kept from one reading of the picture, and how many found lines were too unsure to keep. */
+    private record Pass(List<OcrLine> lines, int dropped) {}
+
+    /** One reading, the detector given the picture enlarged by {@code boost}; corners in the picture's pixels. */
+    private Pass readAt(BufferedImage image, int[] rgb, double boost) throws OrtException {
+        int width = image.getWidth();
+        List<float[]> boxes = joinColumns(detect(rgb, width, image.getHeight(), boost), rgb, width);
         List<int[]> crops = new ArrayList<>(boxes.size());
         List<int[]> sizes = new ArrayList<>(boxes.size());
         List<Way> ways = new ArrayList<>(boxes.size());
@@ -177,17 +217,15 @@ public final class OcrEngine implements AutoCloseable {
         rereadDecimals(image, boxes, reads);
 
         List<OcrLine> lines = new ArrayList<>();
+        int dropped = 0;
         for (int k = 0; k < boxes.size(); k++) {
             if (reads[k].text().isBlank() || reads[k].score() < MIN_SCORE) {
+                dropped++;
                 continue;
             }
-            float[] corners = boxes.get(k).clone();
-            for (int c = 0; c < corners.length; c++) {
-                corners[c] /= (float) scale;
-            }
-            lines.add(new OcrLine(reads[k].text(), reads[k].score(), corners, reads[k].centers(), reads[k].orientation()));
+            lines.add(new OcrLine(reads[k].text(), reads[k].score(), boxes.get(k).clone(), reads[k].centers(), reads[k].orientation()));
         }
-        return lines;
+        return new Pass(lines, dropped);
     }
 
     /** A number read on its own ("18.1", "1,250", "-3"), with nothing else on its line. */
@@ -299,7 +337,7 @@ public final class OcrEngine implements AutoCloseable {
         }
         int width = image.getWidth();
         int height = image.getHeight();
-        List<float[]> boxes = new ArrayList<>(detect(image.getRGB(0, 0, width, height, null, 0, width), width, height));
+        List<float[]> boxes = new ArrayList<>(detect(image.getRGB(0, 0, width, height, null, 0, width), width, height, 1));
         List<BufferedImage> lying = new ArrayList<>();
         List<BufferedImage> standing = new ArrayList<>();
         boxes.sort(Comparator.comparingDouble(b -> -Math.max(Math.hypot(b[2] - b[0], b[3] - b[1]),
@@ -685,8 +723,8 @@ public final class OcrEngine implements AutoCloseable {
         }
     }
 
-    private List<float[]> detect(int[] rgb, int width, int height) throws OrtException {
-        double ratio = Math.min(width, height) < DET_MIN_SIDE ? (double) DET_MIN_SIDE / Math.min(width, height) : 1;
+    private List<float[]> detect(int[] rgb, int width, int height, double boost) throws OrtException {
+        double ratio = boost * (Math.min(width, height) < DET_MIN_SIDE ? (double) DET_MIN_SIDE / Math.min(width, height) : 1);
         int dw = (int) (Math.rint((int) (width * ratio) / 32.0) * 32);
         int dh = (int) (Math.rint((int) (height * ratio) / 32.0) * 32);
         if (dw <= 0 || dh <= 0) {

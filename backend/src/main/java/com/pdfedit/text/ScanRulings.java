@@ -74,6 +74,12 @@ public final class ScanRulings {
     /** ... and goes on inward at least this far (points) from its edge. */
     private static final float FILL_DEPTH_PT = 4;
 
+    /** A shade lighter than this (0 - 255) is a fill when it is even round a pixel; darker is ink whatever it is. */
+    private static final int FILL_DARKEST = 140;
+    /** How far (pixels) round a pixel the shade must be the same, to this much (0 - 255), for it to be a fill. */
+    private static final int FLAT_REACH = 3;
+    private static final int FLAT = 12;
+
     private enum Kind { SOLID, DOTTED, FILL }
 
     private ScanRulings() {
@@ -134,6 +140,46 @@ public final class ScanRulings {
                 ink[y * w + x] = luma < INK && colour < COLOURED;
                 histogram[luma]++;
             }
+        }
+        // A grey shaded area (a header row) is not ink, however dark: the same grey all round a pixel is a fill, and
+        // the borders drawn across it, and its letters, stand out from it (kordoc's shaded header bands).
+        // The inside of a fill is the same grey on all four sides; its rim (beside a border drawn over it, at its
+        // edges) is what lies within reach of the inside in the same grey. A thin grey line is the same grey only
+        // along itself, so it stays ink.
+        boolean[] inside = new boolean[w * h];
+        for (int y = FLAT_REACH; y < h - FLAT_REACH; y++) {
+            for (int x = FLAT_REACH; x < w - FLAT_REACH; x++) {
+                int i = y * w + x;
+                int v = grey[i];
+                inside[i] = ink[i] && v >= FILL_DARKEST
+                        && Math.abs(grey[i - FLAT_REACH] - v) <= FLAT
+                        && Math.abs(grey[i + FLAT_REACH] - v) <= FLAT
+                        && Math.abs(grey[i - FLAT_REACH * w] - v) <= FLAT
+                        && Math.abs(grey[i + FLAT_REACH * w] - v) <= FLAT;
+            }
+        }
+        boolean[] fill = new boolean[w * h];
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int i = y * w + x;
+                int v = grey[i];
+                if (!ink[i] || v < FILL_DARKEST) {
+                    continue;
+                }
+                search:
+                for (int yy = Math.max(0, y - FLAT_REACH); yy <= Math.min(h - 1, y + FLAT_REACH); yy++) {
+                    for (int xx = Math.max(0, x - FLAT_REACH); xx <= Math.min(w - 1, x + FLAT_REACH); xx++) {
+                        int j = yy * w + xx;
+                        if (inside[j] && Math.abs(grey[j] - v) <= FLAT) {
+                            fill[i] = true;
+                            break search;
+                        }
+                    }
+                }
+            }
+        }
+        for (int i = 0; i < ink.length; i++) {
+            ink[i] &= !fill[i];
         }
         // The paper: the commonest light shade (white, or the cream of an old form).
         int paper = 255;

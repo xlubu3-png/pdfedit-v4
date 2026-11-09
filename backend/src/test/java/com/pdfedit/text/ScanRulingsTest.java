@@ -176,6 +176,45 @@ class ScanRulingsTest {
     }
 
     @Test
+    void theBordersDrawnInsideAGreyShadedHeaderRowAreKept() {
+        BufferedImage image = white(600, 400);
+        Graphics2D g = image.createGraphics();
+        // The header row shaded mid grey, darker than ink is taken to be, its cells parted by drawn borders.
+        g.setColor(new Color(185, 185, 185));
+        g.fillRect(50, 50, 500, 50);
+        table(g);
+        g.drawLine(400, 50, 400, 100);
+        g.dispose();
+
+        RulingLines.Lines lines = ScanRulings.of(image, PPP);
+
+        assertThat(lines.vertical()).anySatisfy(v -> {
+            assertThat(Math.round(v.x() / PPP)).isBetween(399L, 401L);
+            assertThat(v.y1() / PPP).isLessThan(56.0);
+        });
+        assertThat(lines.vertical()).anySatisfy(v -> {
+            assertThat(Math.round(v.x() / PPP)).isBetween(249L, 251L);
+            assertThat(v.y1() / PPP).isLessThan(56.0);
+        });
+        assertThat(ys(lines)).contains(50L, 100L, 150L);
+    }
+
+    @Test
+    void aShortBorderPartingOneRowOnlyIsKept() {
+        BufferedImage image = white(600, 400);
+        Graphics2D g = image.createGraphics();
+        table(g);
+        // A row 17 points high, parted in two by a border of its own height only.
+        g.drawLine(50, 178, 550, 178);
+        g.drawLine(50, 150, 50, 178);
+        g.drawLine(550, 150, 550, 178);
+        g.drawLine(330, 150, 330, 178);
+        g.dispose();
+
+        assertThat(xs(ScanRulings.of(image, PPP))).anySatisfy(x -> assertThat(x).isBetween(329L, 331L));
+    }
+
+    @Test
     void aPageOfOnlyTextHasNoBorders() {
         BufferedImage image = white(400, 200);
         Graphics2D g = image.createGraphics();

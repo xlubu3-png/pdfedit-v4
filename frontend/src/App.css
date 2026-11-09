@@ -2547,3 +2547,12 @@ kbd {
 .cmp-table tr.cmp-removed td {
   background: #fee2e2;
 }
+
+.te-fixbar-scan {
+  flex: 0 0 auto;
+  max-width: 100%;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background-repeat: no-repeat;
+  background-color: #fff;
+}

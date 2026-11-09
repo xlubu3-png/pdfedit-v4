@@ -511,6 +511,18 @@ export function TextEditor({
   const [sumResult, setSumResult] = useState<{ page: string; summary: string; problems: SumProblem[] } | null>(null)
   const sums = sumResult?.page === tablesPage ? sumResult : null
 
+  /** The recognized line whose middle is in the cell (points from the page's top-left); null when none is. */
+  function ocrLineIn(cell: { left: number; top: number; right: number; bottom: number }): number | null {
+    const current = dataRef.current
+    if (!current) return null
+    const i = ocrLines.findIndex((l) => {
+      const x = l.x - current.originX + l.width / 2
+      const y = current.pageHeight - (l.y - current.originY) - l.height / 2
+      return x >= cell.left && x <= cell.right && y >= cell.top && y <= cell.bottom
+    })
+    return i >= 0 ? i : null
+  }
+
   /** 금액 검산: the page's tables (found, or set out by hand) checked: 수량 × 단가, 합계, 세액, 총액. */
   function checkPageSums() {
     const blocks = layout(straighten(pageText(), usedTurn), usedTables, false)
@@ -2891,9 +2903,19 @@ export function TextEditor({
           </span>
           {sums.problems.length > 0 && (
             <ul>
-              {sums.problems.map((p, i) => (
-                <li key={i}>{p.message}</li>
-              ))}
+              {sums.problems.map((p, i) => {
+                const line = ocrLineIn(p.cell)
+                return (
+                  <li key={i}>
+                    {p.message}
+                    {line !== null && (
+                      <button type="button" className="link-button" onClick={() => startFixing(line)} title="이 칸의 인식 글자를 스캔과 견주어 고칩니다">
+                        인식 글자 고치기
+                      </button>
+                    )}
+                  </li>
+                )
+              })}
             </ul>
           )}
           <button type="button" onClick={() => setSumResult(null)} aria-label="검산 결과 닫기">
@@ -3142,6 +3164,19 @@ export function TextEditor({
           index={fixing}
           unsure={UNSURE}
           onSave={saveFix}
+          scan={
+            data
+              ? {
+                  url: previewUrl(documentId, pageIndex, revision, dpi),
+                  pageWidth: data.pageWidth,
+                  pageHeight: data.pageHeight,
+                  left: ocrLines[fixing].x - data.originX,
+                  top: data.pageHeight - (ocrLines[fixing].y + ocrLines[fixing].height - data.originY),
+                  width: ocrLines[fixing].width,
+                  height: ocrLines[fixing].height,
+                }
+              : undefined
+          }
           onGo={(i) => {
             setFixing(i)
             setOcrPicked(i)

@@ -493,3 +493,23 @@ test('the offer to recognize can be closed for the page', async ({ page }) => {
   await expect(ask).toContainText('글자 정보가 없습니다')
   await expect(ask.getByRole('button')).toHaveCount(0)
 })
+
+test('correcting a recognized line shows the piece of the scan it was read off beside it', async ({ page }) => {
+  await page.goto('/')
+  await page.locator('input[type=file]').setInputFiles({ name: 'scan.pdf', mimeType: 'application/pdf', buffer: await scan(page) })
+  await page.getByRole('button', { name: '나중에' }).click()
+  await page.locator('button[title="텍스트 편집"]').first().click()
+  await page.locator('.te-ocr-ask').getByRole('button', { name: '글자 인식' }).click()
+  const line = page.locator('.te-ocr-line[data-ocr="1"]')
+  await expect(line).toBeVisible({ timeout: 60_000 })
+  await line.click({ button: 'right' })
+  await page.getByRole('menuitem', { name: '인식 글자 고치기…' }).click()
+
+  const bar = page.getByRole('dialog', { name: '인식 글자 고치기' })
+  const piece = bar.getByRole('img', { name: '스캔 원본의 이 줄' })
+  await expect(piece).toBeVisible()
+  expect(await piece.evaluate((el) => getComputedStyle(el).backgroundImage)).toContain('/preview')
+  const box = (await piece.boundingBox())!
+  // The line, wider than tall, enlarged.
+  expect(box.width).toBeGreaterThan(box.height * 3)
+})

@@ -9,6 +9,11 @@ interface OcrFixBarProps {
   /** Lines read with less confidence than this are the ones to check. */
   unsure: number
   onSave: (index: number, text: string) => Promise<void>
+  /**
+   * The scan the line was read off, to show its piece beside the text: the page's picture and where the line is on
+   * it (points from the page's top-left).
+   */
+  scan?: { url: string; pageWidth: number; pageHeight: number; left: number; top: number; width: number; height: number }
   /** Go to another line (it is picked on the page). */
   onGo: (index: number) => void
   onClose: () => void
@@ -18,7 +23,7 @@ interface OcrFixBarProps {
  * Corrects what recognition read off a scanned line, the scan left as it is: the corrected text is what search,
  * copying and the export's invisible text say. Steps from one line read with little confidence (orange) to the next.
  */
-export function OcrFixBar({ lines, index, unsure, onSave, onGo, onClose }: OcrFixBarProps) {
+export function OcrFixBar({ lines, index, unsure, onSave, scan, onGo, onClose }: OcrFixBarProps) {
   const line = lines[index]
   const [text, setText] = useState(line?.text ?? '')
   const [saving, setSaving] = useState(false)
@@ -53,6 +58,7 @@ export function OcrFixBar({ lines, index, unsure, onSave, onGo, onClose }: OcrFi
   return (
     <div className="te-fixbar" role="dialog" aria-label="인식 글자 고치기">
       <b>인식 글자 고치기</b>
+      {scan && <ScanPiece {...scan} />}
       <span className="te-fixbar-where">
         {index + 1}번째 줄{line.score < unsure ? ` · 확신도 ${Math.round(line.score * 100)}%` : ''} · 확인할 줄 {left}개
       </span>
@@ -86,5 +92,27 @@ export function OcrFixBar({ lines, index, unsure, onSave, onGo, onClose }: OcrFi
       </button>
       <span className="te-fixbar-note">스캔 그림은 그대로 두고, 검색·복사·내보낸 PDF의 글자만 바뀝니다.</span>
     </div>
+  )
+}
+
+/** The piece of the scan a line was read off, enlarged so its letters can be checked against what was read. */
+function ScanPiece({ url, pageWidth, pageHeight, left, top, width, height }: NonNullable<OcrFixBarProps['scan']>) {
+  // A little of the paper round the line, and at most 560 pixels wide, at most three times as big as at 100%.
+  const pad = Math.max(2, height * 0.25)
+  const shownWidth = width + pad * 2
+  const k = Math.min(3 * (96 / 72), 560 / shownWidth)
+  return (
+    <div
+      className="te-fixbar-scan"
+      role="img"
+      aria-label="스캔 원본의 이 줄"
+      style={{
+        width: shownWidth * k,
+        height: (height + pad * 2) * k,
+        backgroundImage: `url("${url}")`,
+        backgroundSize: `${pageWidth * k}px ${pageHeight * k}px`,
+        backgroundPosition: `${-(left - pad) * k}px ${-(top - pad) * k}px`,
+      }}
+    />
   )
 }

@@ -58,6 +58,14 @@ class TextEditControllerTest {
                 .andExpect(jsonPath("$[0].xs[1]").value(150.0))
                 .andExpect(jsonPath("$[0].ys.length()").value(4));
 
+        mvc.perform(put(base() + "/table-grids").contentType(MediaType.APPLICATION_JSON)
+                .content("[{\"xs\":[50,150,300],\"ys\":[100,120,140],\"merges\":[{\"x0\":50,\"y0\":100,\"x1\":300,\"y1\":120}]}]"))
+                .andExpect(status().isNoContent());
+        mvc.perform(get(base() + "/table-grids")).andExpect(jsonPath("$[0].merges[0].x1").value(300.0));
+        mvc.perform(put(base() + "/table-grids").contentType(MediaType.APPLICATION_JSON)
+                .content("[{\"xs\":[50,150],\"ys\":[1,2],\"merges\":[{\"x0\":5,\"y0\":1,\"x1\":2,\"y1\":2}]}]"))
+                .andExpect(status().isBadRequest());
+
         mvc.perform(put(base() + "/table-grids").contentType(MediaType.APPLICATION_JSON).content("[]"))
                 .andExpect(status().isNoContent());
         mvc.perform(get(base() + "/table-grids")).andExpect(content().json("[]"));

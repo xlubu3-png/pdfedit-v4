@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { splitArea } from '../borderless'
-import { gridOf } from '../tableGrid'
-import type { Grid, Table } from '../tableGrid'
+import { gridOf, mergeSpan } from '../tableGrid'
+import type { Grid, Merge, Table } from '../tableGrid'
 import type { PlacedText } from '../textSelect'
 
 /** A table being set out: its borders, and whether the user made or changed it (else it is the page's own). */
@@ -11,7 +11,7 @@ interface Item {
   manual: boolean
 }
 
-type Mode = 'move' | 'col' | 'row' | 'draw'
+type Mode = 'move' | 'col' | 'row' | 'draw' | 'merge'
 
 /** Borders closer than this (points) would make a cell too thin to hold anything. */
 const MIN_CELL = 3
@@ -40,11 +40,13 @@ interface TableFixLayerProps {
 export function TableFixLayer({ found, grids, texts, scale, onDone, onCancel }: TableFixLayerProps) {
   const [items, setItems] = useState<Item[]>(() => [
     ...found.filter((t) => !grids.some((g) => same(g, gridOf(t)))).map((t) => ({ grid: gridOf(t), manual: false })),
-    ...grids.map((g) => ({ grid: { xs: [...g.xs], ys: [...g.ys] }, manual: true })),
+    ...grids.map((g) => ({ grid: { xs: [...g.xs], ys: [...g.ys], merges: g.merges ? [...g.merges] : undefined }, manual: true })),
   ])
   const [mode, setMode] = useState<Mode>(items.length === 0 ? 'draw' : 'move')
   const [picked, setPicked] = useState<number | null>(null)
   const [drawing, setDrawing] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
+  /** 칸 합치기: the cells being dragged over, in one table. */
+  const [merging, setMerging] = useState<{ item: number; x0: number; y0: number; x1: number; y1: number } | null>(null)
   const [busy, setBusy] = useState(false)
   const drag = useRef<{ item: number; axis: 'xs' | 'ys'; index: number } | null>(null)
   const layer = useRef<HTMLDivElement>(null)
@@ -104,6 +106,11 @@ export function TableFixLayer({ found, grids, texts, scale, onDone, onCancel }: 
     setPicked(hit >= 0 ? hit : null)
     if (hit < 0) return
     const grid = items[hit].grid
+    if (mode === 'merge') {
+      setMerging({ item: hit, x0: p.x, y0: p.y, x1: p.x, y1: p.y })
+      layer.current?.setPointerCapture(e.pointerId)
+      return
+    }
     if (mode === 'col') {
       const xs = [...grid.xs, p.x].sort((a, b) => a - b)
       if (xs.every((x, i) => i === 0 || x - xs[i - 1] >= MIN_CELL)) change(hit, { ...grid, xs })
@@ -119,6 +126,10 @@ export function TableFixLayer({ found, grids, texts, scale, onDone, onCancel }: 
       setDrawing({ ...drawing, x1: p.x, y1: p.y })
       return
     }
+    if (merging) {
+      setMerging({ ...merging, x1: p.x, y1: p.y })
+      return
+    }
     const d = drag.current
     if (!d) return
     const grid = items[d.item].grid
@@ -131,6 +142,11 @@ export function TableFixLayer({ found, grids, texts, scale, onDone, onCancel }: 
 
   function onPointerUp() {
     drag.current = null
+    if (merging) {
+      finishMerge(merging)
+      setMerging(null)
+      return
+    }
     if (!drawing) return
     const left = Math.min(drawing.x0, drawing.x1)
     const right = Math.max(drawing.x0, drawing.x1)
@@ -141,6 +157,35 @@ export function TableFixLayer({ found, grids, texts, scale, onDone, onCancel }: 
     setItems((prev) => [...prev, { grid: splitArea(texts, left, top, right, bottom), manual: true }])
     setPicked(items.length)
     setMode('move')
+  }
+
+  /**
+   * The cells dragged over merged into one (the merges they overlap give way); a click on a merged cell parts it
+   * again into its cells.
+   */
+  function finishMerge(m: { item: number; x0: number; y0: number; x1: number; y1: number }) {
+    const grid = items[m.item].grid
+    const cellIndex = (borders: number[], v: number) => {
+      let i = 0
+      while (i + 1 < borders.length - 1 && borders[i + 1] <= v) i++
+      return i
+    }
+    const c0 = cellIndex(grid.xs, Math.min(m.x0, m.x1))
+    const c1 = cellIndex(grid.xs, Math.max(m.x0, m.x1)) + 1
+    const r0 = cellIndex(grid.ys, Math.min(m.y0, m.y1))
+    const r1 = cellIndex(grid.ys, Math.max(m.y0, m.y1)) + 1
+    const merges = grid.merges ?? []
+    const overlaps = (x: Merge) => {
+      const span = mergeSpan(grid, x)
+      return span !== null && span.c0 < c1 && span.c1 > c0 && span.r0 < r1 && span.r1 > r0
+    }
+    if ((c1 - c0) * (r1 - r0) < 2) {
+      // One cell: a merged one is parted again.
+      if (merges.some(overlaps)) change(m.item, { ...grid, merges: merges.filter((x) => !overlaps(x)) })
+      return
+    }
+    const merged: Merge = { x0: grid.xs[c0], y0: grid.ys[r0], x1: grid.xs[c1], y1: grid.ys[r1] }
+    change(m.item, { ...grid, merges: [...merges.filter((x) => !overlaps(x)), merged] })
   }
 
   // Delete takes out the picked table (one set out by hand; the page's own are put right, not taken out).
@@ -172,15 +217,16 @@ export function TableFixLayer({ found, grids, texts, scale, onDone, onCancel }: 
     col: '표 안을 클릭한 곳에 세로선(칸 경계)을 넣습니다.',
     row: '표 안을 클릭한 곳에 가로선(줄 경계)을 넣습니다.',
     draw: '표가 될 곳을 끌어 그리세요. 안의 글자 줄과 칸에 맞춰 나눠 드립니다.',
+    merge: '합칠 칸들을 끌어 고르면 한 칸이 됩니다. 합친 칸을 누르면 다시 나뉩니다.',
   }[mode]
 
   return (
     <>
       <div className="te-tablefix-bar" role="toolbar" aria-label="표 칸 바로잡기">
         <b>표 칸 바로잡기</b>
-        {(['move', 'col', 'row', 'draw'] as const).map((m) => (
+        {(['move', 'col', 'row', 'merge', 'draw'] as const).map((m) => (
           <button key={m} type="button" className={mode === m ? 'active' : ''} aria-pressed={mode === m} onClick={() => setMode(m)}>
-            {{ move: '선 옮기기', col: '세로선 넣기', row: '가로선 넣기', draw: '새 표 그리기' }[m]}
+            {{ move: '선 옮기기', col: '세로선 넣기', row: '가로선 넣기', merge: '칸 합치기·나누기', draw: '새 표 그리기' }[m]}
           </button>
         ))}
         <span className="te-tablefix-hint">{hint}</span>
@@ -220,6 +266,22 @@ export function TableFixLayer({ found, grids, texts, scale, onDone, onCancel }: 
               style={{ left, top, width, height }}
               data-table={i}
             >
+              {(grid.merges ?? []).map((m, k) => {
+                const span = mergeSpan(grid, m)
+                if (!span) return null
+                return (
+                  <div
+                    key={`m${k}`}
+                    className="te-tablefix-merge"
+                    style={{
+                      left: (grid.xs[span.c0] - grid.xs[0]) * scale,
+                      top: (grid.ys[span.r0] - grid.ys[0]) * scale,
+                      width: (grid.xs[span.c1] - grid.xs[span.c0]) * scale,
+                      height: (grid.ys[span.r1] - grid.ys[span.r0]) * scale,
+                    }}
+                  />
+                )
+              })}
               {grid.xs.map((x, k) => (
                 <div
                   key={`x${k}`}
@@ -243,6 +305,17 @@ export function TableFixLayer({ found, grids, texts, scale, onDone, onCancel }: 
             </div>
           )
         })}
+        {merging && (
+          <div
+            className="te-tablefix-drawing merging"
+            style={{
+              left: Math.min(merging.x0, merging.x1) * scale,
+              top: Math.min(merging.y0, merging.y1) * scale,
+              width: Math.abs(merging.x1 - merging.x0) * scale,
+              height: Math.abs(merging.y1 - merging.y0) * scale,
+            }}
+          />
+        )}
         {drawing && (
           <div
             className="te-tablefix-drawing"
@@ -261,5 +334,5 @@ export function TableFixLayer({ found, grids, texts, scale, onDone, onCancel }: 
 
 function same(a: Grid, b: Grid): boolean {
   const close = (p: number[], q: number[]) => p.length === q.length && p.every((v, i) => Math.abs(v - q[i]) < 0.5)
-  return close(a.xs, b.xs) && close(a.ys, b.ys)
+  return close(a.xs, b.xs) && close(a.ys, b.ys) && (a.merges?.length ?? 0) === (b.merges?.length ?? 0)
 }

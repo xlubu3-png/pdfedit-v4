@@ -123,3 +123,43 @@ test('a border is put in, moved and taken out, and the page goes back to its own
   const grids = await (await page.request.get(`/api/v1/pdf/documents/${documentId}/pages/0/table-grids`)).json()
   expect(grids).toEqual([])
 })
+
+test('cells dragged over are merged into one, kept, merged in Excel, and parted again with a click', async ({ page }) => {
+  const documentId = await openForm(page)
+  await page.locator('.te-layer').click({ button: 'right', position: { x: 5, y: 5 } })
+  await page.getByRole('menuitem', { name: '표 칸 바로잡기…' }).click()
+  const bar = page.getByRole('toolbar', { name: '표 칸 바로잡기' })
+  const from = await at(page, 60, 110)
+  const to = await at(page, 460, 215)
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(to.x, to.y, { steps: 6 })
+  await page.mouse.up()
+  const table = page.locator('.te-tablefix-table')
+  await expect(table.locator('.te-tablefix-line.horizontal')).toHaveCount(3)
+
+  // The first row, from its first cell to its last.
+  const tableBox = (await table.boundingBox())!
+  const second = (await table.locator('.te-tablefix-line.horizontal').nth(1).boundingBox())!
+  const rowY = (tableBox.y + second.y) / 2
+  await bar.getByRole('button', { name: '칸 합치기·나누기' }).click()
+  await page.mouse.move(tableBox.x + 10, rowY)
+  await page.mouse.down()
+  await page.mouse.move(tableBox.x + tableBox.width - 10, rowY, { steps: 4 })
+  await page.mouse.up()
+  await expect(table.locator('.te-tablefix-merge')).toHaveCount(1)
+
+  await bar.getByRole('button', { name: '완료' }).click()
+  await expect(page.locator('.te-status')).toContainText('바로잡은 표 1개를 저장했습니다')
+  const grids = await (await page.request.get(`/api/v1/pdf/documents/${documentId}/pages/0/table-grids`)).json()
+  expect(grids[0].merges).toHaveLength(1)
+  expect(await excelOf(page)).toContain('<mergeCell ')
+
+  // A click on the merged cell parts it again.
+  await page.locator('.te-layer').click({ button: 'right', position: { x: 5, y: 5 } })
+  await page.getByRole('menuitem', { name: '표 칸 바로잡기…' }).click()
+  await bar.getByRole('button', { name: '칸 합치기·나누기' }).click()
+  await expect(table.locator('.te-tablefix-merge')).toHaveCount(1)
+  await page.mouse.click(tableBox.x + 20, rowY)
+  await expect(table.locator('.te-tablefix-merge')).toHaveCount(0)
+})

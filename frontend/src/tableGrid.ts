@@ -212,14 +212,60 @@ function buildTable(xs: number[], ys: number[], h: Rulings['horizontal'], v: Rul
 export interface Grid {
   xs: number[]
   ys: number[]
+  /** Cells merged into one (칸 합치기): the areas they cover, points. Kept by place, so moving a border keeps them. */
+  merges?: Merge[]
 }
 
-/** The table a grid sets out: every cell on its own, every border drawn. */
+export interface Merge {
+  x0: number
+  y0: number
+  x1: number
+  y1: number
+}
+
+/** The index of the border nearest to v. */
+const nearest = (borders: number[], v: number) =>
+  borders.reduce((best, b, i) => (Math.abs(b - v) < Math.abs(borders[best] - v) ? i : best), 0)
+
+/** A merge's cells: the rows and columns between the borders nearest its edges; null when it covers one cell or none. */
+export function mergeSpan(grid: Grid, m: Merge): { r0: number; r1: number; c0: number; c1: number } | null {
+  const c0 = nearest(grid.xs, m.x0)
+  const c1 = nearest(grid.xs, m.x1)
+  const r0 = nearest(grid.ys, m.y0)
+  const r1 = nearest(grid.ys, m.y1)
+  if (c1 <= c0 || r1 <= r0 || (c1 - c0) * (r1 - r0) < 2) return null
+  return { r0, r1, c0, c1 }
+}
+
+/** The table a grid sets out: every cell on its own unless merged, every border drawn. */
 export function gridTable(grid: Grid): Table {
   const all = { top: true, right: true, bottom: true, left: true }
   const cells: TableCell[] = []
+  const taken = new Set<string>()
+  for (const m of grid.merges ?? []) {
+    const span = mergeSpan(grid, m)
+    if (!span) continue
+    const keys: string[] = []
+    for (let r = span.r0; r < span.r1; r++) for (let c = span.c0; c < span.c1; c++) keys.push(`${r}:${c}`)
+    // An area over cells another merge took already is left out.
+    if (keys.some((k) => taken.has(k))) continue
+    keys.forEach((k) => taken.add(k))
+    cells.push({
+      row: span.r0,
+      col: span.c0,
+      rowSpan: span.r1 - span.r0,
+      colSpan: span.c1 - span.c0,
+      left: grid.xs[span.c0],
+      top: grid.ys[span.r0],
+      right: grid.xs[span.c1],
+      bottom: grid.ys[span.r1],
+      borders: all,
+      texts: [],
+    })
+  }
   for (let r = 0; r < grid.ys.length - 1; r++) {
     for (let c = 0; c < grid.xs.length - 1; c++) {
+      if (taken.has(`${r}:${c}`)) continue
       cells.push({
         row: r,
         col: c,
@@ -234,12 +280,16 @@ export function gridTable(grid: Grid): Table {
       })
     }
   }
+  cells.sort((a, b) => a.row - b.row || a.col - b.col)
   return { xs: [...grid.xs], ys: [...grid.ys], cells }
 }
 
-/** A table's grid (its borders), to be set out by hand from it. */
+/** A table's grid (its borders and merged cells), to be set out by hand from it. */
 export function gridOf(table: Table): Grid {
-  return { xs: [...table.xs], ys: [...table.ys] }
+  const merges = table.cells
+    .filter((c) => c.rowSpan > 1 || c.colSpan > 1)
+    .map((c) => ({ x0: c.left, y0: c.top, x1: c.right, y1: c.bottom }))
+  return { xs: [...table.xs], ys: [...table.ys], ...(merges.length > 0 ? { merges } : {}) }
 }
 
 /**

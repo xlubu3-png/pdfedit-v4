@@ -8,14 +8,28 @@ import java.util.List;
  * its edges. Text in it goes into its cells when the page is saved to Excel or copied as a table, instead of into
  * the tables found on the page by themselves.
  */
-public record TableGrid(List<Double> xs, List<Double> ys) {
+public record TableGrid(List<Double> xs, List<Double> ys, List<Merge> merges) {
 
-    /** Most borders a table may have across or down. */
+    /** Most borders a table may have across or down, and most merged cells. */
     public static final int MAX_LINES = 200;
+    public static final int MAX_MERGES = 500;
+
+    /** Cells merged into one (합치기): the area they cover, points from the page's top-left. */
+    public record Merge(double x0, double y0, double x1, double y1) {
+        boolean valid() {
+            return Double.isFinite(x0) && Double.isFinite(y0) && Double.isFinite(x1) && Double.isFinite(y1)
+                    && x1 > x0 && y1 > y0;
+        }
+    }
+
+    public TableGrid(List<Double> xs, List<Double> ys) {
+        this(xs, ys, null);
+    }
 
     /** Whether the borders make a table: 2 to {@value #MAX_LINES} each way, in order, finite, on the page. */
     public boolean valid() {
-        return ordered(xs) && ordered(ys);
+        return ordered(xs) && ordered(ys)
+                && (merges == null || merges.size() <= MAX_MERGES && merges.stream().allMatch(m -> m != null && m.valid()));
     }
 
     private static boolean ordered(List<Double> values) {

@@ -2556,3 +2556,26 @@ kbd {
   background-repeat: no-repeat;
   background-color: #fff;
 }
+
+/* A merged cell: it covers the borders inside it. */
+.te-tablefix-merge {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  border: 2px solid #7c3aed;
+  background: rgba(245, 243, 255, 0.85);
+  pointer-events: none;
+}
+
+.te-tablefix-drawing.merging {
+  border-color: #7c3aed;
+  background: rgba(124, 58, 237, 0.1);
+}
+
+.te-tablefix.mode-merge {
+  cursor: cell;
+}
+
+.te-tablefix.mode-merge .te-tablefix-line {
+  pointer-events: none;
+}

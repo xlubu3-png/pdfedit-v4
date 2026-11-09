@@ -982,7 +982,7 @@ function App() {
     <div className="app">
       <header className="app-header">
         <h1>{APP_NAME}</h1>
-        <p className="subtitle">PDF · 한글(HWP/HWPX) 편집 · 페이지 정리와 합치기 · 문서 비교 · 개인정보 가리기</p>
+        <p className="subtitle">PDF · 한글(HWP/HWPX) 편집 · Office 문서 열기 · 페이지 정리와 합치기 · 문서 비교 · 개인정보 가리기</p>
         <p className="app-meta">
           {info
             ? `v${info.version} · 로컬 글꼴 ${info.installedFonts.toLocaleString('ko-KR')}개 읽음`

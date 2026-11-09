@@ -41,8 +41,9 @@ export function UploadZone({ onFiles, busy }: UploadZoneProps) {
           e.target.value = ''
         }}
       />
-      <p>{busy ? '업로드 중…' : 'PDF 또는 한글(HWP·HWPX) 파일을 끌어다 놓거나 클릭해서 선택하세요'}</p>
+      <p>{busy ? '업로드 중…' : 'PDF, 한글(HWP·HWPX), Word·Excel·PowerPoint 파일을 끌어다 놓거나 클릭해서 선택하세요'}</p>
       <p className="hint">PDF는 여러 개를 고르면 순서대로 이어붙이고, 한글 문서는 한글 편집 화면에서 열립니다</p>
+      <p className="hint">Word(docx)·Excel(xlsx)·PowerPoint(pptx)는 PC의 MS Office로 PDF로 바꿔 엽니다(원래 파일은 그대로)</p>
     </div>
   )
 }

@@ -234,7 +234,7 @@ function App() {
   async function handleFiles(files: File[]) {
     const { pdfs, hwps, skipped } = pickPdfs(files)
     const problems: string[] = []
-    if (skipped.length > 0) problems.push(`PDF·한글 문서가 아니라서 건너뛴 파일: ${skipped.join(', ')}`)
+    if (skipped.length > 0) problems.push(`열 수 있는 문서(PDF·한글·Word·Excel·PowerPoint)가 아니라서 건너뛴 파일: ${skipped.join(', ')}`)
     if (hwps.length > 0) {
       setHwpDoc({ file: hwps[0], key: `${hwps[0].name}-${hwps[0].lastModified}` })
       if (hwps.length > 1) {
@@ -248,6 +248,7 @@ function App() {
     setBusy(true)
     setError(null)
     const unlocked: string[] = []
+    const converted: string[] = []
     const scanned: { files: string[]; pages: PageItem[] } = { files: [], pages: [] }
     // One bad file must not keep the others from being opened.
     for (const file of pdfs) {
@@ -258,6 +259,7 @@ function App() {
           continue
         }
         if (uploaded.unlocked) unlocked.push(uploaded.fileName)
+        if (uploaded.convertedFrom) converted.push(uploaded.convertedFrom)
         const newPages: PageItem[] = Array.from({ length: uploaded.pageCount }, (_, i) => ({
           key: `${uploaded.documentId}-${i}`,
           documentId: uploaded.documentId,
@@ -280,6 +282,10 @@ function App() {
     setError(problems.length > 0 ? problems.join('\n') : null)
     if (unlocked.length > 0) {
       setNotice(`암호를 풀어서 열었습니다: ${unlocked.join(', ')}. 내보낼 때 암호를 다시 걸 수 있습니다.`)
+    } else if (converted.length > 0) {
+      setNotice(
+        `MS Office로 PDF로 바꿔 열었습니다: ${converted.join(', ')}. 고친 결과는 PDF로 저장됩니다 (원래 파일은 그대로).`,
+      )
     }
     setBusy(false)
     if (scanned.pages.length > 0 && settings?.autoOcr === true) {

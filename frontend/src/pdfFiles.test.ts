@@ -4,16 +4,18 @@ import { dragHasFiles, pickPdfs } from './pdfFiles'
 const file = (name: string, type: string) => new File(['x'], name, { type })
 
 describe('pickPdfs', () => {
-  it('takes PDFs by type or by name and reports the others', () => {
+  it('takes PDFs by type or by name, and Office documents to be printed to PDF, and reports the others', () => {
     const { pdfs, skipped } = pickPdfs([
       file('a.pdf', 'application/pdf'),
       file('b.PDF', ''),
       file('c.docx', 'application/msword'),
+      file('견적서.xlsx', ''),
+      file('발표.PPTX', ''),
       file('d.png', 'image/png'),
     ])
 
-    expect(pdfs.map((f) => f.name)).toEqual(['a.pdf', 'b.PDF'])
-    expect(skipped).toEqual(['c.docx', 'd.png'])
+    expect(pdfs.map((f) => f.name)).toEqual(['a.pdf', 'b.PDF', 'c.docx', '견적서.xlsx', '발표.PPTX'])
+    expect(skipped).toEqual(['d.png'])
   })
 
   it('sets Hangul documents apart for the HWP editor', () => {

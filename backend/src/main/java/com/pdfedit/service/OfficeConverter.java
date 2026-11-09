@@ -1,0 +1,164 @@
+package com.pdfedit.service;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+
+/**
+ * Word, Excel and PowerPoint documents opened as PDFs: the PC's own Microsoft Office prints them to PDF (through a
+ * small hidden PowerShell that drives Word, Excel or PowerPoint), so they look exactly as Office shows them - fonts,
+ * tables, shapes, charts, an Excel sheet's print area. Then they are PDFs like any other. Only on Windows with
+ * Office installed; one at a time (Office does not like being driven twice at once).
+ */
+@Service
+public class OfficeConverter {
+
+    private static final Logger log = LoggerFactory.getLogger(OfficeConverter.class);
+    /** A document Office has not printed in this long is not coming (a dialog it waits on, a broken file). */
+    private static final long TIMEOUT_SECONDS = 180;
+
+    /** Which Office program opens a file of this name; null when none does. */
+    public static String programFor(String fileName) {
+        String name = fileName == null ? "" : fileName.toLowerCase(Locale.ROOT);
+        if (name.matches(".*\\.(docx?|docm|rtf|odt)$")) {
+            return "word";
+        }
+        if (name.matches(".*\\.(xlsx?|xlsm|xlsb|csv|ods)$")) {
+            return "excel";
+        }
+        if (name.matches(".*\\.(pptx?|pptm|ppsx?|odp)$")) {
+            return "powerpoint";
+        }
+        return null;
+    }
+
+    /** Whether the file is one Office opens (and the app then shows as a PDF). */
+    public static boolean isOffice(String fileName) {
+        return programFor(fileName) != null;
+    }
+
+    /** The name the PDF made of it goes by: "견적서.xlsx" becomes "견적서.pdf". */
+    public static String pdfName(String fileName) {
+        String name = fileName == null || fileName.isBlank() ? "문서" : fileName;
+        return name.replaceFirst("\\.[^.]+$", "") + ".pdf";
+    }
+
+    /**
+     * The document as a PDF, printed by Office.
+     *
+     * @throws InvalidEditException when this PC cannot (no Windows, no Office) or Office could not open it
+     */
+    public synchronized byte[] toPdf(byte[] content, String fileName) throws IOException {
+        String program = programFor(fileName);
+        if (program == null) {
+            throw new InvalidEditException("Word·Excel·PowerPoint 문서가 아닙니다.");
+        }
+        if (!System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")) {
+            throw new InvalidEditException("Office 문서(Word·Excel·PowerPoint)는 MS Office가 설치된 Windows PC에서만 열 수 있습니다.");
+        }
+        Path dir = Files.createTempDirectory("wintech-office-");
+        try {
+            String extension = fileName.substring(fileName.lastIndexOf('.'));
+            Path source = dir.resolve("source" + extension.toLowerCase(Locale.ROOT));
+            Path target = dir.resolve("printed.pdf");
+            Path script = dir.resolve("print.ps1");
+            Files.write(source, content);
+            // UTF-8 with a byte order mark: Windows PowerShell 5 reads a script without one as the PC's code page.
+            Files.writeString(script, "﻿" + SCRIPT, StandardCharsets.UTF_8);
+            Process process = new ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy",
+                    "Bypass", "-File", script.toString(), source.toString(), target.toString(), program)
+                    .redirectErrorStream(true).start();
+            boolean done = process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            String said = new String(process.getInputStream().readNBytes(4000), StandardCharsets.UTF_8);
+            if (!done) {
+                process.descendants().forEach(ProcessHandle::destroyForcibly);
+                process.destroyForcibly();
+                throw new InvalidEditException("MS Office가 " + TIMEOUT_SECONDS / 60 + "분 안에 문서를 PDF로 바꾸지 못했습니다. "
+                        + "암호가 걸렸거나 Office가 무언가를 묻고 있을 수 있습니다. Office에서 열어 확인해 주세요.");
+            }
+            if (process.exitValue() != 0 || !Files.isRegularFile(target) || Files.size(target) == 0) {
+                log.warn("Office could not print {} ({}): {}", fileName, program, said.strip());
+                throw new InvalidEditException(reason(said, program));
+            }
+            return Files.readAllBytes(target);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new InvalidEditException("문서를 PDF로 바꾸다가 멈췄습니다.");
+        } finally {
+            try (Stream<Path> files = Files.walk(dir)) {
+                for (Path p : files.sorted(Comparator.reverseOrder()).toList()) {
+                    Files.deleteIfExists(p);
+                }
+            } catch (IOException e) {
+                // a temporary folder left behind
+            }
+        }
+    }
+
+    /** Why Office could not print it, said for the user. */
+    static String reason(String said, String program) {
+        String app = switch (program) {
+            case "word" -> "Word";
+            case "excel" -> "Excel";
+            default -> "PowerPoint";
+        };
+        // 80040154: the program is not registered - Office (or that part of it) is not installed.
+        if (said.contains("80040154") || said.toLowerCase(Locale.ROOT).contains("class not registered")) {
+            // 엑셀 ends in a consonant: 이; 워드, 파워포인트: 가.
+            return "이 PC에 MS " + app + ("excel".equals(program) ? "이" : "가") + " 설치되어 있지 않아 열 수 없습니다.";
+        }
+        if (said.toLowerCase(Locale.ROOT).contains("password") || said.contains("암호")) {
+            return "암호가 걸린 Office 문서는 열 수 없습니다. " + app + "에서 암호를 풀어 저장한 뒤 열어 주세요.";
+        }
+        return "MS " + app + "로 이 문서를 PDF로 바꾸지 못했습니다. 파일이 손상되었거나 " + app + "에서 열리지 않는 문서일 수 있습니다.";
+    }
+
+    /**
+     * Opens the document read-only in Office, without showing it or asking anything (a wrong password is given for
+     * a protected file, so Office fails at once instead of asking), prints it to PDF and quits Office.
+     */
+    static final String SCRIPT = String.join("\n", List.of(
+            "$ErrorActionPreference = 'Stop'",
+            "$src = $args[0]; $dst = $args[1]; $kind = $args[2]",
+            "$missing = [Type]::Missing",
+            "switch ($kind) {",
+            "  'word' {",
+            "    $app = New-Object -ComObject Word.Application",
+            "    $app.Visible = $false; $app.DisplayAlerts = 0",
+            "    try {",
+            "      $doc = $app.Documents.Open($src, $false, $true, $false, '__wintech_no_password__')",
+            "      $doc.ExportAsFixedFormat($dst, 17)",
+            "      $doc.Close($false)",
+            "    } finally { $app.Quit() }",
+            "  }",
+            "  'excel' {",
+            "    $app = New-Object -ComObject Excel.Application",
+            "    $app.Visible = $false; $app.DisplayAlerts = $false; $app.AskToUpdateLinks = $false",
+            "    try {",
+            "      $book = $app.Workbooks.Open($src, 0, $true, $missing, '__wintech_no_password__')",
+            "      $book.ExportAsFixedFormat(0, $dst)",
+            "      $book.Close($false)",
+            "    } finally { $app.Quit() }",
+            "  }",
+            "  'powerpoint' {",
+            "    $app = New-Object -ComObject PowerPoint.Application",
+            "    try {",
+            "      $show = $app.Presentations.Open($src, -1, 0, 0)",
+            "      $show.SaveAs($dst, 32)",
+            "      $show.Close()",
+            "    } finally { $app.Quit() }",
+            "  }",
+            "}",
+            "[System.GC]::Collect()",
+            "exit 0"));
+}

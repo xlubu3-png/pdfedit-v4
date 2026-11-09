@@ -34,6 +34,7 @@ import com.pdfedit.ocr.PageOcr;
 import com.pdfedit.redact.Redaction;
 import com.pdfedit.redact.Redactor;
 import com.pdfedit.service.InvalidEditException;
+import com.pdfedit.service.OfficeConverter;
 import com.pdfedit.service.PageCopies;
 import com.pdfedit.service.PageEdits;
 import com.pdfedit.service.PageImages;
@@ -84,6 +85,13 @@ public class PdfController {
 
     /** Reads a document's pages ahead once it is opened, so the editor shows them at once. */
     private PageWarmer pageWarmer;
+    /** Prints Word, Excel and PowerPoint files to PDF with the PC's Office. */
+    private OfficeConverter officeConverter;
+
+    @Autowired(required = false)
+    void setOfficeConverter(OfficeConverter officeConverter) {
+        this.officeConverter = officeConverter;
+    }
 
     @Autowired(required = false)
     void setPageWarmer(PageWarmer pageWarmer) {
@@ -98,6 +106,18 @@ public class PdfController {
     @PostMapping(value = "/documents", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public UploadResponse upload(@RequestParam("file") MultipartFile file,
             @RequestParam(value = "password", required = false) String password) throws IOException {
+        String fileName = file.getOriginalFilename();
+        byte[] uploaded = file.getBytes();
+        String convertedFrom = null;
+        if (OfficeConverter.isOffice(fileName)) {
+            // A Word, Excel or PowerPoint file: printed to PDF by the PC's Office, then opened like any PDF.
+            if (officeConverter == null) {
+                throw new InvalidEditException("Office 문서를 열 수 없습니다.");
+            }
+            uploaded = officeConverter.toPdf(uploaded, fileName);
+            convertedFrom = fileName;
+            fileName = OfficeConverter.pdfName(fileName);
+        }
         byte[] content;
         int pageCount;
         boolean unlocked;
@@ -105,7 +125,7 @@ public class PdfController {
         boolean scanned;
         try {
             // An encrypted file is kept as a plain copy, so nothing after this line needs the password.
-            PdfUnlocker.Unlocked plain = PdfUnlocker.unlock(file.getBytes(), password);
+            PdfUnlocker.Unlocked plain = PdfUnlocker.unlock(uploaded, password);
             unlocked = plain.wasEncrypted();
             permissions = plain.permissions();
             // Pages that carry a /Rotate are turned into unrotated ones once, here, so editing never has to care.
@@ -124,7 +144,7 @@ public class PdfController {
         if (pageCount == 0) {
             throw new InvalidEditException("페이지가 없는 PDF입니다.");
         }
-        String documentId = store.store(file.getOriginalFilename(), content, pageCount);
+        String documentId = store.store(fileName, content, pageCount);
         if (scanned && pageOcr != null) {
             // The screen offers text recognition for a scan: the engine gets ready while the user decides.
             pageOcr.prepareInBackground();
@@ -133,7 +153,7 @@ public class PdfController {
             // A scan has no text to read ahead; its pages are recognized instead.
             pageWarmer.wholeDocument(documentId, pageCount);
         }
-        return new UploadResponse(documentId, file.getOriginalFilename(), pageCount, unlocked, permissions, scanned);
+        return new UploadResponse(documentId, fileName, pageCount, unlocked, permissions, scanned, convertedFrom);
     }
 
     /** No text on its first pages: a scan, most likely, that the screen offers to run text recognition on. */

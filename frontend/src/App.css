@@ -2452,3 +2452,64 @@ kbd {
   border-color: #fca5a5;
   background: #fef2f2;
 }
+
+/* 도장·서명 찍기 */
+.te-stamps {
+  position: fixed;
+  right: 18px;
+  top: 120px;
+  z-index: 1000;
+  width: min(380px, 92vw);
+  max-height: 70vh;
+  overflow: auto;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  font-size: 13px;
+}
+
+.te-stamps-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.te-stamps-hint {
+  color: #4b5563;
+  margin: 6px 0;
+}
+
+.te-stamps ul {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.te-stamps li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.te-stamps li img {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  background: #fff;
+}
+
+.te-stamps-name {
+  flex: 1 1 100px;
+  font-weight: 600;
+}
+
+.te-layer.stamping {
+  cursor: crosshair;
+}

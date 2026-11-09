@@ -21,9 +21,11 @@ import {
   fetchRulings,
   fetchTableGrids,
   fetchPageSize,
+  stampImageUrl,
+  updateStamp,
   saveTableGrids,
 } from '../api'
-import type { TextEditPayload } from '../api'
+import type { Stamp, TextEditPayload } from '../api'
 import { fontBaseName, missingFontNames, otherFormatFamily, reloadMessage } from '../fontHelp'
 import { editorTipSeen, markEditorTipSeen } from '../editorTip'
 import { foreignChars, SIMILAR_ENOUGH } from '../fontMix'
@@ -40,6 +42,7 @@ import type { PlacedText } from '../textSelect'
 import { findTables, hasTable, layout, notCovered, straighten, toHtml, toTsv, turnOf, withGrids } from '../tableGrid'
 import type { Grid, Table, Turn } from '../tableGrid'
 import { TableFixLayer } from './TableFixLayer'
+import { StampPanel } from './StampPanel'
 import { checkTables } from '../sumCheck'
 import type { SumProblem } from '../sumCheck'
 import { FITTING } from '../types'
@@ -957,6 +960,70 @@ export function TextEditor({
     scheduleSave()
   }
 
+  /** 도장·서명 찍기 is open; the stamp to stamp where the user clicks next; which pictures came from which stamp. */
+  const [stampsOpen, setStampsOpen] = useState(false)
+  const [placingStamp, setPlacingStamp] = useState<Stamp | null>(null)
+  const stampOf = useRef(new Map<string, Stamp>())
+
+  /**
+   * Stamps a seal or signature: its picture put on the page at the stamp's size, its white see-through, with its
+   * top-left at `at` (points from the page's top-left; where it went last when not given). The place is kept as
+   * the stamp's last one.
+   */
+  async function stampAt(stamp: Stamp, at?: { left: number; top: number }) {
+    const current = dataRef.current
+    if (!current || !editable) return
+    setPlacingStamp(null)
+    setStatus('도장을 찍는 중…')
+    try {
+      const blob = await (await fetch(stampImageUrl(stamp.id))).blob()
+      const uploaded = await uploadImage(documentId, new File([blob], 'stamp', { type: blob.type }))
+      const left = at?.left ?? (stamp.lastX ?? 0.7) * current.pageWidth
+      const top = at?.top ?? (stamp.lastY ?? 0.8) * current.pageHeight
+      const box: AddedImage = {
+        id: newId(),
+        imageId: uploaded.imageId,
+        x: round(current.originX + left),
+        y: round(current.originY + current.pageHeight - top - stamp.height),
+        width: stamp.width,
+        height: stamp.height,
+        keyOutWhite: true,
+      }
+      checkpoint(`stamp:${box.id}`)
+      putImages([...imagesRef.current, box])
+      stampOf.current.set(box.id, stamp)
+      setSelected({ kind: 'image', id: box.id })
+      setEditing(null)
+      imagesDirty.current = true
+      scheduleSave()
+      void updateStamp(stamp.id, { lastX: left / current.pageWidth, lastY: top / current.pageHeight }).catch(() => {})
+      setStatus(`'${stamp.name}'을(를) 찍었습니다 · 끌어 옮기거나 모서리로 크기를 바꿀 수 있습니다`)
+    } catch (e) {
+      setStatus('')
+      setError(errorText(e, '도장을 찍지 못했습니다'))
+    }
+  }
+
+  /** The picked picture's size and place kept as its stamp's, for the next documents. */
+  async function rememberStamp(stamp: Stamp) {
+    const current = dataRef.current
+    const picture = selected?.kind === 'image' ? imagesRef.current.find((b) => b.id === selected.id) : undefined
+    if (!current || !picture) return
+    const top = current.originY + current.pageHeight - (picture.y + picture.height)
+    try {
+      const kept = await updateStamp(stamp.id, {
+        width: picture.width,
+        height: picture.height,
+        lastX: (picture.x - current.originX) / current.pageWidth,
+        lastY: top / current.pageHeight,
+      })
+      for (const [id, s] of stampOf.current) if (s.id === stamp.id) stampOf.current.set(id, kept)
+      setStatus(`'${stamp.name}'의 크기·자리를 기억했습니다 · 다음 문서에서도 '지난 자리에'로 찍힙니다`)
+    } catch (e) {
+      setError(errorText(e, '도장을 바꾸지 못했습니다'))
+    }
+  }
+
   /** Uploads a picture and puts it in the middle of the page, at its own size unless that is too big for the page. */
   async function addImageFromFile(file: File) {
     const current = dataRef.current
@@ -1218,6 +1285,16 @@ export function TextEditor({
   function handleLayerPointerDown(e: PointerEvent<HTMLDivElement>) {
     const current = dataRef.current
     if (e.target !== e.currentTarget || !current || scale <= 0) return
+    if (placingStamp) {
+      // The stamp centred where the user clicked.
+      const rect = e.currentTarget.getBoundingClientRect()
+      e.preventDefault()
+      void stampAt(placingStamp, {
+        left: (e.clientX - rect.left) / scale - placingStamp.width / 2,
+        top: (e.clientY - rect.top) / scale - placingStamp.height / 2,
+      })
+      return
+    }
     if (adding) {
       const rect = e.currentTarget.getBoundingClientRect()
       const look = lastAddedLook.current
@@ -1702,6 +1779,7 @@ export function TextEditor({
         },
         { label: '붙여넣기', shortcut: 'Ctrl+V', disabled: !editable || clipboard === null, onSelect: () => pasteClipboard() },
         { label: '그림 추가…', disabled: !editable, onSelect: () => imageInput.current?.click() },
+        { label: '도장·서명 찍기…', disabled: !editable, onSelect: () => setStampsOpen(true) },
         'separator',
         { label: selecting ? '글자 선택 끝내기' : '글자 선택', shortcut: 'S', onSelect: () => toggleSelecting() },
         { label: '이 쪽 글자 모두 복사', onSelect: () => void copyPlain(asLines(pageText()), '이 쪽 글자') },
@@ -2171,6 +2249,11 @@ export function TextEditor({
       if (ctrl && (e.key === '9' || code === 'Numpad9')) {
         e.preventDefault()
         setZoomMode('page')
+        return
+      }
+      if (e.key === 'Escape' && placingStamp) {
+        setPlacingStamp(null)
+        setStatus('')
         return
       }
       if (e.key === 'Escape') {
@@ -2781,6 +2864,24 @@ export function TextEditor({
         </p>
       )}
 
+      {stampsOpen && (
+        <StampPanel
+          onPlace={(stamp) => {
+            // Out of the way while the place is picked.
+            setStampsOpen(false)
+            setPlacingStamp(stamp)
+            setStatus(`'${stamp.name}'을(를) 찍을 곳을 쪽에서 누르세요 (그만두려면 Esc)`)
+          }}
+          onPlaceLast={(stamp) => void stampAt(stamp)}
+          pickedFrom={selected?.kind === 'image' ? (stampOf.current.get(selected.id) ?? null) : null}
+          onRemember={(stamp) => void rememberStamp(stamp)}
+          onClose={() => {
+            setStampsOpen(false)
+            setPlacingStamp(null)
+          }}
+        />
+      )}
+
       {sums && (
         <div className={`te-notice te-sumcheck-note${sums.problems.length > 0 ? ' wrong' : ''}`} role="status">
           <span>
@@ -2905,7 +3006,7 @@ export function TextEditor({
             )}
             {scale > 0 && (
               <div
-                className={`te-layer${adding ? ' adding' : ''}${stale ? ' stale' : ''}${selecting ? ' selecting' : ''}`}
+                className={`te-layer${adding ? ' adding' : ''}${placingStamp ? ' stamping' : ''}${stale ? ' stale' : ''}${selecting ? ' selecting' : ''}`}
                 ref={layerRef}
                 onPointerDown={handleLayerPointerDown}
               >

@@ -295,6 +295,53 @@ export async function fetchPageSize(documentId: string, pageIndex: number): Prom
   return response.json()
 }
 
+/** A stamp (도장·서명): its size when stamped (points) and where it went last (shares of the page, top-left). */
+export interface Stamp {
+  id: string
+  name: string
+  width: number
+  height: number
+  lastX: number | null
+  lastY: number | null
+}
+
+export async function fetchStamps(): Promise<Stamp[]> {
+  const response = await call(`${BASE}/stamps`)
+  if (!response.ok) throw await failure(response, '도장 목록을 불러오지 못했습니다')
+  return response.json()
+}
+
+export async function addStamp(file: File, name: string): Promise<Stamp> {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('name', name)
+  const response = await call(`${BASE}/stamps`, { method: 'POST', body: form })
+  if (!response.ok) throw await failure(response, '도장을 등록하지 못했습니다')
+  return response.json()
+}
+
+export function stampImageUrl(id: string): string {
+  return `${BASE}/stamps/${id}/image`
+}
+
+export async function updateStamp(
+  id: string,
+  change: { name?: string; width?: number; height?: number; lastX?: number; lastY?: number },
+): Promise<Stamp> {
+  const response = await call(`${BASE}/stamps/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(change),
+  })
+  if (!response.ok) throw await failure(response, '도장을 바꾸지 못했습니다')
+  return response.json()
+}
+
+export async function deleteStamp(id: string): Promise<void> {
+  const response = await call(`${BASE}/stamps/${id}`, { method: 'DELETE' })
+  if (!response.ok) throw await failure(response, '도장을 지우지 못했습니다')
+}
+
 export async function duplicatePage(documentId: string, pageIndex: number): Promise<UploadResponse> {
   const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/duplicate`, { method: 'POST' })
   if (!response.ok) {

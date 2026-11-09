@@ -280,7 +280,7 @@ export function layout(texts: PlacedText[], tables: Table[], onlyPicked: boolean
   const blocks: Block[] = []
   for (const whole of filled) {
     if (!whole.cells.some((c) => c.texts.length > 0)) continue
-    const table = splitAreas(whole)
+    const table = splitStackedRows(splitAreas(whole))
     const used = table.cells.filter((c) => c.texts.length > 0)
     const kept = onlyPicked ? crop(table, used) : table
     blocks.push({ kind: 'table', table: kept, top: kept.ys[0] })
@@ -304,6 +304,75 @@ function fill(texts: PlacedText[], tables: Table[]): { filled: Table[]; loose: P
     else loose.push(text)
   }
   return { filled, loose }
+}
+
+/** A line that is an amount: "1,250", "-3.5", "220,300원", "△19,454원" (kordoc's number cell). */
+const AMOUNT = /^[-+−△▲]?\s*[\d,]+(\.\d+)?\s*(원|-원)?$/
+
+/**
+ * Rows set one under the other inside one row of a table (as some programs lay out a quote: the items stacked in
+ * one cell, their amounts stacked in the next, with no border between them) are split into their own rows, so each
+ * item and its amount get a row of the sheet. A row is split when at least two of its cells have two or more lines,
+ * one of them a column of amounts (80 % of its lines amounts) with the most lines, and every other such cell's
+ * lines are short (labels, not sentences) and no more. Cells of the row with one line, and those reaching over it,
+ * stretch over the new rows. After kordoc's ocr-stacked-rows (MIT, Copyright (c) 2026 chrisryugj).
+ */
+function splitStackedRows(table: Table): Table {
+  let current = table
+  for (let r = current.ys.length - 2; r >= 0; r--) current = splitRow(current, r)
+  return current
+}
+
+function splitRow(table: Table, r: number): Table {
+  const inRow = table.cells.filter((c) => c.row === r && c.rowSpan === 1 && !c.container)
+  const lined = inRow.map((cell) => ({ cell, lines: rows(cell.texts) })).filter((x) => x.lines.length >= 2)
+  if (lined.length < 2) return table
+  const text = (line: PlacedText[]) => line.map((t) => t.text.trim()).join(' ')
+  const amounts = lined.filter((x) => x.lines.filter((l) => AMOUNT.test(text(l))).length >= x.lines.length * 0.8)
+  if (amounts.length === 0) return table
+  const k = Math.max(...amounts.map((x) => x.lines.length))
+  if (lined.some((x) => x.lines.length > k || (!amounts.includes(x) && x.lines.some((l) => text(l).length > 20)))) {
+    return table
+  }
+  // Where the new rows part: halfway between the lines of the column of amounts with the most of them.
+  const guide = amounts.find((x) => x.lines.length === k)!.lines
+  const bottom = (l: PlacedText[]) => Math.max(...l.map((t) => t.top + t.height))
+  const top = (l: PlacedText[]) => Math.min(...l.map((t) => t.top))
+  const cuts: number[] = []
+  for (let i = 0; i + 1 < guide.length; i++) {
+    const cut = (bottom(guide[i]) + top(guide[i + 1])) / 2
+    if (cut <= table.ys[r] || cut >= table.ys[r + 1] || (cuts.length > 0 && cut <= cuts[cuts.length - 1])) return table
+    cuts.push(cut)
+  }
+  const ys = [...table.ys.slice(0, r + 1), ...cuts, ...table.ys.slice(r + 1)]
+  const more = cuts.length
+  const split = new Set(lined.map((x) => x.cell))
+  const cells: TableCell[] = []
+  for (const cell of table.cells) {
+    if (split.has(cell)) {
+      const edges = [table.ys[r], ...cuts, table.ys[r + 1]]
+      for (let j = 0; j <= more; j++) {
+        cells.push({
+          ...cell,
+          row: r + j,
+          top: edges[j],
+          bottom: edges[j + 1],
+          borders: { ...cell.borders, top: j === 0 && cell.borders.top, bottom: j === more && cell.borders.bottom },
+          texts: cell.texts.filter((t) => {
+            const middle = t.top + t.height / 2
+            return middle >= edges[j] && (middle < edges[j + 1] || j === more)
+          }),
+        })
+      }
+    } else if (cell.row > r) {
+      cells.push({ ...cell, row: cell.row + more })
+    } else if (cell.row + cell.rowSpan > r) {
+      cells.push({ ...cell, rowSpan: cell.rowSpan + more })
+    } else {
+      cells.push(cell)
+    }
+  }
+  return { ...table, ys, cells }
 }
 
 /**

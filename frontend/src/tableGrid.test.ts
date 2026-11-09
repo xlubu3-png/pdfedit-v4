@@ -263,3 +263,40 @@ describe('a scan turned straight', () => {
     expect(straighten([text], null)[0]).toBe(text)
   })
 })
+
+describe('rows stacked in one row of a table', () => {
+  // A quote whose item row holds three items stacked in one cell and their amounts in the next, no border between.
+  const xs = [0, 120, 220]
+  const ys = [0, 20, 90, 110]
+  const rulings = grid(xs, ys)
+  const line = (text: string, left: number, top: number): PlacedText => ({ text, left, top, height: 12, width: text.length * 5 })
+  const texts = [
+    line('품목', 10, 4),
+    line('금액', 130, 4),
+    line('○ 팬 모터', 10, 26),
+    line('220,300원', 130, 26),
+    line('○ 필터', 10, 46),
+    line('19,770원', 130, 46),
+    line('○ 문 스위치', 10, 66),
+    line('8,000원', 130, 66),
+    line('합계', 10, 94),
+    line('248,070원', 130, 94),
+  ]
+
+  it('are split into a row for each item and its amount', () => {
+    const tsv = toTsv(layout(texts, findTables(rulings), false)).split('\n')
+    expect(tsv).toEqual(['품목\t금액', '○ 팬 모터\t220,300원', '○ 필터\t19,770원', '○ 문 스위치\t8,000원', '합계\t248,070원'])
+  })
+
+  it('a cell of sentences stacked beside one number is left as it is', () => {
+    const notes = [
+      line('품목', 10, 4),
+      line('This line of text runs on and on', 10, 26),
+      line('and goes on to a second line', 10, 46),
+      line('1,000', 130, 26),
+      line('2,000', 130, 46),
+    ]
+    const tsv = toTsv(layout(notes, findTables(rulings), false))
+    expect(tsv).toContain('"This line of text runs on and on\nand goes on to a second line"')
+  })
+})

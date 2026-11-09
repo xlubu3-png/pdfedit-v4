@@ -43,6 +43,8 @@ public final class OcrEngine implements AutoCloseable {
     private static final int RULE_DARKNESS = 215;
     /** A reading this confident is taken as right (for choosing how to read a vertical line). */
     private static final float SURE = 0.9f;
+    /** A line read with its edges painted out is taken when the reader is this much surer of it (kordoc KEEP_MARGIN). */
+    private static final float TRIM_MARGIN = 0.06f;
     /** A line at least this many times longer than thick shows which way the page's text runs. */
     private static final double ORIENT_SHAPE = 2.5;
     /** ... and at least this long (pixels). */
@@ -130,6 +132,11 @@ public final class OcrEngine implements AutoCloseable {
                 }
             } else {
                 addCrop(crops, sizes, ways, crop, new Way(k, Way.ACROSS, null));
+                // Read also with a cell border or the tips of the next lines at its edges painted out (EdgeTrim).
+                BufferedImage trimmed = EdgeTrim.trimmed(crop);
+                if (trimmed != null) {
+                    addCrop(crops, sizes, ways, trimmed, new Way(k, Way.TRIMMED, null));
+                }
             }
         }
         Read[] candidates = new Read[crops.size()];
@@ -139,12 +146,14 @@ public final class OcrEngine implements AutoCloseable {
         Read[] upReads = new Read[boxes.size()];
         Read[] stackedReads = new Read[boxes.size()];
         int[] stackedLetters = new int[boxes.size()];
+        Read[] trimmedReads = new Read[boxes.size()];
         for (int c = 0; c < candidates.length; c++) {
             Way way = ways.get(c);
             Read read = way.fromTop(candidates[c]);
             switch (way.kind()) {
                 case Way.DOWN -> downReads[way.box()] = read;
                 case Way.UP -> upReads[way.box()] = read;
+                case Way.TRIMMED -> trimmedReads[way.box()] = read;
                 case Way.STACKED -> {
                     stackedReads[way.box()] = read;
                     stackedLetters[way.box()] = way.stacked().starts().length;
@@ -153,10 +162,19 @@ public final class OcrEngine implements AutoCloseable {
             }
         }
         for (int k = 0; k < reads.length; k++) {
+            // The line read with its edges painted out wins only when the reader is clearly surer of it: a border or
+            // a neighbour's tip misread makes a big difference; a small one is noise (spacing, a dash's length).
+            // Only for a line read well enough to keep anyway: one too unsure to keep is not brought back by it.
+            if (trimmedReads[k] != null && reads[k] != null && reads[k].score() >= MIN_SCORE
+                    && trimmedReads[k].score() > reads[k].score() + TRIM_MARGIN) {
+                reads[k] = trimmedReads[k];
+            }
             if (downReads[k] != null) {
                 reads[k] = vertical(downReads[k], upReads[k], stackedReads[k], stackedLetters[k]);
             }
         }
+
+        rereadDecimals(image, boxes, reads);
 
         List<OcrLine> lines = new ArrayList<>();
         for (int k = 0; k < boxes.size(); k++) {
@@ -170,6 +188,101 @@ public final class OcrEngine implements AutoCloseable {
             lines.add(new OcrLine(reads[k].text(), reads[k].score(), corners, reads[k].centers(), reads[k].orientation()));
         }
         return lines;
+    }
+
+    /** A number read on its own ("18.1", "1,250", "-3"), with nothing else on its line. */
+    private static final java.util.regex.Pattern NUMBER =
+            java.util.regex.Pattern.compile("^[-−]?\\d{1,3}(?:,\\d{3})*(?:\\.\\d+)?$|^[-−]?\\d+(?:\\.\\d+)?$");
+    private static final java.util.regex.Pattern DECIMAL = java.util.regex.Pattern.compile("^[-−]?[\\d,]*\\d\\.\\d+$");
+    /** How much wider a number is laid out when read again for its decimal point (kordoc NUMBER_STRETCH). */
+    private static final double[] NUMBER_STRETCH = {1.6, 2.2};
+
+    /**
+     * Decimal points lost: in a narrow figure font the point sits so close to its digits that the reader drops it
+     * ("12.1" read "121"). Where most of the page's numbers have a point (at least five numbers, 60 % with one),
+     * a number without one is read again laid out wider; the new reading is taken when it has a point, holds the
+     * digits read before in their order with at most one more, and is read nearly as surely. After kordoc's
+     * rereadDecimalPair (MIT), for numbers on their own as a table's column has them.
+     */
+    private void rereadDecimals(BufferedImage image, List<float[]> boxes, Read[] reads) throws OrtException {
+        List<Integer> numbers = new ArrayList<>();
+        int dotted = 0;
+        for (int k = 0; k < reads.length; k++) {
+            Read r = reads[k];
+            if (r == null || r.orientation() != null || r.score() < MIN_SCORE) {
+                continue;
+            }
+            String t = r.text().strip();
+            if (NUMBER.matcher(t).matches()) {
+                numbers.add(k);
+                if (DECIMAL.matcher(t).matches()) {
+                    dotted++;
+                }
+            }
+        }
+        if (numbers.size() < 5 || dotted < numbers.size() * 0.6) {
+            return;
+        }
+        List<Integer> undotted = new ArrayList<>();
+        for (int k : numbers) {
+            if (!DECIMAL.matcher(reads[k].text().strip()).matches()) {
+                undotted.add(k);
+            }
+        }
+        for (double stretch : NUMBER_STRETCH) {
+            if (undotted.isEmpty()) {
+                return;
+            }
+            List<int[]> crops = new ArrayList<>();
+            List<int[]> sizes = new ArrayList<>();
+            List<Way> ways = new ArrayList<>();
+            for (int k : undotted) {
+                BufferedImage crop = crop(image, boxes.get(k));
+                addCrop(crops, sizes, ways, scaled(crop, (int) Math.round(crop.getWidth() * stretch), crop.getHeight()),
+                        new Way(k, Way.ACROSS, null));
+            }
+            Read[] again = new Read[crops.size()];
+            recognize(crops, sizes, again);
+            List<Integer> still = new ArrayList<>();
+            for (int i = 0; i < undotted.size(); i++) {
+                int k = undotted.get(i);
+                String fixed = again[i] != null && again[i].score() >= reads[k].score() - 0.05f
+                        ? withDecimal(reads[k].text(), again[i].text()) : null;
+                if (fixed == null) {
+                    still.add(k);
+                } else {
+                    // The places along the line stay those of the first reading: the same box, one letter more.
+                    reads[k] = new Read(fixed, reads[k].score(), spread(fixed.length()), null);
+                }
+            }
+            undotted = still;
+        }
+    }
+
+    /** The number read again, if it is the first with its decimal point found; null otherwise. */
+    static String withDecimal(String original, String reread) {
+        String r = reread.strip();
+        if (!DECIMAL.matcher(r).matches()) {
+            return null;
+        }
+        String a = original.replaceAll("\\D", "");
+        String b = r.replaceAll("\\D", "");
+        int i = 0;
+        for (int j = 0; j < b.length() && i < a.length(); j++) {
+            if (b.charAt(j) == a.charAt(i)) {
+                i++;
+            }
+        }
+        return i == a.length() && b.length() - a.length() <= 1 ? r : null;
+    }
+
+    /** Places along the line for n letters, spread evenly (centres, 0 - 1). */
+    private static float[] spread(int n) {
+        float[] at = new float[n];
+        for (int i = 0; i < n; i++) {
+            at[i] = (i + 0.5f) / n;
+        }
+        return at;
     }
 
     /**
@@ -415,6 +528,8 @@ public final class OcrEngine implements AutoCloseable {
         static final int DOWN = 1;
         static final int UP = 2;
         static final int STACKED = 3;
+        /** Across, with its edges painted out ({@link EdgeTrim}): the same box, the same places. */
+        static final int TRIMMED = 4;
 
         Read fromTop(Read read) {
             float[] at = read.centers().clone();

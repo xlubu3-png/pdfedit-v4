@@ -49,6 +49,11 @@ export type PersonalInfoKind =
   | 'BUSINESS'
   | 'ACCOUNT'
   | 'PASSPORT'
+  | 'CORPORATE'
+  | 'VEHICLE'
+  | 'VIN'
+  | 'NAME'
+  | 'ADDRESS'
   | 'TERM'
 
 /** One piece of personal information found on a page, with the area that would redact it. */

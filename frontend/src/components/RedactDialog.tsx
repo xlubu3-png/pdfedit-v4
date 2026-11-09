@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { fetchRedactions, findPersonalInfo, saveRedactions } from '../api'
 import { mergeAreas, newAreaId, PERSONAL_KINDS } from '../redaction'
 import type { PageItem, PersonalInfoKind, PersonalInfoMatch } from '../types'
@@ -59,6 +59,14 @@ export function RedactDialog({ pages, onClose, onDraw, onChanged }: RedactDialog
       setBusy(false)
     }
   }
+
+  // Opened, it looks at once with the kinds ticked: what was found is there to look over and redact.
+  const searchedOnOpen = useRef(false)
+  useEffect(() => {
+    if (searchedOnOpen.current || uniquePages.length === 0) return
+    searchedOnOpen.current = true
+    void search()
+  })
 
   async function search() {
     const found = await run(() => findPersonalInfo(uniquePages, [...kinds], term))

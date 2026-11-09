@@ -52,7 +52,13 @@ export const PERSONAL_KINDS: { kind: PersonalInfoKind; label: string; on: boolea
   { kind: 'ACCOUNT', label: '계좌번호(추정)', on: true },
   { kind: 'DRIVER', label: '운전면허번호', on: true },
   { kind: 'PASSPORT', label: '여권번호', on: true },
+  { kind: 'VEHICLE', label: '차량번호', on: true },
+  { kind: 'VIN', label: '차대번호', on: true },
+  // Off at first: a company's own name, address and numbers are in every quote, and are not personal.
+  { kind: 'NAME', label: '사람 이름 (성명·담당자 칸)', on: false },
+  { kind: 'ADDRESS', label: '주소 (도로명·번지)', on: false },
   { kind: 'BUSINESS', label: '사업자등록번호', on: false },
+  { kind: 'CORPORATE', label: '법인등록번호', on: false },
 ]
 
 let lastId = 0

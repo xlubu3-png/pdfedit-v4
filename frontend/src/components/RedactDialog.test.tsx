@@ -48,13 +48,15 @@ describe('RedactDialog', () => {
     const onChanged = vi.fn()
     render(<RedactDialog pages={[page('d', 0), page('d', 1)]} onClose={() => {}} onDraw={() => {}} onChanged={onChanged} />)
 
-    fireEvent.click(screen.getByText('찾기'))
+    // Opened, it looks at once.
     await screen.findByText('010-3333-4444')
     expect(api.findPersonalInfo.mock.calls[0][0]).toEqual([
       { documentId: 'd', pageIndex: 0 },
       { documentId: 'd', pageIndex: 1 },
     ])
     expect(api.findPersonalInfo.mock.calls[0][1]).not.toContain('BUSINESS')
+    expect(api.findPersonalInfo.mock.calls[0][1]).toEqual(expect.arrayContaining(['RRN', 'VEHICLE', 'VIN']))
+    expect(api.findPersonalInfo.mock.calls[0][1]).not.toContain('NAME')
 
     fireEvent.click(screen.getByText('010-5555-6666'))
     fireEvent.click(screen.getByText('선택한 2곳 가리기'))
@@ -73,7 +75,6 @@ describe('RedactDialog', () => {
     const onDraw = vi.fn()
     render(<RedactDialog pages={[page('d', 0), page('d', 1)]} onClose={() => {}} onDraw={onDraw} onChanged={() => {}} />)
 
-    fireEvent.click(screen.getByText('찾기'))
     fireEvent.click(await screen.findByText('2쪽'))
 
     expect(onDraw).toHaveBeenCalledWith('d-1')
@@ -83,7 +84,6 @@ describe('RedactDialog', () => {
     api.findPersonalInfo.mockResolvedValueOnce([]).mockRejectedValueOnce(new Error('서버 오류'))
     render(<RedactDialog pages={[page('d', 0)]} onClose={() => {}} onDraw={() => {}} onChanged={() => {}} />)
 
-    fireEvent.click(screen.getByText('찾기'))
     await screen.findByText('찾은 항목이 없습니다.')
     fireEvent.click(screen.getByText('찾기'))
     await screen.findByText('서버 오류')
@@ -92,8 +92,10 @@ describe('RedactDialog', () => {
   it('clears every page that has areas after asking', async () => {
     api.fetchRedactions.mockImplementation(async (_d: string, p: number) => (p === 0 ? [{ id: 'x', x: 1, y: 1, width: 2, height: 2 }] : []))
     vi.spyOn(window, 'confirm').mockReturnValue(true)
+    api.findPersonalInfo.mockResolvedValue([])
     const onChanged = vi.fn()
     render(<RedactDialog pages={[page('d', 0), page('d', 1)]} onClose={() => {}} onDraw={() => {}} onChanged={onChanged} />)
+    await screen.findByText('찾은 항목이 없습니다.')
 
     fireEvent.click(screen.getByText('가림 모두 지우기'))
 

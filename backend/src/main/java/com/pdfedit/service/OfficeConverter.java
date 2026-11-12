@@ -82,7 +82,7 @@ public class OfficeConverter {
             Path source = dir.resolve("source" + extension.toLowerCase(Locale.ROOT));
             Path target = dir.resolve("printed.pdf");
             Path script = dir.resolve("print.ps1");
-            Files.write(source, content);
+            Files.write(source, forExcel(content, fileName));
             // UTF-8 with a byte order mark: Windows PowerShell 5 reads a script without one as the PC's code page.
             Files.writeString(script, "﻿" + SCRIPT, StandardCharsets.UTF_8);
             Path output = dir.resolve("said.txt");
@@ -120,6 +120,40 @@ public class OfficeConverter {
                 // a temporary folder left behind
             }
         }
+    }
+
+    /**
+     * A CSV file as Excel reads it rightly: Excel takes a CSV without a byte order mark for the PC's own code page,
+     * so one saved as UTF-8 (by a web site, a database) shows its Korean as broken letters. Such a file - valid
+     * UTF-8 with letters beyond ASCII, no mark - is given the mark; any other file is left as it is.
+     */
+    static byte[] forExcel(byte[] content, String fileName) {
+        if (fileName == null || !fileName.toLowerCase(Locale.ROOT).endsWith(".csv")) {
+            return content;
+        }
+        boolean marked = content.length >= 3 && (content[0] & 0xff) == 0xef && (content[1] & 0xff) == 0xbb
+                && (content[2] & 0xff) == 0xbf;
+        boolean plain = true;
+        for (byte b : content) {
+            if (b < 0) {
+                plain = false;
+                break;
+            }
+        }
+        if (marked || plain) {
+            return content;
+        }
+        try {
+            StandardCharsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(content));
+        } catch (java.nio.charset.CharacterCodingException notUtf8) {
+            return content; // the PC's code page (CP949): Excel reads it as it is
+        }
+        byte[] out = new byte[content.length + 3];
+        out[0] = (byte) 0xef;
+        out[1] = (byte) 0xbb;
+        out[2] = (byte) 0xbf;
+        System.arraycopy(content, 0, out, 3, content.length);
+        return out;
     }
 
     /** What the script wrote, as far as it matters (its first 4000 bytes); empty when it wrote nothing. */

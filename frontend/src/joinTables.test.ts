@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { joinedTables } from './joinTables'
+import { continues, joinedTables } from './joinTables'
 import { gridTable, toSheet, toTsv } from './tableGrid'
 import type { Table } from './tableGrid'
 
@@ -36,5 +36,16 @@ describe('joinedTables', () => {
       joinedTables([[table([head, ['A', '1', '100']]), table([['비고', '', '']], 400)], [table([['C', '3', '300']], 60)]]),
     ).toHaveLength(1)
     expect(joinedTables([[table([head])]])).toEqual([])
+  })
+
+  it('takes pages scanned a little shifted or at a slightly different size as the same table', () => {
+    const first = table([head, ['A', '1', '100']])
+    // The next page 9 points to the right and 2 % larger: no border is where it was.
+    const shifted = table([['B', '2', '200']], 60, [59, 161, 263, 365])
+    expect(continues(first, shifted)).toBe(true)
+    expect(joinedTables([[first], [shifted]])).toHaveLength(1)
+    // Other proportions, or a much narrower table, is another table.
+    expect(continues(first, table([['B', '2', '200']], 60, [59, 120, 263, 365]))).toBe(false)
+    expect(continues(first, table([['B', '2', '200']], 60, [50, 110, 170, 230]))).toBe(false)
   })
 })

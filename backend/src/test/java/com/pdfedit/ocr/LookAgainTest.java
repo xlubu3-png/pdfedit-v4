@@ -22,4 +22,12 @@ class LookAgainTest {
     void aPictureAlreadyLargeIsNotEnlargedFurther() {
         assertThat(OcrEngine.lookAgain(40, 40, 4000)).isFalse();
     }
+
+    @Test
+    void theSecondReadingWinsOnlyWhenItsLinesAreSurerTakenTogetherAndNoMoreWereLeftOut() {
+        assertThat(OcrEngine.isBetter(92.0, 6, 78.5, 20)).isTrue();
+        // More lines but shakier ones, or more left out than before: the first reading stays.
+        assertThat(OcrEngine.isBetter(70.0, 4, 78.5, 20)).isFalse();
+        assertThat(OcrEngine.isBetter(92.0, 25, 78.5, 20)).isFalse();
+    }
 }

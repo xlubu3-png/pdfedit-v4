@@ -128,7 +128,7 @@ public final class OcrEngine implements AutoCloseable {
         // text is looked for again on the picture enlarged for the detector, and the reading keeping more wins.
         if (lookAgain(pass.dropped(), pass.lines().size(), Math.max(width, height))) {
             Pass larger = readAt(image, rgb, RETRY_BOOST);
-            if (larger.lines().size() > pass.lines().size()) {
+            if (better(larger, pass)) {
                 pass = larger;
             }
         }
@@ -141,6 +141,24 @@ public final class OcrEngine implements AutoCloseable {
             lines.add(new OcrLine(line.text(), line.score(), corners, line.centers(), line.orientation()));
         }
         return lines;
+    }
+
+    /**
+     * Whether the second reading is the better one: it kept more of what it found sure enough - by the sureness
+     * of its lines taken together, not their number, so that a reading with more but shakier lines (specks read
+     * as letters) does not win.
+     */
+    private static boolean better(Pass second, Pass first) {
+        return isBetter(sureness(second), second.dropped(), sureness(first), first.dropped());
+    }
+
+    private static double sureness(Pass pass) {
+        return pass.lines().stream().mapToDouble(OcrLine::score).sum();
+    }
+
+    /** The second reading wins when its lines are surer taken together and it left out no more than the first. */
+    static boolean isBetter(double secondSureness, int secondDropped, double firstSureness, int firstDropped) {
+        return secondSureness > firstSureness && secondDropped <= firstDropped;
     }
 
     /** Whether a reading that kept {@code kept} lines and left out {@code dropped} is tried again, larger. */

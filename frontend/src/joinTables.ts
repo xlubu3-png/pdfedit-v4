@@ -17,10 +17,24 @@ const rowText = (table: Table, row: number) =>
     .map((c) => c.texts.map((t) => t.text.trim()).join(' ').replace(/\s+/g, ''))
     .join('|')
 
-/** Whether `next` goes on with `table`: the same columns, at the same places across the page. */
+/** Columns whose borders fall this close, as a share of the table's width, are the same columns on a page scanned a little off. */
+const SAME_SHARE = 0.015
+/** ... as long as the two tables are about as wide: within this share of each other. */
+const SAME_WIDTH = 0.05
+
+/**
+ * Whether `next` goes on with `table`: the same columns, at the same places across the page - or, for pages
+ * scanned a little shifted or at a slightly different size, the same number of columns of the same proportions
+ * in tables about as wide.
+ */
 export function continues(table: Table, next: Table): boolean {
   if (table.xs.length !== next.xs.length || table.xs.length < 3) return false
-  return table.xs.every((x, i) => Math.abs(x - next.xs[i]) <= SAME_COLUMN)
+  if (table.xs.every((x, i) => Math.abs(x - next.xs[i]) <= SAME_COLUMN)) return true
+  const width = (t: Table) => t.xs[t.xs.length - 1] - t.xs[0]
+  const share = (t: Table, i: number) => (t.xs[i] - t.xs[0]) / width(t)
+  if (width(table) <= 0 || width(next) <= 0) return false
+  if (Math.abs(width(table) - width(next)) > SAME_WIDTH * Math.max(width(table), width(next))) return false
+  return table.xs.every((_, i) => Math.abs(share(table, i) - share(next, i)) <= SAME_SHARE)
 }
 
 /**

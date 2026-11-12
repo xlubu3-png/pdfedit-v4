@@ -81,4 +81,18 @@ class OfficeConverterTest {
         assertThat(OfficeConverter.said(output)).isEqualTo("The password is incorrect");
         assertThat(OfficeConverter.said(dir.resolve("missing.txt"))).isEmpty();
     }
+
+    @Test
+    void aCsvSavedAsUtf8IsMarkedSoExcelReadsItsKorean() throws Exception {
+        byte[] utf8 = "품명,수량\n모터,2\n".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] marked = OfficeConverter.forExcel(utf8, "목록.CSV");
+        assertThat(marked).hasSize(utf8.length + 3).startsWith(0xef, 0xbb, 0xbf);
+        // Already marked, plain ASCII, the PC's own code page, or not a CSV at all: left as it is.
+        assertThat(OfficeConverter.forExcel(marked, "목록.csv")).isSameAs(marked);
+        byte[] ascii = "a,b\n1,2\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        assertThat(OfficeConverter.forExcel(ascii, "a.csv")).isSameAs(ascii);
+        byte[] cp949 = "품명,수량\n".getBytes("MS949");
+        assertThat(OfficeConverter.forExcel(cp949, "목록.csv")).isSameAs(cp949);
+        assertThat(OfficeConverter.forExcel(utf8, "목록.xlsx")).isSameAs(utf8);
+    }
 }

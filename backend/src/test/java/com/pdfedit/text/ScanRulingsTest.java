@@ -215,6 +215,55 @@ class ScanRulingsTest {
     }
 
     @Test
+    void theWhiteGapsBetweenDarkFilledHeaderCellsAreRowBorders() {
+        // A navy header column and a near-black one: three cells with white letters, parted only by 2-pixel gaps
+        // of paper; the body to the right has drawn borders.
+        for (Color fill : new Color[] {new Color(20, 40, 110), new Color(35, 35, 35)}) {
+            BufferedImage image = white(600, 400);
+            Graphics2D g = image.createGraphics();
+            g.setColor(new Color(40, 40, 40));
+            g.setStroke(new BasicStroke(2));
+            g.drawRect(50, 50, 500, 152);
+            g.drawLine(200, 50, 200, 202);
+            g.setColor(fill);
+            g.fillRect(51, 51, 148, 49);
+            g.fillRect(51, 102, 148, 49);
+            g.fillRect(51, 153, 148, 48);
+            g.setColor(Color.WHITE);
+            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 14));
+            g.drawString("직군", 100, 80);
+            g.drawString("직렬", 100, 131);
+            g.dispose();
+
+            List<Long> rows = ys(ScanRulings.of(image, PPP));
+
+            // One border along each gap - not its two edges a hair apart - and none from the white letters.
+            assertThat(rows.stream().filter(y -> y >= 97 && y <= 105)).as("gap under the first cell, %s", fill).hasSize(1);
+            assertThat(rows.stream().filter(y -> y >= 148 && y <= 156)).as("gap under the second cell, %s", fill).hasSize(1);
+            assertThat(rows).noneMatch(y -> y >= 60 && y <= 95);
+        }
+    }
+
+    @Test
+    void theUprightStrokesOfTwoCloseLinesOfLettersAreNoColumnBorder() {
+        BufferedImage image = white(600, 400);
+        Graphics2D g = image.createGraphics();
+        table(g);
+        // A stroke as high as the cell (it meets the row borders above and below), running through two lines of
+        // words: letters' uprights joined, not a border.
+        g.setStroke(new BasicStroke(1));
+        g.drawLine(120, 100, 120, 150);
+        g.dispose();
+        List<float[]> words = List.of(
+                new float[] {60 * PPP, 104 * PPP, 120 * PPP, 20 * PPP},
+                new float[] {60 * PPP, 127 * PPP, 120 * PPP, 20 * PPP});
+
+        assertThat(xs(ScanRulings.of(image, PPP, words))).noneMatch(x -> x >= 118 && x <= 122);
+        // Without words there, the same stroke is a cell's border.
+        assertThat(xs(ScanRulings.of(image, PPP))).anySatisfy(x -> assertThat(x).isBetween(118L, 122L));
+    }
+
+    @Test
     void aPageOfOnlyTextHasNoBorders() {
         BufferedImage image = white(400, 200);
         Graphics2D g = image.createGraphics();

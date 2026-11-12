@@ -80,6 +80,9 @@ public final class ScanRulings {
     private static final int FLAT_REACH = 3;
     private static final int FLAT = 12;
 
+    /** A strip of paper between two dark fills is at most this thick (points) to be the border between them. */
+    private static final float FILL_GAP_PT = 3;
+
     private enum Kind { SOLID, DOTTED, FILL }
 
     private ScanRulings() {
@@ -204,6 +207,9 @@ public final class ScanRulings {
             for (Line line : join(fillEdgeRuns(page, alongX))) {
                 found.add(new Found(alongX, Kind.FILL, line));
             }
+            for (Line line : join(fillGapRuns(page, alongX))) {
+                found.add(new Found(alongX, Kind.FILL, line));
+            }
         }
 
         List<Placed> placed = new ArrayList<>();
@@ -215,6 +221,7 @@ public final class ScanRulings {
                 placed.add(new Placed(f.alongX, f.kind, across, from, to));
             }
         }
+        placed = acrossGaps(placed);
         // Short lines only where they meet borders at both ends, dotted ones where they meet solid borders; against
         // the lines as found, not as kept.
         List<Placed> all = List.copyOf(placed);
@@ -262,6 +269,40 @@ public final class ScanRulings {
         }
     }
 
+    /**
+     * The edges of two filled cells facing each other across a thin gap of paper (a coloured header column whose
+     * cells are parted by a hair of white) as one border along the gap's middle, not two a hair apart with a
+     * sliver of a row between them.
+     */
+    private static List<Placed> acrossGaps(List<Placed> placed) {
+        List<Placed> out = new ArrayList<>();
+        boolean[] used = new boolean[placed.size()];
+        for (int i = 0; i < placed.size(); i++) {
+            Placed p = placed.get(i);
+            if (used[i]) {
+                continue;
+            }
+            if (p.kind == Kind.FILL) {
+                for (int j = i + 1; j < placed.size(); j++) {
+                    Placed o = placed.get(j);
+                    if (used[j] || o.kind != Kind.FILL || o.alongX != p.alongX) {
+                        continue;
+                    }
+                    float gap = Math.abs(o.across - p.across);
+                    float shared = Math.min(p.to, o.to) - Math.max(p.from, o.from);
+                    float longer = Math.max(p.to - p.from, o.to - o.from);
+                    if (gap > 0 && gap <= FILL_GAP_PT + 1 && shared >= 0.8f * longer) {
+                        p = new Placed(p.alongX, Kind.FILL, (p.across + o.across) / 2, Math.min(p.from, o.from), Math.max(p.to, o.to));
+                        used[j] = true;
+                        break;
+                    }
+                }
+            }
+            out.add(p);
+        }
+        return out;
+    }
+
     private record Run(int across, int from, int to) {
     }
 
@@ -289,17 +330,26 @@ public final class ScanRulings {
         return longest;
     }
 
-    /** Whether the line's middle lies well inside one of the recognized words' boxes. */
+    /**
+     * Whether the line is a stroke of letters: its middle lies well inside one of the recognized words' boxes, or
+     * - an upright one - more than half of it runs inside words' boxes, away from their left and right edges. The
+     * upright strokes of the letters of two close lines join into one "line" as high as the cell, whose middle
+     * falls in the gap between the lines; a real cell border does not run through words (kordoc).
+     */
     private static boolean inWord(List<float[]> words, Placed p) {
         double mid = (p.from + p.to) / 2;
         double x = p.alongX ? mid : p.across;
         double y = p.alongX ? p.across : mid;
+        double inside = 0;
         for (float[] w : words) {
             if (x > w[0] + WORD_EDGE && x < w[0] + w[2] - WORD_EDGE && y > w[1] && y < w[1] + w[3]) {
                 return true;
             }
+            if (!p.alongX && p.across > w[0] + WORD_EDGE && p.across < w[0] + w[2] - WORD_EDGE) {
+                inside += Math.max(0, Math.min(p.to, w[1] + w[3]) - Math.max(p.from, w[1]));
+            }
         }
-        return false;
+        return inside > (p.to - p.from) / 2;
     }
 
     /** The runs of ink at least {@link #MIN_RUN} long along each row (or column). */
@@ -398,6 +448,53 @@ public final class ScanRulings {
                         }
                         start = -1;
                     }
+                }
+            }
+        }
+        return runs;
+    }
+
+    /**
+     * The thin gaps of paper between two darkly filled cells (a navy header column with white letters has no
+     * border drawn between its cells, only a hair of white): a strip of paper at most {@link #FILL_GAP_PT} thick
+     * with the fill going on at least {@link #FILL_DEPTH_PT} on both sides of it, as a run along its middle. The
+     * strokes of white letters on the fill are such strips too, but short ones, and are left out like any short
+     * line that meets no border (kordoc).
+     */
+    private static List<Run> fillGapRuns(Page page, boolean alongX) {
+        int depth = Math.max(2, Math.round(FILL_DEPTH_PT / page.pointsPerPixel()));
+        int maxGap = Math.max(1, Math.round(FILL_GAP_PT / page.pointsPerPixel()));
+        List<Run> runs = new ArrayList<>();
+        int length = page.length(alongX);
+        int breadth = page.breadth(alongX);
+        for (int a = depth; a < breadth - depth - 1; a++) {
+            int start = -1;
+            int middle = a;
+            for (int i = 0; i <= length; i++) {
+                int thick = 0;
+                // `a` is the first row of paper under a fill; how thick the strip is before the fill goes on.
+                if (i < length && !page.ink(alongX, i, a) && page.ink(alongX, i, a - 1)) {
+                    int t = 1;
+                    while (t <= maxGap && a + t < breadth && !page.ink(alongX, i, a + t)) {
+                        t++;
+                    }
+                    if (t <= maxGap && a + t + depth <= breadth) {
+                        thick = t;
+                        for (int k = 1; k <= depth && thick > 0; k++) {
+                            if (!page.ink(alongX, i, a - k) || !page.ink(alongX, i, a + t - 1 + k)) {
+                                thick = 0;
+                            }
+                        }
+                    }
+                }
+                if (thick > 0 && start < 0) {
+                    start = i;
+                    middle = a + (thick - 1) / 2;
+                } else if (thick == 0 && start >= 0) {
+                    if (i - start >= MIN_RUN) {
+                        runs.add(new Run(middle, start, i - 1));
+                    }
+                    start = -1;
                 }
             }
         }

@@ -234,16 +234,205 @@ public final class OcrEngine implements AutoCloseable {
 
         rereadDecimals(image, boxes, reads);
 
+        List<float[]> allBoxes = new ArrayList<>(boxes);
+        List<Read> allReads = new ArrayList<>(java.util.Arrays.asList(reads));
+        splitTwoLineBoxes(image, allBoxes, allReads);
+
+        String[] texts = new String[allReads.size()];
+        float[] scores = new float[allReads.size()];
+        for (int k = 0; k < texts.length; k++) {
+            texts[k] = allReads.get(k).text();
+            scores[k] = allReads.get(k).score();
+        }
+        boolean[] rescued = rescuedMarks(allBoxes, texts, scores);
         List<OcrLine> lines = new ArrayList<>();
         int dropped = 0;
-        for (int k = 0; k < boxes.size(); k++) {
-            if (reads[k].text().isBlank() || reads[k].score() < MIN_SCORE) {
+        for (int k = 0; k < allBoxes.size(); k++) {
+            Read read = allReads.get(k);
+            if (read.text().isBlank() || (read.score() < MIN_SCORE && !rescued[k])) {
                 dropped++;
                 continue;
             }
-            lines.add(new OcrLine(reads[k].text(), reads[k].score(), boxes.get(k).clone(), reads[k].centers(), reads[k].orientation()));
+            lines.add(new OcrLine(read.text(), read.score(), allBoxes.get(k).clone(), read.centers(), read.orientation()));
         }
         return new Pass(lines, dropped);
+    }
+
+    /** The marks a table's cells are ticked with; one alone in a cell is read unsurely more often than words are. */
+    private static final String MARKS = "○●◎×△▲□■◇◆";
+    /** A mark read less surely than this is not brought back whatever stands around it. */
+    private static final float MARK_MIN_SCORE = 0.3f;
+    /** A mark is the same size as another when their boxes differ by no more than this share. */
+    private static final double MARK_SAME_SIZE = 0.2;
+
+    /**
+     * Which lines too unsure to keep are kept after all: a mark alone in its box ("○" read at .44, so its cell
+     * came out empty) when the same mark, read surely and the same size, stands in the same column or the same
+     * row, and nothing kept lies where it is (kordoc).
+     *
+     * @param boxes the lines' corners (top-left, top-right, bottom-right, bottom-left)
+     */
+    static boolean[] rescuedMarks(List<float[]> boxes, String[] texts, float[] scores) {
+        boolean[] rescued = new boolean[texts.length];
+        for (int k = 0; k < texts.length; k++) {
+            String mark = texts[k] == null ? "" : texts[k].strip();
+            if (scores[k] >= MIN_SCORE || scores[k] < MARK_MIN_SCORE || mark.length() != 1 || MARKS.indexOf(mark.charAt(0)) < 0) {
+                continue;
+            }
+            float[] b = boxes.get(k);
+            double cx = (b[0] + b[4]) / 2;
+            double cy = (b[1] + b[5]) / 2;
+            double w = Math.abs(b[2] - b[0]);
+            double h = Math.abs(b[7] - b[1]);
+            boolean alike = false;
+            boolean covered = false;
+            for (int j = 0; j < texts.length && !covered; j++) {
+                if (j == k || scores[j] < MIN_SCORE || texts[j] == null || texts[j].isBlank()) {
+                    continue;
+                }
+                float[] o = boxes.get(j);
+                double left = Math.min(o[0], o[6]);
+                double right = Math.max(o[2], o[4]);
+                double top = Math.min(o[1], o[3]);
+                double bottom = Math.max(o[5], o[7]);
+                if (cx > left && cx < right && cy > top && cy < bottom) {
+                    covered = true; // something kept is read there already
+                } else if (texts[j].strip().equals(mark)
+                        && Math.abs((right - left) - w) <= MARK_SAME_SIZE * w && Math.abs((bottom - top) - h) <= MARK_SAME_SIZE * h
+                        && ((cx > left && cx < right) || (cy > top && cy < bottom))) {
+                    alike = true;
+                }
+            }
+            rescued[k] = alike && !covered;
+        }
+        return rescued;
+    }
+
+    /** A line's box this much higher than the page's usual one may hold two lines. */
+    private static final double TWO_LINES_HEIGHT = 1.1;
+    /** A line read at least this surely is left alone. */
+    private static final float TWO_LINES_UNSURE = 0.9f;
+    /** Both halves must be read this much surer than the whole, and at least this surely, to take its place. */
+    private static final float TWO_LINES_GAIN = 0.1f;
+    private static final float TWO_LINES_SURE = 0.85f;
+    /** Darker than this (0 - 255) is a letter's ink in a line's picture. */
+    private static final int LINE_INK = 150;
+
+    /**
+     * Lines of Korean whose box took in the line below as well (close lines in one cell: "서울특별시 은평구, ..."
+     * came out crumpled at .60) are cut where the two lines part and read again as two; the two readings take the
+     * one's place only when both are clearly surer than it was (kordoc).
+     */
+    private void splitTwoLineBoxes(BufferedImage image, List<float[]> boxes, List<Read> reads) throws OrtException {
+        List<Double> heights = new ArrayList<>();
+        for (int k = 0; k < boxes.size(); k++) {
+            if (reads.get(k).score() >= MIN_SCORE && reads.get(k).orientation() == null) {
+                heights.add(height(boxes.get(k)));
+            }
+        }
+        if (heights.size() < 3) {
+            return;
+        }
+        heights.sort(Double::compare);
+        double usual = heights.get(heights.size() / 2);
+        List<Integer> which = new ArrayList<>();
+        List<Integer> cuts = new ArrayList<>();
+        List<int[]> crops = new ArrayList<>();
+        List<int[]> sizes = new ArrayList<>();
+        List<Way> ways = new ArrayList<>();
+        for (int k = 0; k < boxes.size(); k++) {
+            Read r = reads.get(k);
+            if (r.orientation() != null || r.score() < MIN_SCORE || r.score() >= TWO_LINES_UNSURE
+                    || height(boxes.get(k)) <= TWO_LINES_HEIGHT * usual || r.text().chars().noneMatch(c -> isHangul((char) c))) {
+                continue;
+            }
+            BufferedImage crop = crop(image, boxes.get(k));
+            int cut = valleyRow(crop);
+            if (cut <= 0) {
+                continue;
+            }
+            which.add(k);
+            cuts.add(cut);
+            addCrop(crops, sizes, ways, crop.getSubimage(0, 0, crop.getWidth(), cut), new Way(k, Way.ACROSS, null));
+            addCrop(crops, sizes, ways, crop.getSubimage(0, cut, crop.getWidth(), crop.getHeight() - cut), new Way(k, Way.ACROSS, null));
+        }
+        if (which.isEmpty()) {
+            return;
+        }
+        Read[] halves = new Read[crops.size()];
+        recognize(crops, sizes, halves);
+        // From the last to the first, so that putting a lower half in after its upper one moves no index still to come.
+        for (int i = which.size() - 1; i >= 0; i--) {
+            int k = which.get(i);
+            Read upper = halves[2 * i];
+            Read lower = halves[2 * i + 1];
+            float was = reads.get(k).score();
+            if (upper == null || lower == null || upper.text().isBlank() || lower.text().isBlank()
+                    || Math.min(upper.score(), lower.score()) < Math.max(TWO_LINES_SURE, was + TWO_LINES_GAIN)) {
+                continue;
+            }
+            float[] box = boxes.get(k);
+            float share = (float) cuts.get(i) / Math.max(1, (int) height(box));
+            float[][] parts = cutBox(box, Math.min(0.9f, Math.max(0.1f, share)));
+            boxes.set(k, parts[0]);
+            reads.set(k, upper);
+            boxes.add(k + 1, parts[1]);
+            reads.add(k + 1, lower);
+        }
+    }
+
+    private static double height(float[] box) {
+        return Math.max(Math.hypot(box[6] - box[0], box[7] - box[1]), Math.hypot(box[4] - box[2], box[5] - box[3]));
+    }
+
+    /** The box cut across at this share of its height: its upper and its lower part. */
+    static float[][] cutBox(float[] b, float share) {
+        float lx = b[0] + (b[6] - b[0]) * share;
+        float ly = b[1] + (b[7] - b[1]) * share;
+        float rx = b[2] + (b[4] - b[2]) * share;
+        float ry = b[3] + (b[5] - b[3]) * share;
+        return new float[][] {{b[0], b[1], b[2], b[3], rx, ry, lx, ly}, {lx, ly, rx, ry, b[4], b[5], b[6], b[7]}};
+    }
+
+    /**
+     * The row where a picture of two lines of text parts into its lines: the row with the least ink in its middle
+     * (30 - 70 % down), when that is next to none beside the ink of the lines above and below it; 0 when the
+     * picture is one line (letters all the way down, no such row).
+     */
+    static int valleyRow(BufferedImage crop) {
+        int w = crop.getWidth();
+        int h = crop.getHeight();
+        if (h < 16 || w < 8) {
+            return 0;
+        }
+        int[] ink = new int[h];
+        int[] row = new int[w];
+        for (int y = 0; y < h; y++) {
+            crop.getRGB(0, y, w, 1, row, 0, w);
+            for (int x = 0; x < w; x++) {
+                int luma = (((row[x] >> 16) & 0xff) * 299 + ((row[x] >> 8) & 0xff) * 587 + (row[x] & 0xff) * 114) / 1000;
+                if (luma < LINE_INK) {
+                    ink[y]++;
+                }
+            }
+        }
+        int best = -1;
+        for (int y = (int) (h * 0.3); y <= (int) (h * 0.7); y++) {
+            if (best < 0 || ink[y] < ink[best]) {
+                best = y;
+            }
+        }
+        int above = 0;
+        int below = 0;
+        for (int y = 0; y < best; y++) {
+            above = Math.max(above, ink[y]);
+        }
+        for (int y = best + 1; y < h; y++) {
+            below = Math.max(below, ink[y]);
+        }
+        // Lines of letters on both sides, and next to nothing between them.
+        int lines = Math.min(above, below);
+        return lines >= 4 && ink[best] * 5 <= lines ? best : 0;
     }
 
     /** A number read on its own ("18.1", "1,250", "-3"), with nothing else on its line. */

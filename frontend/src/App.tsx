@@ -31,6 +31,7 @@ import type { Sheet } from './tableGrid'
 import { DEFAULT_IMAGE_CHOICE, imageExportFileName, imageExportStem } from './imageExport'
 import type { ImageChoice } from './imageExport'
 import { ocrMessage, recognizeAll, straightenedNote } from './ocr'
+import type { OcrSummary } from './ocr'
 import { keyCode } from './keys'
 import { dragHasFiles, pickPdfs } from './pdfFiles'
 import { clearSession, loadSession, saveSession } from './session'
@@ -147,7 +148,16 @@ function App() {
   const [scanSuggest, setScanSuggest] = useState<{ files: string[]; pages: PageItem[] } | null>(null)
   /** How far a text recognition run is; null when none runs. */
   /** How far reading the scans got; `straightening` while the pages are first set straight (no text is read yet). */
-  const [ocrProgress, setOcrProgress] = useState<{ done: number; total: number; straightening?: boolean } | null>(null)
+  const [ocrProgress, setOcrProgress] = useState<{ done: number; total: number; straightening?: boolean; background?: boolean } | null>(
+    null,
+  )
+  /** The scans opened are being read behind the screen (see {@link readBehind}); its queue takes more pages meanwhile. */
+  const behind = useRef<{ queue: string[]; freshUntil: number } | null>(null)
+  /** The page list and the page in the editor as they are now, for work that goes on while they change. */
+  const pagesNow = useRef<PageItem[]>([])
+  const editingNow = useRef<string | null>(null)
+  pagesNow.current = pages
+  editingNow.current = editingKey
   const ocrStop = useRef(false)
   /** A note about the last upload or export (a file opened with its password, what a redaction did). */
   const [notice, setNotice] = useState<string | null>(null)
@@ -302,7 +312,7 @@ function App() {
     if (scanned.pages.length > 0 && settings?.autoOcr === true) {
       // Opened, then read at once (set straight first), as a reader that recognizes scans does; 중지 stops it.
       setScanSuggest(null)
-      void handleOcr(scanned.pages)
+      void readBehind(scanned.pages)
     } else {
       setScanSuggest(scanned.pages.length > 0 ? scanned : null)
     }
@@ -317,6 +327,14 @@ function App() {
   async function handleOcr(target?: PageItem[]): Promise<string | null> {
     const chosen = target ?? (selectedKeys.size > 0 ? pages.filter((p) => selectedKeys.has(p.key)) : pages)
     if (chosen.length === 0 || busy) return null
+    if (behind.current) {
+      // The scans opened are being read already: these pages join the queue rather than start a second reading.
+      const queued = new Set(behind.current.queue)
+      behind.current.queue.push(...chosen.filter((p) => p.ocrLines === undefined && !queued.has(p.key)).map((p) => p.key))
+      behind.current.freshUntil = Date.now() + 1500
+      setNotice('이미 뒤에서 글자를 인식하고 있습니다. 고른 쪽은 이어서 인식합니다.')
+      return null
+    }
     setBusy(true)
     setError(null)
     setScanSuggest(null)
@@ -340,6 +358,105 @@ function App() {
     } finally {
       setOcrProgress(null)
       setBusy(false)
+    }
+  }
+
+  /**
+   * Reads the scans just opened behind the screen: page after page set straight (when that is wanted) and
+   * recognized, while the page list stays free - pages can be looked at, edited, moved, taken out. A page taken out
+   * meanwhile is skipped; one open in the editor is left to the editor (it reads its own page); 중지 ends it after
+   * the page in hand. Each page set straight is a step Ctrl+Z takes back.
+   */
+  async function readBehind(first: PageItem[]) {
+    // Pages just put in the list are not in it yet as this starts (the screen has not drawn them): for a moment
+    // after pages are handed over, one not found is waited for rather than taken as taken out.
+    const settle = () => Date.now() + 1500
+    if (behind.current) {
+      behind.current.queue.push(...first.map((p) => p.key))
+      behind.current.freshUntil = settle()
+      return
+    }
+    const job = { queue: first.map((p) => p.key), freshUntil: settle() }
+    behind.current = job
+    ocrStop.current = false
+    const summary: OcrSummary = { pages: 0, lines: 0, linesByKey: {}, alreadyText: 0, stopped: false }
+    let straightened = 0
+    let upright = 0
+    let handled = 0
+    let failed: unknown = null
+    try {
+      while (job.queue.length > 0) {
+        if (ocrStop.current) {
+          summary.stopped = true
+          break
+        }
+        setOcrProgress({ done: handled, total: handled + job.queue.length, background: true })
+        const key = job.queue.shift()!
+        let page = pagesNow.current.find((p) => p.key === key)
+        if (!page && Date.now() < job.freshUntil) {
+          job.queue.unshift(key)
+          await new Promise((resolve) => setTimeout(resolve, 50))
+          continue
+        }
+        // Taken out of the list, or read meanwhile (in the editor): nothing to do.
+        if (!page || page.ocrLines !== undefined) continue
+        if (editingNow.current === key) {
+          // Open in the editor: setting it straight would change the page under it. It waits for the editor to
+          // close, behind the others.
+          job.queue.push(key)
+          if (job.queue.every((k) => k === editingNow.current)) await new Promise((resolve) => setTimeout(resolve, 300))
+          continue
+        }
+        handled++
+        try {
+          if (settings?.straightenOnOcr !== false) {
+            const result = await straightenPage(page.documentId, page.pageIndex, page.rotation)
+            // Taken out while it was being set straight: done with it. Opened in the editor meanwhile: it waits.
+            if (!pagesNow.current.some((p) => p.key === key)) continue
+            if (editingNow.current === key) {
+              handled--
+              job.queue.push(key)
+              continue
+            }
+            if (result.documentId) {
+              const copy: PageItem = {
+                key: `${result.documentId}-0`,
+                documentId: result.documentId,
+                sourceFileName: page.sourceFileName,
+                pageIndex: 0,
+                rotation: page.rotation,
+                textRevision: 0,
+                ...(page.lockedPermissions === undefined ? {} : { lockedPermissions: page.lockedPermissions }),
+              }
+              changePages((prev) => prev.map((p) => (p.key === key ? copy : p)))
+              setSelectedKeys((prev) => (prev.has(key) ? new Set([...prev].map((k) => (k === key ? copy.key : k))) : prev))
+              straightened++
+              if (result.quarter !== 0) upright++
+              page = copy
+            }
+          }
+          const read = page
+          const result = await recognizePage(read.documentId, read.pageIndex)
+          summary.pages++
+          summary.lines += result.lines.length
+          if (result.lines.length === 0 && result.alreadyText > 0) summary.alreadyText++
+          setPages((prev) => prev.map((p) => (p.key === read.key ? { ...p, ocrLines: result.lines.length } : p)))
+        } catch (e) {
+          // A page taken out (its document deleted) while it was worked on is no failure; anything else ends the run.
+          if (pagesNow.current.some((p) => p.key === key || p.key === page!.key)) {
+            failed = e
+            break
+          }
+        }
+      }
+    } finally {
+      behind.current = null
+      setOcrProgress(null)
+    }
+    if (failed) setError(errorText(failed, '글자를 인식하지 못했습니다'))
+    // Nothing is said when the list was emptied meanwhile (모두 지우기, 보관하고 비우기 ended the reading).
+    else if (pagesNow.current.length > 0 && (summary.pages > 0 || straightened > 0 || summary.stopped)) {
+      setNotice(straightenedNote(straightened, upright) + ocrMessage(summary))
     }
   }
 
@@ -957,6 +1074,7 @@ function App() {
     if (!window.confirm('모든 페이지와 수정 내용이 삭제되며 되돌릴 수 없습니다. 저장된 문서 사본도 함께 삭제됩니다. 모두 지울까요?')) return
     // The server keeps a copy of every uploaded file; starting over is the moment to remove them - but not one
     // that work put aside still uses.
+    ocrStop.current = true // a reading going on behind the screen ends: its pages are going
     const aside = new Set(recent.flatMap((w) => w.pages).map((p) => p.documentId))
     for (const documentId of new Set(pages.map((p) => p.documentId))) {
       if (!aside.has(documentId)) void deleteDocument(documentId)
@@ -980,6 +1098,7 @@ function App() {
    */
   function handlePutAside() {
     if (busy || pages.length === 0) return
+    ocrStop.current = true // a reading going on behind the screen ends: its pages are put aside as they are
     const { list, dropped } = withWork(recent, pages, Date.now())
     // The oldest work gives way: its documents go with it, unless something else still uses them.
     for (const gone of dropped) for (const id of orphans(gone, list, [])) void deleteDocument(id)
@@ -1264,7 +1383,12 @@ function App() {
       {ocrProgress && (
         <div className="info-banner update-banner" role="status">
           <span>
-            {ocrProgress.straightening ? '스캔 방향·기울기 확인 중…' : '글자 인식 중…'} {ocrProgress.done}/{ocrProgress.total}쪽
+            {ocrProgress.background
+              ? '뒤에서 글자 인식 중… (그동안 다른 작업을 할 수 있습니다)'
+              : ocrProgress.straightening
+                ? '스캔 방향·기울기 확인 중…'
+                : '글자 인식 중…'}{' '}
+            {ocrProgress.done}/{ocrProgress.total}쪽
           </span>
           <button type="button" onClick={() => (ocrStop.current = true)}>
             중지

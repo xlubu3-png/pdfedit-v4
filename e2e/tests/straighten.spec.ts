@@ -147,6 +147,10 @@ test('switched on, a scan is recognized as soon as it is opened, without asking'
   await dialog.getByRole('button', { name: '저장' }).click()
   try {
     await page.locator('input[type=file]').setInputFiles({ name: 'askew.pdf', mimeType: 'application/pdf', buffer: await askewScan(page) })
+    // Read behind the screen: the page list is not held up meanwhile (its buttons work), and says how far it is.
+    await expect(page.getByText('뒤에서 글자 인식 중')).toBeVisible()
+    await expect(page.getByRole('button', { name: '보관하고 비우기' })).toBeEnabled()
+    await expect(page.getByRole('button', { name: '표 다듬기', exact: true })).toBeEnabled()
     const banner = page.locator('.info-banner[role=status]').last()
     await expect(banner).toContainText(/글자 \d+줄을 인식했습니다/, { timeout: 60_000 })
     await expect(banner).toContainText('기울기를 바로잡았습니다')

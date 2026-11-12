@@ -10,6 +10,7 @@ WINTECH 문서편집기는 **회사 안에서 쓰는 프로그램**입니다. �
 |---|---|---|---|
 | rhwp / rhwp-studio (한글 편집기) | MIT | 저작권 표시와 라이선스 전문을 함께 둘 것 | `frontend/public/hwp-studio/LICENSE-rhwp.txt`, 고지 파일 |
 | rhwp가 포함한 Rust·npm 구성 요소 (CanvasKit 등) | MIT·Apache-2.0·BSD-3-Clause 등 | 같음 (BSD는 저작권 표시) | `hwp-studio/THIRD_PARTY_LICENSES.md`, Skia 라이선스는 고지 파일 |
+| Univer (표 다듬기의 엑셀 화면)과 그것이 들여오는 npm 패키지 | Apache-2.0 (Univer), MIT·ISC·BSD 등 | 라이선스 사본 제공, NOTICE 전달, 저작권 표시 | 고지 파일 (자동). 라이선스 파일이 없는 패키지 6개는 `texts/npm-*`에 저작자가 밝힌 원문을 둠. Univer는 고쳐 쓰지 않음 |
 | React, React DOM, scheduler | MIT | 저작권 표시와 전문 | 고지 파일 (자동) |
 | lucide-react (아이콘) | ISC | 저작권 표시와 전문 | 고지 파일 (자동) |
 | Spring Boot, Spring, Tomcat, PDFBox, Jackson, Log4j API, Micrometer, commons-logging, SnakeYAML, JSpecify | Apache-2.0 | 라이선스 사본 제공, **NOTICE 파일 내용 전달**, 고친 파일에 변경 표시 | 고지 파일에 LICENSE·NOTICE 원문 (자동). 이 라이브러리들은 고쳐 쓰지 않음 |

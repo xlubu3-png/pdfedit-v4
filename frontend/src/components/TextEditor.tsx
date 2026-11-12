@@ -35,6 +35,8 @@ import { copyRich, copyText } from '../clipboard'
 import { downloadBlob } from '../download'
 import { sheetOf, sheetWith, workbookName } from '../excelExport'
 import { sheetsToXlsx } from '../xlsx'
+import { SheetPolish } from './SheetPolish'
+import type { Sheet } from '../tableGrid'
 import { ocrMessage, recognizeAll, straightenedNote } from '../ocr'
 import { lineOfCover, refitted } from '../refit'
 import { asLines, asTable, placed, rewrittenLines, selectableLines } from '../textSelect'
@@ -79,6 +81,7 @@ import {
   FileDown,
   FileImage,
   FileSpreadsheet,
+  Table2,
   FileSearch,
   ImagePlus,
   MoveHorizontal,
@@ -330,6 +333,11 @@ export function TextEditor({
   const overlayRef = useRef<HTMLDivElement>(null)
   /** The recognized line whose text is being corrected (the scan left as it is). */
   const [fixing, setFixing] = useState<number | null>(null)
+  /** 표 다듬기: this page's sheet open as a spreadsheet over the editor. */
+  const [polishing, setPolishing] = useState<{ sheets: { name: string; sheet: Sheet }[]; fileName: string } | null>(null)
+  /** Read by the editor's key and paste listeners: while the spreadsheet is open they are not the editor's. */
+  const polishOpen = useRef(false)
+  polishOpen.current = polishing !== null
   /** Pages whose note about boxes rewritten by an earlier version was closed. */
   const [oldNoteClosed, setOldNoteClosed] = useState<Set<string>>(() => new Set())
   /**
@@ -1529,6 +1537,22 @@ export function TextEditor({
     setStatus(`${name}로 저장했습니다`)
   }
 
+  /** 표 다듬기: this page's sheet, as {@link saveExcel} would write it, opened as a spreadsheet to be put right first. */
+  async function openPolish() {
+    await flush()
+    let sheet = sheetWith(straighten(pageText(), usedTurn), usedTables)
+    try {
+      sheet = sheetOf(pageText(), await fetchRulings(documentId, pageIndex), grids)
+    } catch {
+      // the lines found when the page opened will do
+    }
+    if (sheet.cells.length === 0) {
+      setStatus('표로 옮길 글자가 없습니다')
+      return
+    }
+    setPolishing({ sheets: [{ name: `${position + 1}쪽`, sheet }], fileName: workbookName(page.sourceFileName, total > 1 ? position + 1 : undefined) })
+  }
+
   /** Copies the text dragged over: as lines, and (when it is in a table) as the table too, for a spreadsheet. */
   async function copyPicked(cells: PlacedText[]) {
     const table = tableCopy(cells, true)
@@ -1707,6 +1731,7 @@ export function TextEditor({
           { label: '이 쪽 글자 모두 복사', onSelect: () => void copyPlain(asLines(pageText()), '이 쪽 글자') },
           { label: '표 모양으로 모두 복사 (엑셀)', onSelect: () => void copyTable(pageText(), false, '이 쪽 글자를 표 모양으로') },
           { label: '이 쪽을 엑셀 파일로 저장 (.xlsx)', onSelect: () => void saveExcel() },
+          { label: '표 다듬기 (엑셀 화면에서 고쳐 저장)…', onSelect: () => void openPolish() },
           { label: '표 칸 바로잡기…', onSelect: () => setFixingTables(true) },
           { label: '금액 검산 (수량×단가·합계·세액)', onSelect: () => checkPageSums() },
         ],
@@ -1797,6 +1822,7 @@ export function TextEditor({
         { label: '이 쪽 글자 모두 복사', onSelect: () => void copyPlain(asLines(pageText()), '이 쪽 글자') },
         { label: '표 모양으로 모두 복사 (엑셀)', onSelect: () => void copyTable(pageText(), false, '이 쪽 글자를 표 모양으로') },
         { label: '이 쪽을 엑셀 파일로 저장 (.xlsx)', onSelect: () => void saveExcel() },
+          { label: '표 다듬기 (엑셀 화면에서 고쳐 저장)…', onSelect: () => void openPolish() },
         { label: '표 칸 바로잡기…', onSelect: () => setFixingTables(true) },
           { label: '금액 검산 (수량×단가·합계·세액)', onSelect: () => checkPageSums() },
         ...fix,
@@ -2358,7 +2384,9 @@ export function TextEditor({
     }
   })
   useEffect(() => {
-    const listener = (e: globalThis.KeyboardEvent) => shortcut.current(e)
+    const listener = (e: globalThis.KeyboardEvent) => {
+      if (!polishOpen.current) shortcut.current(e)
+    }
     window.addEventListener('keydown', listener)
     return () => window.removeEventListener('keydown', listener)
   }, [])
@@ -2385,7 +2413,9 @@ export function TextEditor({
     }
   })
   useEffect(() => {
-    const listener = (e: ClipboardEvent) => pasteHandler.current(e)
+    const listener = (e: ClipboardEvent) => {
+      if (!polishOpen.current) pasteHandler.current(e)
+    }
     window.addEventListener('paste', listener)
     return () => window.removeEventListener('paste', listener)
   }, [])
@@ -2520,6 +2550,12 @@ export function TextEditor({
                 label="엑셀 저장"
                 title="이 페이지를 엑셀 파일(.xlsx)로 저장합니다. 표의 열 너비·합친 칸·테두리가 PDF와 같게 들어갑니다"
                 onClick={() => void saveExcel()}
+              />
+              <RibbonButton
+                icon={<Table2 />}
+                label="표 다듬기"
+                title="이 페이지의 표를 엑셀 화면으로 열어 값·수식·칸을 고친 뒤 엑셀 파일로 저장합니다 (PDF 원본은 그대로)"
+                onClick={() => void openPolish()}
               />
               <RibbonButton
                 icon={<FileImage />}
@@ -3187,6 +3223,7 @@ export function TextEditor({
           onClose={() => setFixing(null)}
         />
       )}
+      {polishing && <SheetPolish sheets={polishing.sheets} fileName={polishing.fileName} onClose={() => setPolishing(null)} />}
       {menu && (
         <ContextMenu
           x={menu.x}

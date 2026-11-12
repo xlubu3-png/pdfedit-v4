@@ -53,7 +53,8 @@ function contentTypes(count: number): string {
 
 function workbook(names: string[]): string {
   const sheets = names.map((n, i) => `<sheet name="${escape(n)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')
-  return XML_HEAD + `<workbook xmlns="${MAIN}" xmlns:r="${REL}"><sheets>${sheets}</sheets></workbook>`
+  // Formulas (put in through 표 다듬기) are worked out again by Excel as the file is opened.
+  return XML_HEAD + `<workbook xmlns="${MAIN}" xmlns:r="${REL}"><sheets>${sheets}</sheets><calcPr fullCalcOnLoad="1"/></workbook>`
 }
 
 function workbookRels(count: number): string {
@@ -89,11 +90,15 @@ interface Look {
   wrap: boolean
   /** Built-in number format: 0 general, 3 "#,##0", 4 "#,##0.00". */
   numFmt: number
+  bold?: boolean
+  /** Background, "RRGGBB". */
+  fill?: string
 }
 
 /** The workbook's fonts, borders and cell formats, each made once and shared. */
 class Styles {
-  private fonts: number[] = [11]
+  private fonts: string[] = ['11']
+  private fills: string[] = []
   private borders: string[] = ['0000']
   private xfs: string[] = ['']
   private looks = new Map<string, number>()
@@ -102,16 +107,25 @@ class Styles {
     const key = JSON.stringify(look)
     const known = this.looks.get(key)
     if (known !== undefined) return known
-    let font = this.fonts.indexOf(look.size)
-    if (font < 0) font = this.fonts.push(look.size) - 1
+    const fontKey = `${look.size}${look.bold ? 'b' : ''}`
+    let font = this.fonts.indexOf(fontKey)
+    if (font < 0) font = this.fonts.push(fontKey) - 1
+    // Fills 0 and 1 are the two Excel wants in every workbook; the cells' own follow.
+    let fill = 0
+    if (look.fill && /^[0-9a-fA-F]{6}$/.test(look.fill)) {
+      const colour = look.fill.toUpperCase()
+      fill = this.fills.indexOf(colour)
+      if (fill < 0) fill = this.fills.push(colour) - 1
+      fill += 2
+    }
     const b = look.border
     const borderKey = [b.left, b.right, b.top, b.bottom].map((x) => (x ? '1' : '0')).join('')
     let border = this.borders.indexOf(borderKey)
     if (border < 0) border = this.borders.push(borderKey) - 1
     const alignment = `<alignment horizontal="${look.align}" vertical="center"${look.wrap ? ' wrapText="1"' : ''}/>`
     const xf =
-      `<xf numFmtId="${look.numFmt}" fontId="${font}" fillId="0" borderId="${border}" xfId="0" applyNumberFormat="1" ` +
-      `applyFont="1" applyBorder="1" applyAlignment="1">${alignment}</xf>`
+      `<xf numFmtId="${look.numFmt}" fontId="${font}" fillId="${fill}" borderId="${border}" xfId="0" applyNumberFormat="1" ` +
+      `applyFont="1"${fill > 0 ? ' applyFill="1"' : ''} applyBorder="1" applyAlignment="1">${alignment}</xf>`
     const id = this.xfs.push(xf) - 1
     this.looks.set(key, id)
     return id
@@ -119,7 +133,10 @@ class Styles {
 
   xml(): string {
     const fonts = this.fonts
-      .map((size) => `<font><sz val="${size}"/><name val="${FONT}"/><family val="3"/><charset val="129"/></font>`)
+      .map((key) => `<font>${key.endsWith('b') ? '<b/>' : ''}<sz val="${parseFloat(key)}"/><name val="${FONT}"/><family val="3"/><charset val="129"/></font>`)
+      .join('')
+    const fills = this.fills
+      .map((rgb) => `<fill><patternFill patternType="solid"><fgColor rgb="FF${rgb}"/><bgColor indexed="64"/></patternFill></fill>`)
       .join('')
     const side = (name: string, on: string) => (on === '1' ? `<${name} style="thin"><color auto="1"/></${name}>` : `<${name}/>`)
     const borders = this.borders
@@ -130,7 +147,7 @@ class Styles {
       XML_HEAD +
       `<styleSheet xmlns="${MAIN}">` +
       `<fonts count="${this.fonts.length}">${fonts}</fonts>` +
-      '<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>' +
+      `<fills count="${this.fills.length + 2}"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>${fills}</fills>` +
       `<borders count="${this.borders.length}">${borders}</borders>` +
       '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
       `<cellXfs count="${this.xfs.length}">${xfs}</cellXfs>` +
@@ -178,8 +195,10 @@ function worksheet(sheet: Sheet, styles: Styles): string {
           // Text in a table wraps inside its cell; text outside the tables runs on over the empty cells beside it.
           wrap: cell.borders !== null || cell.lines.length > 1,
           numFmt: numeric && text.includes(',') ? (text.includes('.') ? 4 : 3) : 0,
+          ...(cell.bold ? { bold: true } : {}),
+          ...(cell.fill ? { fill: cell.fill } : {}),
         })
-        put(r, c, style, r === cell.row && c === cell.col ? cellValue(text, numeric) : '/>')
+        put(r, c, style, r === cell.row && c === cell.col ? cellValue(text, numeric, cell.formula) : '/>')
       }
     }
     if (r1 - cell.row > 1 || c1 - cell.col > 1) {
@@ -214,7 +233,13 @@ function worksheet(sheet: Sheet, styles: Styles): string {
 }
 
 /** The rest of a `<c` element: a number as a number ("44,060" → 44060), anything else as text; empty when blank. */
-function cellValue(text: string, numeric: boolean): string {
+function cellValue(text: string, numeric: boolean, formula?: string): string {
+  if (formula) {
+    // The formula with its last result; Excel works it out again when the file is opened.
+    const f = `<f>${escape(formula)}</f>`
+    if (numeric) return `>${f}<v>${Number(text.replace(/,/g, ''))}</v></c>`
+    return text === '' ? `>${f}</c>` : ` t="str">${f}<v>${escape(text)}</v></c>`
+  }
   if (text === '') return '/>'
   if (numeric) return `><v>${Number(text.replace(/,/g, ''))}</v></c>`
   return ` t="inlineStr"><is><t xml:space="preserve">${escape(text)}</t></is></c>`

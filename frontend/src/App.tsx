@@ -25,7 +25,9 @@ import { redactionMessage } from './redaction'
 import { exportFileName } from './exportName'
 import { keptPermissions } from './lock'
 import { LICENSE_LINKS } from './licenses'
-import { pagesToWorkbook, pagesToXlsx, workbookName } from './excelExport'
+import { pagesToSheets, pagesToWorkbook, pagesToXlsx, workbookName } from './excelExport'
+import { SheetPolish } from './components/SheetPolish'
+import type { Sheet } from './tableGrid'
 import { DEFAULT_IMAGE_CHOICE, imageExportFileName, imageExportStem } from './imageExport'
 import type { ImageChoice } from './imageExport'
 import { ocrMessage, recognizeAll, straightenedNote } from './ocr'
@@ -82,6 +84,7 @@ import {
   Undo2,
   Files,
   Archive,
+  Table2,
 } from 'lucide-react'
 import type { AppInfo, AppSettings, PageItem, ReplaceResult, UpdateInfo, UploadResponse } from './types'
 import { downloadBlob } from './download'
@@ -151,6 +154,8 @@ function App() {
   const [recent, setRecent] = useState<RecentWork[]>(loadRecent)
   const [redactOpen, setRedactOpen] = useState(false)
   const [compareOpen, setCompareOpen] = useState(false)
+  /** 표 다듬기: the sheets of the chosen pages open as a spreadsheet, and the name they are saved under. */
+  const [polish, setPolish] = useState<{ sheets: { name: string; sheet: Sheet }[]; fileName: string } | null>(null)
   /** A Hangul document open in the HWP editor, or null. */
   /** The Hangul document open in the HWP editor: a file, or a new empty document (file null); null when none is. */
   const [hwpDoc, setHwpDoc] = useState<{ file: File | null; key: string } | null>(null)
@@ -756,6 +761,32 @@ function App() {
     }
   }
 
+  /**
+   * 표 다듬기: the same sheets "엑셀로 내보내기" would write, opened as a spreadsheet to be put right first.
+   */
+  async function handlePolish() {
+    if (busy) return
+    const chosen = selectedKeys.size > 0 ? pages.filter((p) => selectedKeys.has(p.key)) : pages
+    if (chosen.length === 0) return
+    setBusy(true)
+    setError(null)
+    try {
+      const sources = new Set(chosen.map((p) => p.sourceFileName))
+      const base = sources.size === 1 ? [...sources][0] : '합친 문서'
+      const one = chosen.length === 1 && pages.length > 1 ? pages.findIndex((p) => p.key === chosen[0].key) + 1 : undefined
+      const { sheets } = await pagesToSheets(chosen, pages)
+      if (sheets.every((s) => s.sheet.cells.length === 0)) {
+        setNotice('표로 옮길 글자가 없습니다. 스캔 문서는 먼저 글자 인식을 해 주세요.')
+        return
+      }
+      setPolish({ sheets, fileName: workbookName(base, one) })
+    } catch (e) {
+      setError(errorText(e, '표를 열지 못했습니다'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   /** @param locked from "암호 걸어 내보내기": ask for a password even when no page came protected */
   async function handleExport(locked = false) {
     if (pages.length === 0 || busy) return
@@ -991,7 +1022,7 @@ function App() {
       const ctrl = e.ctrlKey || e.metaKey
       const code = keyCode(e)
       const elsewhere =
-        findOpen || redactOpen || compareOpen || hwpDoc !== null || drawKey !== null || editingKey !== null || inField
+        findOpen || redactOpen || compareOpen || polish !== null || hwpDoc !== null || drawKey !== null || editingKey !== null || inField
       // Undo and redo also when every page was taken out of the list: that is when they are wanted most.
       if (!elsewhere && ctrl && !e.altKey && ((code === 'KeyZ' && e.shiftKey) || (code === 'KeyY' && !e.shiftKey))) {
         e.preventDefault()
@@ -1446,6 +1477,16 @@ function App() {
                   disabled={busy}
                 />
                 <RibbonButton
+                  icon={<Table2 />}
+                  label="표 다듬기"
+                  title={
+                    (selectedKeys.size > 0 ? `선택한 ${selectedKeys.size}쪽` : '모든 페이지') +
+                    '의 표를 엑셀 화면으로 열어 값·수식·칸을 고친 뒤 엑셀 파일로 저장합니다 (PDF 원본은 그대로)'
+                  }
+                  onClick={() => void handlePolish()}
+                  disabled={busy}
+                />
+                <RibbonButton
                   icon={<FileLock />}
                   label="암호 걸어 내보내기"
                   title="열 때 암호를 묻는 PDF로 내려받습니다 (AES-256). 암호가 걸려 있던 문서는 원래의 인쇄·복사 제한도 다시 걸립니다."
@@ -1574,6 +1615,7 @@ function App() {
         />
       )}
 
+      {polish && <SheetPolish sheets={polish.sheets} fileName={polish.fileName} onClose={() => setPolish(null)} />}
       {hwpDoc && <HwpEditor key={hwpDoc.key} file={hwpDoc.file} onClose={() => setHwpDoc(null)} />}
 
       {redactOpen && drawKey === null && (

@@ -60,6 +60,30 @@ describe('sheetsToXlsx', () => {
 })
 
 describe('helpers', () => {
+  it('writes what 표 다듬기 put in: a formula with its last result, bold, a background', async () => {
+    const all = { top: true, right: true, bottom: true, left: true }
+    const sheet: Sheet = {
+      widths: [60, 60],
+      heights: [20, 20],
+      cells: [
+        { row: 0, col: 0, rowSpan: 1, colSpan: 1, lines: ['220,300'], borders: all, align: 'right', size: 10 },
+        { row: 0, col: 1, rowSpan: 1, colSpan: 1, lines: ['440,600'], borders: all, align: 'right', size: 10, formula: 'A1*2', bold: true, fill: 'fff2cc' },
+        { row: 1, col: 0, rowSpan: 1, colSpan: 1, lines: ['확인'], borders: null, align: 'left', size: 10, formula: 'IF(B1>0,"확인","")' },
+      ],
+    }
+    const files = await unzip(sheetsToXlsx([{ name: '1쪽', sheet }]))
+    const xml = files.get('xl/worksheets/sheet1.xml')!
+    expect(xml).toContain('<f>A1*2</f><v>440600</v>')
+    expect(xml).toContain('t="str"><f>IF(B1&gt;0,&quot;확인&quot;,&quot;&quot;)</f><v>확인</v>')
+    const styles = files.get('xl/styles.xml')!
+    expect(styles).toContain('<font><b/><sz val="10"/>')
+    expect(styles).toContain('<fills count="3">')
+    expect(styles).toContain('<fgColor rgb="FFFFF2CC"/>')
+    expect(styles).toMatch(/fillId="2"[^>]*applyFill="1"/)
+    // Excel works the formulas out again as it opens the file.
+    expect(files.get('xl/workbook.xml')).toContain('<calcPr fullCalcOnLoad="1"/>')
+  })
+
   it('checks data as ZIP does', () => {
     expect(crc32(new TextEncoder().encode('hello'))).toBe(0x3610a686)
   })

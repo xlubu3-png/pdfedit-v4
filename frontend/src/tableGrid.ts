@@ -645,6 +645,11 @@ export interface SheetCell {
   align: 'left' | 'center' | 'right'
   /** Font size in points, from the text's height on the page; null for an empty cell. */
   size: number | null
+  /** Set on a sheet worked on in 표 다듬기: a formula (without its "="), whose last result `lines` holds. */
+  formula?: string
+  bold?: boolean
+  /** The cell's background, "RRGGBB". */
+  fill?: string
 }
 
 /** The copied part as one sheet: column widths and row heights (points), and its cells. */

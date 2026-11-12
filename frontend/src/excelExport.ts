@@ -71,6 +71,15 @@ export async function pagesToXlsx(pages: PageItem[], all: PageItem[]): Promise<B
 
 /** {@link pagesToXlsx}, saying how many tables were joined over pages. */
 export async function pagesToWorkbook(pages: PageItem[], all: PageItem[]): Promise<{ blob: Blob; joined: number }> {
+  const { sheets, joined } = await pagesToSheets(pages, all)
+  return { blob: sheetsToXlsx(sheets), joined }
+}
+
+/** The sheets {@link pagesToWorkbook} writes, not yet written: for 표 다듬기, where they are put right first. */
+export async function pagesToSheets(
+  pages: PageItem[],
+  all: PageItem[],
+): Promise<{ sheets: { name: string; sheet: Sheet }[]; joined: number }> {
   const sheets = []
   const tables: Table[][] = []
   const places = pages.map((page) => all.findIndex((p) => p.key === page.key) + 1)
@@ -83,5 +92,5 @@ export async function pagesToWorkbook(pages: PageItem[], all: PageItem[]): Promi
     name: `이어진 표 ${places[j.pages[0]]}~${places[j.pages[j.pages.length - 1]]}쪽`,
     sheet: toSheet([{ kind: 'table' as const, table: j.table, top: 0 }]),
   }))
-  return { blob: sheetsToXlsx([...joined, ...sheets]), joined: joined.length }
+  return { sheets: [...joined, ...sheets], joined: joined.length }
 }

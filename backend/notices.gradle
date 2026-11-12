@@ -23,6 +23,13 @@ def javaWithoutFiles = [
 // Frontend packages without a license file of their own.
 def npmWithoutFiles = [
     '@rhwp/editor': new File(hwpStudioDir, 'LICENSE-rhwp.txt'),
+    // 표 다듬기 (Univer) and the packages it brings that ship no license file: the texts their authors state.
+    '@univerjs/protocol'     : new File(textsDir, 'npm-univer-LICENSE.txt'),
+    'franc-min'              : new File(textsDir, 'npm-franc-min-LICENSE.txt'),
+    'ot-json1'               : new File(textsDir, 'npm-ot-json1-LICENSE.txt'),
+    'ot-text-unicode'        : new File(textsDir, 'npm-ot-text-unicode-LICENSE.txt'),
+    'react-remove-scroll-bar': new File(textsDir, 'npm-react-remove-scroll-bar-LICENSE.txt'),
+    'unicount'               : new File(textsDir, 'npm-unicount-LICENSE.txt'),
 ]
 
 def licenseName = { String raw ->

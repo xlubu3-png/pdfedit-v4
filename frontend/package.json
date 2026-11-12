@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "@rhwp/editor": "0.8.7",
+    "@univerjs/preset-sheets-core": "1.3.1",
+    "@univerjs/presets": "1.3.1",
     "lucide-react": "1.55.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"

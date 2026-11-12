@@ -21,11 +21,18 @@ const textOf = (cell: TableCell | undefined) =>
   cell ? rows(cell.texts).map((row) => row.map((t) => t.text.trim()).join(' ')).join(' ').trim() : ''
 const norm = (s: string) => s.replace(/\s+/g, '')
 
+interface Item {
+  key: string
+  label: string
+  values: Map<string, string>
+}
+
 /** A table read as rows of named values: the heading row's labels, and for each row below it its key and values. */
 interface ItemTable {
   columns: string[]
   keyColumn: number
-  items: { key: string; label: string; values: Map<string, string> }[]
+  /** Each row: its name without spaces (several rows may have the same one), the name as written, its values. */
+  items: Item[]
 }
 
 /** The table read as items, or null when it has no heading row with a column naming its rows. */
@@ -41,7 +48,6 @@ export function itemsOf(table: Table): ItemTable | null {
     const keyColumn = columns.findIndex((label) => NAME_HEADING.test(label))
     if (keyColumn < 0 || columns.filter((l) => l !== '').length < 2) continue
     const items: ItemTable['items'] = []
-    const seen = new Map<string, number>()
     for (let r = heading + 1; r < rowCount; r++) {
       const label = textOf(at(r, keyColumn))
       const values = new Map<string, string>()
@@ -53,47 +59,97 @@ export function itemsOf(table: Table): ItemTable | null {
       // A row without a name: its first text names it (a 합계 row whose label spans the first columns).
       const name = label || textOf(table.cells.filter((x) => x.row === r).sort((x, y) => x.col - y.col)[0])
       if (!name || [...values.values()].every((v) => v === '') && !label) continue
-      const base = norm(name)
-      const n = (seen.get(base) ?? 0) + 1
-      seen.set(base, n)
-      items.push({ key: n > 1 ? `${base}#${n}` : base, label: name, values })
+      items.push({ key: norm(name), label: name, values })
     }
     if (items.length > 0) return { columns, keyColumn, items }
   }
   return null
 }
 
+const same = (x: string, y: string) => {
+  if (AMOUNT.test(x) && AMOUNT.test(y)) return x.replace(/[^\d.\-−]/g, '') === y.replace(/[^\d.\-−]/g, '')
+  return norm(x) === norm(y)
+}
+
+/** How many of the values two rows have under the same headings are the same. */
+function alike(a: Item, b: Item): number {
+  let n = 0
+  for (const [column, value] of a.values) {
+    const other = b.values.get(column)
+    if (other !== undefined && value !== '' && same(value, other)) n++
+  }
+  return n
+}
+
+/**
+ * The rows of one name in the old and the new version paired off: the two most alike first (the same size, the
+ * same unit price ...), rows as alike as each other in their order. What is left over on either side has no pair.
+ */
+function pairs(before: Item[], after: Item[]): { pairs: [Item, Item][]; removed: Item[]; added: Item[] } {
+  const candidates: { i: number; j: number; score: number }[] = []
+  before.forEach((a, i) => after.forEach((b, j) => candidates.push({ i, j, score: alike(a, b) })))
+  candidates.sort((x, y) => y.score - x.score || Math.abs(x.i - x.j) - Math.abs(y.i - y.j) || x.i - y.i)
+  const usedA = new Set<number>()
+  const usedB = new Set<number>()
+  const found: { i: number; j: number }[] = []
+  for (const c of candidates) {
+    if (usedA.has(c.i) || usedB.has(c.j)) continue
+    usedA.add(c.i)
+    usedB.add(c.j)
+    found.push(c)
+  }
+  found.sort((x, y) => x.i - y.i)
+  return {
+    pairs: found.map((f) => [before[f.i], after[f.j]]),
+    removed: before.filter((_, i) => !usedA.has(i)),
+    added: after.filter((_, j) => !usedB.has(j)),
+  }
+}
+
 /**
  * What changed between two versions of a document's item tables (a quote's first and second offer): the items
  * matched by their names, each value compared under its column's heading; items only in the new one are added,
- * only in the old one removed. Amounts compare as numbers ("220,300원" is "220,300").
+ * only in the old one removed. Amounts compare as numbers ("220,300원" is "220,300"). An item named several times
+ * (the same part in two sizes, or in two tables) is matched with the row most like it, and told apart in the
+ * result by its place: "앵글 (2)".
  */
 export function compareTables(before: Table[], after: Table[]): { changes: TableChange[]; compared: boolean } {
   const a = before.map(itemsOf).filter((t): t is ItemTable => t !== null)
   const b = after.map(itemsOf).filter((t): t is ItemTable => t !== null)
   if (a.length === 0 || b.length === 0) return { changes: [], compared: false }
-  const itemsA = new Map(a.flatMap((t) => t.items.map((i) => [i.key, i] as const)))
-  const itemsB = new Map(b.flatMap((t) => t.items.map((i) => [i.key, i] as const)))
-  const same = (x: string, y: string) => {
-    if (AMOUNT.test(x) && AMOUNT.test(y)) return x.replace(/[^\d.\-−]/g, '') === y.replace(/[^\d.\-−]/g, '')
-    return norm(x) === norm(y)
+  const byName = (tables: ItemTable[]) => {
+    const groups = new Map<string, Item[]>()
+    for (const item of tables.flatMap((t) => t.items)) groups.set(item.key, [...(groups.get(item.key) ?? []), item])
+    return groups
   }
+  const groupsA = byName(a)
+  const groupsB = byName(b)
+  /** The name as shown: with its place among the rows of that name when there are several. */
+  const shown = (item: Item, group: Item[]) => (group.length > 1 ? `${item.label} (${group.indexOf(item) + 1})` : item.label)
+  const valuesOf = (item: Item) => [...item.values.values()].filter(Boolean).join(' · ')
   const changes: TableChange[] = []
-  for (const [key, item] of itemsA) {
-    const other = itemsB.get(key)
-    if (!other) {
-      changes.push({ kind: 'removed', item: item.label, column: '', before: [...item.values.values()].filter(Boolean).join(' · '), after: '' })
-      continue
+  const added: TableChange[] = []
+  for (const [key, group] of groupsA) {
+    const others = groupsB.get(key) ?? []
+    const matched = pairs(group, others)
+    for (const [item, other] of matched.pairs) {
+      for (const [column, value] of item.values) {
+        const next = other.values.get(column)
+        if (next !== undefined && !same(value, next)) {
+          changes.push({ kind: 'changed', item: shown(item, group), column, before: value, after: next })
+        }
+      }
     }
-    for (const [column, value] of item.values) {
-      const next = other.values.get(column)
-      if (next !== undefined && !same(value, next)) changes.push({ kind: 'changed', item: item.label, column, before: value, after: next })
+    for (const item of matched.removed) {
+      changes.push({ kind: 'removed', item: shown(item, group), column: '', before: valuesOf(item), after: '' })
+    }
+    for (const item of matched.added) {
+      added.push({ kind: 'added', item: shown(item, others), column: '', before: '', after: valuesOf(item) })
     }
   }
-  for (const [key, item] of itemsB) {
-    if (!itemsA.has(key)) {
-      changes.push({ kind: 'added', item: item.label, column: '', before: '', after: [...item.values.values()].filter(Boolean).join(' · ') })
-    }
+  for (const [key, group] of groupsB) {
+    if (groupsA.has(key)) continue
+    for (const item of group) added.push({ kind: 'added', item: shown(item, group), column: '', before: '', after: valuesOf(item) })
   }
-  return { changes, compared: true }
+  return { changes: [...changes, ...added], compared: true }
 }

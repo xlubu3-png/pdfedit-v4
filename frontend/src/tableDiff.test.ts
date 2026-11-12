@@ -45,4 +45,31 @@ describe('compareTables', () => {
     expect(compareTables([first], [first]).changes).toEqual([])
     expect(compareTables([table([['a', 'b']])], [first]).compared).toBe(false)
   })
+
+  it('pairs rows of the same name by what else is the same: the size, not the order', () => {
+    const before = table([
+      ['품명', '규격', '수량', '단가'],
+      ['앵글', '30x30', '10', '1,000'],
+      ['앵글', '50x50', '4', '2,500'],
+    ])
+    // The new offer lists the larger one first, dearer, and adds a third size.
+    const after = table([
+      ['품명', '규격', '수량', '단가'],
+      ['앵글', '50x50', '4', '2,800'],
+      ['앵글', '30x30', '10', '1,000'],
+      ['앵글', '75x75', '2', '4,000'],
+    ])
+    expect(compareTables([before], [after]).changes).toEqual([
+      { kind: 'changed', item: '앵글 (2)', column: '단가', before: '2,500', after: '2,800' },
+      { kind: 'added', item: '앵글 (3)', column: '', before: '', after: '75x75 · 2 · 4,000' },
+    ])
+  })
+
+  it('compares every table: an item named in two tables is not lost to the later one', () => {
+    const labour = (cost: string) => table([['항목', '금액'], ['설치비', cost]])
+    const parts = (cost: string) => table([['품명', '금액'], ['운반비', cost], ['설치비', '50,000']])
+    expect(compareTables([labour('100,000'), parts('30,000')], [labour('120,000'), parts('30,000')]).changes).toEqual([
+      { kind: 'changed', item: '설치비 (1)', column: '금액', before: '100,000', after: '120,000' },
+    ])
+  })
 })

@@ -112,7 +112,10 @@ public class PageOcr implements DisposableBean {
                 lines.add(text);
             }
         }
-        return new Result(lines, alreadyText, (System.nanoTime() - start) / 1e9);
+        double seconds = (System.nanoTime() - start) / 1e9;
+        // One line a page, kept in the log the problem report sends: how long a page took on the user's PC.
+        log.info("글자 인식 {}쪽: {} ms ({}줄)", pageIndex + 1, Math.round(seconds * 1000), lines.size());
+        return new Result(lines, alreadyText, seconds);
     }
 
     /**

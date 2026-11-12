@@ -285,7 +285,7 @@ public class PdfController {
         byte[] straight = degrees == 0 ? page : PageStraightener.straightened(page, index, degrees);
         long t3 = System.nanoTime();
         String copyId = store.store(info.fileName(), straight, 1);
-        log.debug("straighten page {}: way up {} ms, slant {} ms, turned {} ms, stored {} ms", pageIndex,
+        log.info("기울기 바로잡기 {}쪽: 방향 {} ms, 기울기 {} ms, 돌리기 {} ms, 저장 {} ms", pageIndex + 1,
                 (t1 - t0) / 1_000_000, (t2 - t1) / 1_000_000, (t3 - t2) / 1_000_000, (System.nanoTime() - t3) / 1_000_000);
         if (quarter == 0) {
             // Turned a little, the page's edits still sit where they were; turned a quarter or more they would not.

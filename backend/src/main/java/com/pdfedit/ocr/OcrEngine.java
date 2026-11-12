@@ -28,6 +28,8 @@ import ai.onnxruntime.OrtSession;
  */
 public final class OcrEngine implements AutoCloseable {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(OcrEngine.class);
+
     /** The detector works on pictures whose shorter side is at least this (smaller ones are enlarged). */
     private static final int DET_MIN_SIDE = 736;
     /** Bigger pictures are reduced first: more pixels than this cost time and add nothing at 200-300 dpi. */
@@ -65,6 +67,10 @@ public final class OcrEngine implements AutoCloseable {
     private static final double ORIENT_SURE = 0.75;
     /** ... and, to turn a page of lying lines upside down, this much more surely than as it is. */
     private static final double ORIENT_MARGIN = 0.12;
+    /** A line longer than this many times its height is read for its way up by its first part of that length only. */
+    private static final double ORIENT_PART = 10;
+    /** A picture at least this high is first judged by its middle half alone. */
+    private static final int ORIENT_BAND_MIN_PX = 600;
 
     private final OrtEnvironment env;
     private final OrtSession detector;
@@ -173,7 +179,9 @@ public final class OcrEngine implements AutoCloseable {
     /** One reading, the detector given the picture enlarged by {@code boost}; corners in the picture's pixels. */
     private Pass readAt(BufferedImage image, int[] rgb, double boost) throws OrtException {
         int width = image.getWidth();
+        long t0 = System.nanoTime();
         List<float[]> boxes = joinColumns(detect(rgb, width, image.getHeight(), boost), rgb, width);
+        long t1 = System.nanoTime();
         List<int[]> crops = new ArrayList<>(boxes.size());
         List<int[]> sizes = new ArrayList<>(boxes.size());
         List<Way> ways = new ArrayList<>(boxes.size());
@@ -198,7 +206,9 @@ public final class OcrEngine implements AutoCloseable {
             }
         }
         Read[] candidates = new Read[crops.size()];
+        long t2 = System.nanoTime();
         recognize(crops, sizes, candidates);
+        long t3 = System.nanoTime();
         Read[] reads = new Read[boxes.size()];
         Read[] downReads = new Read[boxes.size()];
         Read[] upReads = new Read[boxes.size()];
@@ -254,6 +264,11 @@ public final class OcrEngine implements AutoCloseable {
                 continue;
             }
             lines.add(new OcrLine(read.text(), read.score(), allBoxes.get(k).clone(), read.centers(), read.orientation()));
+        }
+        if (log.isDebugEnabled()) {
+            log.debug("read {}x{} boost {}: detect {} ms ({} boxes), crops {} ms ({}), recognize {} ms, after {} ms; kept {}, dropped {}",
+                    width, image.getHeight(), boost, (t1 - t0) / 1_000_000, boxes.size(), (t2 - t1) / 1_000_000, crops.size(),
+                    (t3 - t2) / 1_000_000, (System.nanoTime() - t3) / 1_000_000, lines.size(), dropped);
         }
         return new Pass(lines, dropped);
     }
@@ -542,30 +557,66 @@ public final class OcrEngine implements AutoCloseable {
             double scale = (double) MAX_SIDE / Math.max(picture.getWidth(), picture.getHeight());
             image = scaled(picture, (int) (picture.getWidth() * scale), (int) (picture.getHeight() * scale));
         }
+        // Looking for the lines is most of the work, and it goes by the picture's size: the middle half of the page
+        // has lines enough on most pages; the whole page is looked at only when it has not.
+        int h = image.getHeight();
+        if (h >= ORIENT_BAND_MIN_PX) {
+            Integer turn = turnOf(image.getSubimage(0, h / 4, image.getWidth(), h / 2));
+            if (turn != null) {
+                return turn;
+            }
+        }
+        Integer turn = turnOf(image);
+        return turn == null ? 0 : turn;
+    }
+
+    /** The turn told from this picture's lines; null when it has too few lines to tell. */
+    private Integer turnOf(BufferedImage image) throws OrtException {
         int width = image.getWidth();
         int height = image.getHeight();
+        long t0 = System.nanoTime();
         List<float[]> boxes = new ArrayList<>(detect(image.getRGB(0, 0, width, height, null, 0, width), width, height, 1));
+        log.debug("way up {}x{}: lines found in {} ms", width, height, (System.nanoTime() - t0) / 1_000_000);
         List<BufferedImage> lying = new ArrayList<>();
         List<BufferedImage> standing = new ArrayList<>();
         boxes.sort(Comparator.comparingDouble(b -> -Math.max(Math.hypot(b[2] - b[0], b[3] - b[1]),
                 Math.hypot(b[6] - b[0], b[7] - b[1]))));
         for (float[] box : boxes) {
-            BufferedImage crop = crop(image, box);
-            if (crop.getWidth() >= ORIENT_SHAPE * crop.getHeight() && crop.getWidth() >= ORIENT_MIN_PX) {
-                lying.add(crop);
-            } else if (crop.getHeight() >= ORIENT_SHAPE * crop.getWidth() && crop.getHeight() >= ORIENT_MIN_PX) {
-                standing.add(crop);
+            // Only the first few of each kind are read: the rest need not even be cut out.
+            if (lying.size() >= ORIENT_LINES && standing.size() >= ORIENT_LINES) {
+                break;
+            }
+            double across = Math.hypot(box[2] - box[0], box[3] - box[1]);
+            double down = Math.hypot(box[6] - box[0], box[7] - box[1]);
+            boolean lies = across >= ORIENT_SHAPE * down && across >= ORIENT_MIN_PX;
+            boolean stands = down >= ORIENT_SHAPE * across && down >= ORIENT_MIN_PX;
+            if ((lies && lying.size() < ORIENT_LINES) || (stands && standing.size() < ORIENT_LINES)) {
+                BufferedImage crop = crop(image, box);
+                if (crop.getWidth() >= ORIENT_SHAPE * crop.getHeight() && crop.getWidth() >= ORIENT_MIN_PX) {
+                    // A dozen letters tell which way up a line is as well as the whole line does, and reading
+                    // costs by the line's length: a long line gives its first part only.
+                    int part = (int) (ORIENT_PART * crop.getHeight());
+                    lying.add(crop.getWidth() > part ? crop.getSubimage(0, 0, part, crop.getHeight()) : crop);
+                } else if (crop.getHeight() >= ORIENT_SHAPE * crop.getWidth() && crop.getHeight() >= ORIENT_MIN_PX) {
+                    int part = (int) (ORIENT_PART * crop.getWidth());
+                    standing.add(crop.getHeight() > part ? crop.getSubimage(0, 0, crop.getWidth(), part) : crop);
+                }
             }
         }
         boolean onItsSide = standing.size() >= ORIENT_MIN_LINES && standing.size() > 2 * lying.size();
         List<BufferedImage> lines = onItsSide ? standing : lying;
         if (lines.size() < ORIENT_MIN_LINES) {
-            return 0;
+            return null;
         }
         lines = lines.subList(0, Math.min(ORIENT_LINES, lines.size()));
         // Lying lines: as they are (0) or upside down (180). Standing ones: what runs upwards, turned a quarter
         // right, reads when the page is turned 90 clockwise; what runs downwards, turned left, at 270.
         double first = sureness(lines, onItsSide ? l -> turned(l, false) : l -> l);
+        if (!onItsSide && first > 1 - ORIENT_MARGIN) {
+            // Read this surely as it lies, no reading upside down can be surer by the margin it takes: the usual
+            // page, upright, is told with half the reading.
+            return 0;
+        }
         double second = sureness(lines, onItsSide ? l -> turned(l, true) : OcrEngine::upsideDown);
         if (onItsSide) {
             return Math.max(first, second) < ORIENT_SURE ? 0 : first >= second ? 90 : 270;

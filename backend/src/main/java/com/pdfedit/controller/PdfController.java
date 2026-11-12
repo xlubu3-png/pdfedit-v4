@@ -53,6 +53,8 @@ import com.pdfedit.text.PageStraightener;
 @RequestMapping("/api/v1/pdf")
 public class PdfController {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(PdfController.class);
+
     static final String REDACTION_HEADER = "X-Redaction-Report";
     /** "pictures=12;before=24000000;after=3100000": what storing the pictures smaller saved (용량 줄이기). */
     static final String SHRINK_HEADER = "X-Shrink-Report";
@@ -256,6 +258,7 @@ public class PdfController {
                 return new StraightenResponse(null, 0, 0);
             }
         }
+        long t0 = System.nanoTime();
         int quarter = 0;
         if (shown % 360 == 0 && pageOcr != null) {
             try {
@@ -270,15 +273,20 @@ public class PdfController {
             page = PageRotationBaker.bake(PageStraightener.quarterTurned(pdf, pageIndex, quarter));
             index = 0;
         }
+        long t1 = System.nanoTime();
         double degrees;
         try (PDDocument doc = Loader.loadPDF(page)) {
             degrees = PageStraightener.angle(doc, index);
         }
+        long t2 = System.nanoTime();
         if (quarter == 0 && degrees == 0) {
             return new StraightenResponse(null, 0, 0);
         }
         byte[] straight = degrees == 0 ? page : PageStraightener.straightened(page, index, degrees);
+        long t3 = System.nanoTime();
         String copyId = store.store(info.fileName(), straight, 1);
+        log.debug("straighten page {}: way up {} ms, slant {} ms, turned {} ms, stored {} ms", pageIndex,
+                (t1 - t0) / 1_000_000, (t2 - t1) / 1_000_000, (t3 - t2) / 1_000_000, (System.nanoTime() - t3) / 1_000_000);
         if (quarter == 0) {
             // Turned a little, the page's edits still sit where they were; turned a quarter or more they would not.
             store.copyPageEdits(documentId, pageIndex, copyId, 0);

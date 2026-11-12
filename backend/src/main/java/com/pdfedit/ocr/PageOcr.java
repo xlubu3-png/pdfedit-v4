@@ -79,11 +79,16 @@ public class PageOcr implements DisposableBean {
             crop = doc.getPage(pageIndex).getCropBox();
             picture = new PDFRenderer(doc).renderImageWithDPI(pageIndex, DPI, ImageType.RGB);
         }
+        long drawn = System.nanoTime();
         List<TextRunDto> runs = textEditService.describePage(pdf, pageIndex, PageEdits.NONE).runs();
+        long described = System.nanoTime();
         List<OcrLine> read;
         try {
             // Read off the picture cleaned where it is faint or speckled; the places found are the same.
-            read = engine().read(ScanCleanup.forReading(picture));
+            BufferedImage cleaned = ScanCleanup.forReading(picture);
+            log.debug("page {} for reading: drawn {} ms, its text {} ms, cleaned {} ms", pageIndex, (drawn - start) / 1_000_000,
+                    (described - drawn) / 1_000_000, (System.nanoTime() - described) / 1_000_000);
+            read = engine().read(cleaned);
         } catch (OrtException e) {
             throw new OcrUnavailableException(e);
         }
@@ -115,12 +120,19 @@ public class PageOcr implements DisposableBean {
      * reader tells from its lines; 0 when it is upright or cannot be told.
      */
     public int uprightTurn(byte[] pdf, int pageIndex) throws IOException {
+        long t0 = System.nanoTime();
         BufferedImage picture;
         try (PDDocument doc = Loader.loadPDF(pdf)) {
             picture = new PDFRenderer(doc).renderImageWithDPI(pageIndex, ORIENT_DPI, ImageType.RGB);
         }
+        long t1 = System.nanoTime();
         try {
-            return engine().uprightTurn(ScanCleanup.forReading(picture));
+            BufferedImage cleaned = ScanCleanup.forReading(picture);
+            long t2 = System.nanoTime();
+            int turn = engine().uprightTurn(cleaned);
+            log.debug("way up of page {}: drawn {} ms, cleaned {} ms, told {} ms", pageIndex, (t1 - t0) / 1_000_000,
+                    (t2 - t1) / 1_000_000, (System.nanoTime() - t2) / 1_000_000);
+            return turn;
         } catch (OrtException e) {
             throw new OcrUnavailableException(e);
         }

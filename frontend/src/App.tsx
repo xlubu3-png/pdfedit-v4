@@ -146,7 +146,8 @@ function App() {
   /** Just-opened documents that look scanned: the screen offers to recognize their text. */
   const [scanSuggest, setScanSuggest] = useState<{ files: string[]; pages: PageItem[] } | null>(null)
   /** How far a text recognition run is; null when none runs. */
-  const [ocrProgress, setOcrProgress] = useState<{ done: number; total: number } | null>(null)
+  /** How far reading the scans got; `straightening` while the pages are first set straight (no text is read yet). */
+  const [ocrProgress, setOcrProgress] = useState<{ done: number; total: number; straightening?: boolean } | null>(null)
   const ocrStop = useRef(false)
   /** A note about the last upload or export (a file opened with its password, what a redaction did). */
   const [notice, setNotice] = useState<string | null>(null)
@@ -323,6 +324,12 @@ function App() {
       // Pages fed askew are set straight first: they are read better, and their lines then lie level.
       const { copies: turned, upright } =
         settings?.straightenOnOcr === false ? { copies: new Map<string, PageItem>(), upright: 0 } : await straighten(chosen)
+      if (ocrStop.current) {
+        // Stopped while the pages were being set straight: nothing is read.
+        const stopped = (straightenedNote(turned.size, upright) + '글자 인식은 중지했습니다.').trim()
+        setNotice(stopped)
+        return stopped
+      }
       const message =
         straightenedNote(turned.size, upright) + (await recognize(chosen.map((p) => turned.get(p.key) ?? p)))
       setNotice(message)
@@ -362,8 +369,19 @@ function App() {
   async function straighten(targets: PageItem[]): Promise<{ copies: Map<string, PageItem>; upright: number }> {
     const copies = new Map<string, PageItem>()
     let upright = 0
-    for (const p of targets) {
-      const result = await straightenPage(p.documentId, p.pageIndex, p.rotation)
+    ocrStop.current = false
+    for (const [done, p] of targets.entries()) {
+      // Shown as it goes (a second or so a page), and stopped by 중지 like the reading: the pages set straight so
+      // far are kept.
+      if (ocrStop.current) break
+      setOcrProgress({ done, total: targets.length, straightening: true })
+      let result
+      try {
+        result = await straightenPage(p.documentId, p.pageIndex, p.rotation)
+      } catch (e) {
+        setOcrProgress(null)
+        throw e
+      }
       if (!result.documentId) continue
       if (result.quarter !== 0) upright++
       copies.set(p.key, {
@@ -376,6 +394,8 @@ function App() {
         ...(p.lockedPermissions === undefined ? {} : { lockedPermissions: p.lockedPermissions }),
       })
     }
+    // The reading that follows shows its own progress; alone (the editor's one page) nothing is left showing.
+    setOcrProgress(null)
     if (copies.size > 0) {
       changePages((prev) => prev.map((p) => copies.get(p.key) ?? p))
       setSelectedKeys((prev) => new Set([...prev].map((k) => copies.get(k)?.key ?? k)))
@@ -400,10 +420,11 @@ function App() {
       }
       const again = targets.filter((p) => turned.has(p.key) && (p.ocrLines ?? 0) > 0).map((p) => turned.get(p.key)!)
       const note = straightenedNote(turned.size, upright)
-      setNotice(again.length > 0 ? note + (await recognize(again)) : note.trim())
+      setNotice(again.length > 0 && !ocrStop.current ? note + (await recognize(again)) : note.trim())
     } catch (e) {
       setError(errorText(e, '쪽의 기울기를 바로잡지 못했습니다'))
     } finally {
+      setOcrProgress(null)
       setBusy(false)
     }
   }
@@ -1243,7 +1264,7 @@ function App() {
       {ocrProgress && (
         <div className="info-banner update-banner" role="status">
           <span>
-            글자 인식 중… {ocrProgress.done}/{ocrProgress.total}쪽
+            {ocrProgress.straightening ? '스캔 방향·기울기 확인 중…' : '글자 인식 중…'} {ocrProgress.done}/{ocrProgress.total}쪽
           </span>
           <button type="button" onClick={() => (ocrStop.current = true)}>
             중지

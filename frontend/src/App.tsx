@@ -32,6 +32,8 @@ import { ocrMessage, recognizeAll, straightenedNote } from './ocr'
 import { keyCode } from './keys'
 import { dragHasFiles, pickPdfs } from './pdfFiles'
 import { clearSession, loadSession, saveSession } from './session'
+import { loadRecent, orphans, saveRecent, whenText, withWork } from './recent'
+import type { RecentWork } from './recent'
 import { outcomeNote, readSkippedVersion, shouldAnnounce, skipVersion } from './updateNotice'
 import { CompareView } from './components/CompareView'
 import { FindReplaceDialog } from './components/FindReplaceDialog'
@@ -79,6 +81,7 @@ import {
   Trash,
   Undo2,
   Files,
+  Archive,
 } from 'lucide-react'
 import type { AppInfo, AppSettings, PageItem, ReplaceResult, UpdateInfo, UploadResponse } from './types'
 import { downloadBlob } from './download'
@@ -144,6 +147,8 @@ function App() {
   const ocrStop = useRef(false)
   /** A note about the last upload or export (a file opened with its password, what a redaction did). */
   const [notice, setNotice] = useState<string | null>(null)
+  /** Page lists put aside (보관하고 비우기), to be taken up again from the start screen. */
+  const [recent, setRecent] = useState<RecentWork[]>(loadRecent)
   const [redactOpen, setRedactOpen] = useState(false)
   const [compareOpen, setCompareOpen] = useState(false)
   /** A Hangul document open in the HWP editor, or null. */
@@ -898,14 +903,75 @@ function App() {
 
   function handleStartOver() {
     if (!window.confirm('모든 페이지와 수정 내용이 삭제되며 되돌릴 수 없습니다. 저장된 문서 사본도 함께 삭제됩니다. 모두 지울까요?')) return
-    // The server keeps a copy of every uploaded file; starting over is the moment to remove them.
-    for (const documentId of new Set(pages.map((p) => p.documentId))) void deleteDocument(documentId)
+    // The server keeps a copy of every uploaded file; starting over is the moment to remove them - but not one
+    // that work put aside still uses.
+    const aside = new Set(recent.flatMap((w) => w.pages).map((p) => p.documentId))
+    for (const documentId of new Set(pages.map((p) => p.documentId))) {
+      if (!aside.has(documentId)) void deleteDocument(documentId)
+    }
     setPages([])
     forgetPageHistory() // the documents are deleted from the server too: there is nothing to go back to
     setSelectedKeys(new Set())
     setEditingKey(null)
     setRestoredNote(null)
     clearSession()
+  }
+
+  function keepRecent(list: RecentWork[]) {
+    setRecent(list)
+    saveRecent(list)
+  }
+
+  /**
+   * 보관하고 비우기: the page list is put aside - its documents and edits stay on the server - and the list is
+   * emptied for other work. It is taken up again from 최근 작업 on the start screen.
+   */
+  function handlePutAside() {
+    if (busy || pages.length === 0) return
+    const { list, dropped } = withWork(recent, pages, Date.now())
+    // The oldest work gives way: its documents go with it, unless something else still uses them.
+    for (const gone of dropped) for (const id of orphans(gone, list, [])) void deleteDocument(id)
+    keepRecent(list)
+    setPages([])
+    forgetPageHistory() // undoing would bring back pages that are now put aside as well
+    setSelectedKeys(new Set())
+    setEditingKey(null)
+    setRestoredNote(null)
+    clearSession()
+    setNotice(`작업을 보관했습니다: ${list[0].title} (${list[0].pages.length}쪽). '최근 작업'에서 다시 열 수 있습니다.`)
+  }
+
+  /** Takes work put aside up again: its pages go to the end of the page list, as they were. */
+  async function handleOpenRecent(work: RecentWork) {
+    if (busy) return
+    const rest = recent.filter((w) => w.id !== work.id)
+    try {
+      const ids = [...new Set(work.pages.map((p) => p.documentId))]
+      const found = new Map(await Promise.all(ids.map(async (id) => [id, await fetchDocumentInfo(id)] as const)))
+      const have = new Set(pages.map((p) => p.key))
+      const kept = work.pages.filter((p) => {
+        const info = found.get(p.documentId)
+        return info != null && p.pageIndex < info.pageCount && !have.has(p.key)
+      })
+      keepRecent(rest)
+      if (kept.length === 0) {
+        setNotice(`'${work.title}'의 문서가 남아 있지 않아 열지 못했습니다 (보관 기간이 지났거나 지워졌습니다).`)
+        return
+      }
+      changePages((prev) => [...prev, ...kept])
+      const lost = work.pages.length - kept.length
+      setNotice(`'${work.title}' ${kept.length}쪽을 다시 열었습니다.${lost > 0 ? ` ${lost}쪽은 문서가 남아 있지 않아 빠졌습니다.` : ''}`)
+    } catch (e) {
+      setError(errorText(e, '보관한 작업을 열지 못했습니다. 잠시 뒤 다시 시도해 주세요.'))
+    }
+  }
+
+  /** Takes work put aside off the list, and its documents off the server. */
+  function handleForgetRecent(work: RecentWork) {
+    if (!window.confirm(`'${work.title}' 작업과 수정 내용을 지웁니다. 되돌릴 수 없습니다. 지울까요?`)) return
+    const rest = recent.filter((w) => w.id !== work.id)
+    for (const id of orphans(work, rest, pages)) void deleteDocument(id)
+    keepRecent(rest)
   }
 
   /**
@@ -1076,6 +1142,27 @@ function App() {
         </button>
       </div>
 
+      {recent.length > 0 && (
+        <section className="recent-work" aria-label="최근 작업">
+          <h2>최근 작업</h2>
+          <ul>
+            {recent.map((work) => (
+              <li key={work.id}>
+                <button type="button" className="recent-open" onClick={() => void handleOpenRecent(work)} disabled={busy} title="보관한 그대로 목록 끝에 다시 엽니다">
+                  <span className="recent-title">{work.title}</span>
+                  <span className="recent-meta">
+                    {work.pages.length}쪽 · {whenText(work.savedAt, Date.now())}
+                  </span>
+                </button>
+                <button type="button" className="recent-forget" onClick={() => handleForgetRecent(work)} disabled={busy} aria-label={`${work.title} 지우기`} title="이 작업과 수정 내용을 지웁니다">
+                  <Trash size={14} aria-hidden="true" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {restoredNote && (
         <div className="info-banner">
           <span>{restoredNote}</span>
@@ -1185,6 +1272,13 @@ function App() {
                   disabled={busy}
                 />
                 <RibbonButton icon={<FilePlus />} label="빈 페이지" title="목록 끝에 빈 페이지를 넣습니다" onClick={() => handleInsertBlank()} disabled={busy} />
+                <RibbonButton
+                  icon={<Archive />}
+                  label="보관하고 비우기"
+                  title="지금 목록과 수정 내용을 보관해 두고 목록을 비웁니다. 첫 화면의 '최근 작업'에서 다시 엽니다"
+                  onClick={handlePutAside}
+                  disabled={busy}
+                />
                 <RibbonButton
                   icon={<Eraser />}
                   label="모두 지우기"

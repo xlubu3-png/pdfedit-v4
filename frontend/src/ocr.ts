@@ -22,6 +22,7 @@ export async function recognizeAll(
   recognize: (documentId: string, pageIndex: number) => Promise<OcrResult>,
   onProgress: (done: number, total: number) => void,
   stopped: () => boolean,
+  onPage?: (page: PageItem, result: OcrResult) => void,
 ): Promise<OcrSummary> {
   const summary: OcrSummary = { pages: 0, lines: 0, linesByKey: {}, alreadyText: 0, stopped: false }
   onProgress(0, pages.length)
@@ -35,9 +36,44 @@ export async function recognizeAll(
     summary.lines += result.lines.length
     summary.linesByKey[page.key] = result.lines.length
     if (result.lines.length === 0 && result.alreadyText > 0) summary.alreadyText++
+    onPage?.(page, result)
     onProgress(summary.pages, pages.length)
   }
   return summary
+}
+
+/**
+ * A run's summary with some of its pages read again (turned upright, under new keys): the first readings of those
+ * pages give way to the second.
+ */
+export function withReadAgain(first: OcrSummary, again: OcrSummary, replaced: string[]): OcrSummary {
+  const linesByKey = { ...first.linesByKey }
+  let lines = first.lines
+  for (const key of replaced) {
+    lines -= linesByKey[key] ?? 0
+    delete linesByKey[key]
+  }
+  return {
+    pages: first.pages,
+    lines: lines + again.lines,
+    linesByKey: { ...linesByKey, ...again.linesByKey },
+    alreadyText: first.alreadyText,
+    stopped: first.stopped || again.stopped,
+  }
+}
+
+/** Lines across read this surely count as read upright. */
+const SURE_UPRIGHT = 0.85
+
+/**
+ * Whether a page read as it lies was upright: most of its lines read surely across. A page upside down or on its
+ * side reads poorly so (an upside-down certificate: 6 sure lines across of 52; on its side: 8 of 102; upright: 117 of
+ * 132). A page with only a few lines cannot tell; nor can one whose text is real text (nothing was read).
+ */
+export function readsUpright(result: OcrResult): boolean {
+  if (result.lines.length === 0 && result.alreadyText > 0) return true
+  const sure = result.lines.filter((l) => !l.orientation && l.score >= SURE_UPRIGHT).length
+  return sure >= 5 && sure >= result.lines.length / 2
 }
 
 export function ocrMessage(summary: OcrSummary): string {

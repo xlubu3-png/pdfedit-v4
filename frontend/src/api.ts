@@ -244,9 +244,11 @@ export async function straightenPage(
   documentId: string,
   pageIndex: number,
   shown = 0,
+  wayUp = true,
 ): Promise<{ documentId: string | null; degrees: number; quarter: number }> {
   // How the list shows the page turned: turned by the user, its way up is theirs (only its slant is set straight).
-  const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/straighten?shown=${shown}`, {
+  // Without wayUp, only the slant: the way up is asked for when the page then does not read well upright.
+  const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/straighten?shown=${shown}${wayUp ? '' : '&wayUp=false'}`, {
     method: 'POST',
   })
   if (!response.ok) {

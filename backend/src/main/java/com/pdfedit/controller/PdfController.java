@@ -244,10 +244,12 @@ public class PdfController {
      *
      * @param shown how the page list shows the page turned (0, 90, 180, 270): the user turned it already, so its way
      *              up is theirs and only its slant is set straight
+     * @param wayUp whether to tell its way up too (upside down, on its side); false sets only its slant straight
      */
     @PostMapping("/documents/{documentId}/pages/{pageIndex}/straighten")
     public StraightenResponse straightenPage(@PathVariable String documentId, @PathVariable int pageIndex,
-            @RequestParam(defaultValue = "0") int shown) throws IOException {
+            @RequestParam(defaultValue = "0") int shown, @RequestParam(defaultValue = "true") boolean wayUp)
+            throws IOException {
         PdfDocumentStore.DocumentInfo info = store.getInfo(documentId);
         if (pageIndex < 0 || pageIndex >= info.pageCount()) {
             throw new InvalidEditException("없는 페이지는 바로잡을 수 없습니다.");
@@ -260,7 +262,9 @@ public class PdfController {
         }
         long t0 = System.nanoTime();
         int quarter = 0;
-        if (shown % 360 == 0 && pageOcr != null) {
+        // Without wayUp only the slant is set straight: the screen asks for the way up only when the page did not
+        // read well upright (most pages are upright, and telling it costs most of this).
+        if (wayUp && shown % 360 == 0 && pageOcr != null) {
             try {
                 quarter = pageOcr.uprightTurn(pdf, pageIndex);
             } catch (com.pdfedit.ocr.OcrUnavailableException e) {

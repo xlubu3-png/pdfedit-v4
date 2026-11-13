@@ -136,6 +136,8 @@ export interface OcrText {
   score: number
   /** For every character, where along the line (0 to 1) it was seen; absent for lines kept before this was recorded. */
   centers?: number[] | null
+  /** Set for a line running down the page ("down" or "up"); absent for a line across. */
+  orientation?: string | null
 }
 
 export interface OcrResult {

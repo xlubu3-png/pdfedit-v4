@@ -19,6 +19,8 @@ public class PdfEditApplication {
 
     private static final int DEFAULT_PORT = 19000;
     private static final int MAX_PORT_ATTEMPTS = 20;
+    /** How long after the start the text reader's models are loaded: the start and the first screen go first. */
+    private static final long OCR_EARLY_MS = 4_000;
 
     public static void main(String[] args) {
         boolean installed = InstalledApp.isInstalled();
@@ -85,6 +87,17 @@ public class PdfEditApplication {
             context.close();
             System.exit(0);
         }
+        // The text reader's models loaded a little after the start, not when the first scan is read: the first page
+        // read would otherwise wait two seconds or more for them.
+        if (!AotTraining.requested()) context.getBeanProvider(com.pdfedit.ocr.PageOcr.class).ifAvailable(ocr -> Thread.ofPlatform().daemon()
+                .name("ocr-early").priority(Thread.MIN_PRIORITY).start(() -> {
+                    try {
+                        Thread.sleep(OCR_EARLY_MS);
+                        ocr.prepareInBackground();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }));
         if (desktop && !"true".equalsIgnoreCase(System.getenv("PDFEDIT_NO_BROWSER"))) {
             openBrowser(url);
         }

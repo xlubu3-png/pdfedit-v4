@@ -3,7 +3,7 @@
 # Shown in the UI. Raise it by 0.001 with every change to the app. Keep it in quotes: unquoted, YAML reads
 # 0.050 as the number 0.05 and the screen would show "v0.05".
 app:
-  version: "0.159"
+  version: "0.160"
   # Uploaded documents and their edits are kept here, so they survive a restart of the app.
   # PDFEDIT_DATA_DIR moves it; documents untouched for this many days are deleted.
   data-dir: ${PDFEDIT_DATA_DIR:${user.home}/WINTECH_PDF/data}
@@ -23,6 +23,9 @@ logging:
     # Reading the PC's font files, FontBox notes every table it does not use ("Format 14 cmap table is not
     # supported", "cmap format 4 subtable is empty"): dozens of lines at every start that hide what matters.
     org.apache.fontbox: error
+    # A PDF whose cross-reference table is off by one (some scanners write it so) is read right, but PDFBox notes
+    # every object it finds elsewhere, at every opening: most of the log, telling nothing.
+    org.apache.pdfbox.pdfparser.COSParser: error
 
 spring:
   application:

@@ -30,7 +30,7 @@ import { SheetPolish } from './components/SheetPolish'
 import type { Sheet } from './tableGrid'
 import { DEFAULT_IMAGE_CHOICE, imageExportFileName, imageExportStem } from './imageExport'
 import type { ImageChoice } from './imageExport'
-import { ocrMessage, recognizeAll, straightenedNote } from './ocr'
+import { ocrMessage, readsUpright, recognizeAll, straightenedNote, withReadAgain } from './ocr'
 import type { OcrSummary } from './ocr'
 import { keyCode } from './keys'
 import { dragHasFiles, pickPdfs } from './pdfFiles'
@@ -87,7 +87,7 @@ import {
   Archive,
   Table2,
 } from 'lucide-react'
-import type { AppInfo, AppSettings, PageItem, ReplaceResult, UpdateInfo, UploadResponse } from './types'
+import type { AppInfo, AppSettings, OcrResult, PageItem, ReplaceResult, UpdateInfo, UploadResponse } from './types'
 import { downloadBlob } from './download'
 import { errorText } from './errors'
 import { usePageList } from './pageHistory'
@@ -339,17 +339,36 @@ function App() {
     setError(null)
     setScanSuggest(null)
     try {
-      // Pages fed askew are set straight first: they are read better, and their lines then lie level.
-      const { copies: turned, upright } =
-        settings?.straightenOnOcr === false ? { copies: new Map<string, PageItem>(), upright: 0 } : await straighten(chosen)
+      // Pages fed askew are set straight first: they are read better, and their lines then lie level. Only their
+      // slant: their way up is looked at only for the pages that then do not read well upright (few are upside
+      // down or on their side, and telling it costs as much as setting them straight).
+      const straightening = settings?.straightenOnOcr !== false
+      const { copies: turned } = straightening ? await straighten(chosen, false) : { copies: new Map<string, PageItem>() }
       if (ocrStop.current) {
         // Stopped while the pages were being set straight: nothing is read.
-        const stopped = (straightenedNote(turned.size, upright) + '글자 인식은 중지했습니다.').trim()
+        const stopped = (straightenedNote(turned.size) + '글자 인식은 중지했습니다.').trim()
         setNotice(stopped)
         return stopped
       }
-      const message =
-        straightenedNote(turned.size, upright) + (await recognize(chosen.map((p) => turned.get(p.key) ?? p)))
+      const notUpright: PageItem[] = []
+      let summary = await recognize(
+        chosen.map((p) => turned.get(p.key) ?? p),
+        straightening ? (page, result) => void (page.rotation % 360 === 0 && !readsUpright(result) && notUpright.push(page)) : undefined,
+      )
+      let set = turned.size
+      let upright = 0
+      if (notUpright.length > 0 && !ocrStop.current) {
+        const { copies: righted, upright: turnedUp } = await straighten(notUpright, true)
+        if (righted.size > 0 && !ocrStop.current) {
+          const again = await recognize([...righted.values()])
+          summary = withReadAgain(summary, again, [...righted.keys()])
+          // Pages set straight a second time (already copies) are counted once.
+          const copyKeys = new Set([...turned.values()].map((c) => c.key))
+          set += [...righted.keys()].filter((k) => !copyKeys.has(k)).length
+          upright = turnedUp
+        }
+      }
+      const message = straightenedNote(set, upright) + ocrMessage(summary)
       setNotice(message)
       return message
     } catch (e) {
@@ -409,8 +428,26 @@ function App() {
         }
         handled++
         try {
-          if (settings?.straightenOnOcr !== false) {
-            const result = await straightenPage(page.documentId, page.pageIndex, page.rotation)
+          /** The page's copy set straight (its slant, or its way up too) put in the list in its place. */
+          const replace = (from: PageItem, documentId: string): PageItem => {
+            const copy: PageItem = {
+              key: `${documentId}-0`,
+              documentId,
+              sourceFileName: from.sourceFileName,
+              pageIndex: 0,
+              rotation: from.rotation,
+              textRevision: 0,
+              ...(from.lockedPermissions === undefined ? {} : { lockedPermissions: from.lockedPermissions }),
+            }
+            changePages((prev) => prev.map((p) => (p.key === from.key ? copy : p)))
+            setSelectedKeys((prev) => (prev.has(from.key) ? new Set([...prev].map((k) => (k === from.key ? copy.key : k))) : prev))
+            return copy
+          }
+          const straightening = settings?.straightenOnOcr !== false
+          let wasStraightened = false
+          if (straightening) {
+            // Its slant only: its way up is looked at below, when it does not read well as it lies.
+            const result = await straightenPage(page.documentId, page.pageIndex, page.rotation, false)
             // Taken out while it was being set straight: done with it. Opened in the editor meanwhile: it waits.
             if (!pagesNow.current.some((p) => p.key === key)) continue
             if (editingNow.current === key) {
@@ -419,28 +456,28 @@ function App() {
               continue
             }
             if (result.documentId) {
-              const copy: PageItem = {
-                key: `${result.documentId}-0`,
-                documentId: result.documentId,
-                sourceFileName: page.sourceFileName,
-                pageIndex: 0,
-                rotation: page.rotation,
-                textRevision: 0,
-                ...(page.lockedPermissions === undefined ? {} : { lockedPermissions: page.lockedPermissions }),
-              }
-              changePages((prev) => prev.map((p) => (p.key === key ? copy : p)))
-              setSelectedKeys((prev) => (prev.has(key) ? new Set([...prev].map((k) => (k === key ? copy.key : k))) : prev))
-              straightened++
-              if (result.quarter !== 0) upright++
-              page = copy
+              page = replace(page, result.documentId)
+              wasStraightened = true
             }
           }
-          const read = page
-          const result = await recognizePage(read.documentId, read.pageIndex)
+          let read = page
+          let result = await recognizePage(read.documentId, read.pageIndex)
+          if (straightening && read.rotation % 360 === 0 && !readsUpright(result) && editingNow.current !== read.key) {
+            // Upside down or on its side, perhaps: its way up told, and read again the right way up.
+            const turned = await straightenPage(read.documentId, read.pageIndex, read.rotation, true)
+            if (turned.documentId && turned.quarter !== 0 && pagesNow.current.some((p) => p.key === read.key)) {
+              read = replace(read, turned.documentId)
+              wasStraightened = true
+              upright++
+              result = await recognizePage(read.documentId, read.pageIndex)
+            }
+          }
+          if (wasStraightened) straightened++
+          const done = read
           summary.pages++
           summary.lines += result.lines.length
           if (result.lines.length === 0 && result.alreadyText > 0) summary.alreadyText++
-          setPages((prev) => prev.map((p) => (p.key === read.key ? { ...p, ocrLines: result.lines.length } : p)))
+          setPages((prev) => prev.map((p) => (p.key === done.key ? { ...p, ocrLines: result.lines.length } : p)))
         } catch (e) {
           // A page taken out (its document deleted) while it was worked on is no failure; anything else ends the run.
           if (pagesNow.current.some((p) => p.key === key || p.key === page!.key)) {
@@ -461,7 +498,10 @@ function App() {
   }
 
   /** Recognizes the pages' text, showing how far it got; what it found, said for the user. */
-  async function recognize(reading: PageItem[]): Promise<string> {
+  async function recognize(
+    reading: PageItem[],
+    onPage?: (page: PageItem, result: OcrResult) => void,
+  ): Promise<OcrSummary> {
     ocrStop.current = false
     try {
       const summary = await recognizeAll(
@@ -469,11 +509,12 @@ function App() {
         recognizePage,
         (done, total) => setOcrProgress({ done, total }),
         () => ocrStop.current,
+        onPage,
       )
       setPages((prev) =>
         prev.map((p) => (p.key in summary.linesByKey ? { ...p, ocrLines: summary.linesByKey[p.key] } : p)),
       )
-      return ocrMessage(summary)
+      return summary
     } finally {
       setOcrProgress(null)
     }
@@ -483,7 +524,7 @@ function App() {
    * The scanned pages fed askew, each replaced in the list by its straightened copy (one step Ctrl+Z takes back);
    * the copies by the key of the page they replace. Pages straight already, or not scans, are left as they are.
    */
-  async function straighten(targets: PageItem[]): Promise<{ copies: Map<string, PageItem>; upright: number }> {
+  async function straighten(targets: PageItem[], wayUp = true): Promise<{ copies: Map<string, PageItem>; upright: number }> {
     const copies = new Map<string, PageItem>()
     let upright = 0
     ocrStop.current = false
@@ -494,7 +535,7 @@ function App() {
       setOcrProgress({ done, total: targets.length, straightening: true })
       let result
       try {
-        result = await straightenPage(p.documentId, p.pageIndex, p.rotation)
+        result = await straightenPage(p.documentId, p.pageIndex, p.rotation, wayUp)
       } catch (e) {
         setOcrProgress(null)
         throw e
@@ -537,7 +578,7 @@ function App() {
       }
       const again = targets.filter((p) => turned.has(p.key) && (p.ocrLines ?? 0) > 0).map((p) => turned.get(p.key)!)
       const note = straightenedNote(turned.size, upright)
-      setNotice(again.length > 0 && !ocrStop.current ? note + (await recognize(again)) : note.trim())
+      setNotice(again.length > 0 && !ocrStop.current ? note + ocrMessage(await recognize(again)) : note.trim())
     } catch (e) {
       setError(errorText(e, '쪽의 기울기를 바로잡지 못했습니다'))
     } finally {

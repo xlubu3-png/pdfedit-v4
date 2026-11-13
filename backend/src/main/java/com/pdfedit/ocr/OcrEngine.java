@@ -185,6 +185,8 @@ public final class OcrEngine implements AutoCloseable {
         List<int[]> crops = new ArrayList<>(boxes.size());
         List<int[]> sizes = new ArrayList<>(boxes.size());
         List<Way> ways = new ArrayList<>(boxes.size());
+        // The lines across, kept for a second reading with their edges painted out.
+        BufferedImage[] across = new BufferedImage[boxes.size()];
         for (int k = 0; k < boxes.size(); k++) {
             BufferedImage crop = crop(image, boxes.get(k));
             if (crop.getHeight() >= VERTICAL * crop.getWidth()) {
@@ -198,11 +200,7 @@ public final class OcrEngine implements AutoCloseable {
                 }
             } else {
                 addCrop(crops, sizes, ways, crop, new Way(k, Way.ACROSS, null));
-                // Read also with a cell border or the tips of the next lines at its edges painted out (EdgeTrim).
-                BufferedImage trimmed = EdgeTrim.trimmed(crop);
-                if (trimmed != null) {
-                    addCrop(crops, sizes, ways, trimmed, new Way(k, Way.TRIMMED, null));
-                }
+                across[k] = crop;
             }
         }
         Read[] candidates = new Read[crops.size()];
@@ -227,6 +225,28 @@ public final class OcrEngine implements AutoCloseable {
                     stackedLetters[way.box()] = way.stacked().starts().length;
                 }
                 default -> reads[way.box()] = read;
+            }
+        }
+        // Read also with a cell border or the tips of the next lines at its edges painted out (EdgeTrim) - only the
+        // lines that reading could change: it wins only by TRIM_MARGIN, which a line read surer than
+        // 1 - TRIM_MARGIN cannot be beaten by (most lines, which so need not be read twice).
+        List<int[]> trimCrops = new ArrayList<>();
+        List<int[]> trimSizes = new ArrayList<>();
+        List<Way> trimWays = new ArrayList<>();
+        for (int k = 0; k < reads.length; k++) {
+            if (across[k] != null && reads[k] != null && reads[k].score() >= MIN_SCORE
+                    && reads[k].score() < 1 - TRIM_MARGIN) {
+                BufferedImage trimmed = EdgeTrim.trimmed(across[k]);
+                if (trimmed != null) {
+                    addCrop(trimCrops, trimSizes, trimWays, trimmed, new Way(k, Way.TRIMMED, null));
+                }
+            }
+        }
+        if (!trimCrops.isEmpty()) {
+            Read[] again = new Read[trimCrops.size()];
+            recognize(trimCrops, trimSizes, again);
+            for (int c = 0; c < again.length; c++) {
+                trimmedReads[trimWays.get(c).box()] = trimWays.get(c).fromTop(again[c]);
             }
         }
         for (int k = 0; k < reads.length; k++) {

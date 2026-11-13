@@ -53,6 +53,10 @@ final class AotTraining {
     private static final long DELAY_MS = 20_000;
     /** A training run taking longer than this is stuck: it is stopped. */
     private static final long TIMEOUT_MS = 180_000;
+    /** The training run waits for this long without work on documents... */
+    private static final long QUIET_MS = 30_000;
+    /** ...but no longer than this. */
+    private static final long QUIET_WAIT_MAX_MS = 15 * 60_000;
 
     private AotTraining() {
     }
@@ -105,6 +109,12 @@ final class AotTraining {
         Thread.ofPlatform().daemon().name("aot-training").priority(Thread.MIN_PRIORITY).start(() -> {
             try {
                 Thread.sleep(DELAY_MS);
+                // Not while the user is at work (opening and reading scans right after an update): the training
+                // run takes the CPU for some 20 seconds. After a long busy spell it runs anyway.
+                long waitedUntil = System.nanoTime() + QUIET_WAIT_MAX_MS * 1_000_000;
+                while (!Activity.quietFor(QUIET_MS) && System.nanoTime() < waitedUntil) {
+                    Thread.sleep(2_000);
+                }
                 Files.createDirectories(cache.toAbsolutePath().getParent());
                 if (train(cache) != null) {
                     // Finished, made or not (not when the app quit meanwhile): not tried again for this version.

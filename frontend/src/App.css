@@ -2700,3 +2700,37 @@ kbd {
 .page-ribbon .rb-panel .rb-button {
   margin: 0 1px;
 }
+
+/*
+ * A narrower window: the buttons made smaller, so the menu keeps to two rows down to about 1000 pixels (below that a
+ * third row comes, as before). All of them stay as wide as each other, so the columns still line up.
+ */
+@media (max-width: 1260px) {
+  .page-ribbon .rb-panel .rb-button {
+    width: 60px;
+    min-width: 60px;
+    max-width: 60px;
+    padding: 4px 1px 3px;
+    gap: 2px;
+    font-size: 11px;
+  }
+
+  .page-ribbon .rb-panel .rb-icon svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .page-ribbon .rb-caption {
+    font-size: 10.5px;
+    padding: 1px 0 2px;
+  }
+}
+
+@media (max-width: 1060px) {
+  .page-ribbon .rb-panel .rb-button {
+    width: 56px;
+    min-width: 56px;
+    max-width: 56px;
+    font-size: 10.5px;
+  }
+}

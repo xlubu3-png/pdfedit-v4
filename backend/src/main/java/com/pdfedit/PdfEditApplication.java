@@ -17,6 +17,7 @@ import com.pdfedit.service.UpdateService;
 @EnableScheduling
 public class PdfEditApplication {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(PdfEditApplication.class);
     private static final int DEFAULT_PORT = 19000;
     private static final int MAX_PORT_ATTEMPTS = 20;
     /** How long after the start the text reader's models are loaded: the start and the first screen go first. */
@@ -50,7 +51,7 @@ public class PdfEditApplication {
             start(args, true);
         } catch (Throwable e) {
             // The cause is in the log (Spring Boot writes it there as well).
-            org.slf4j.LoggerFactory.getLogger(PdfEditApplication.class).error("The app could not start", e);
+            log.error("The app could not start", e);
             InstalledApp.showStartFailure("원인: " + cause(e));
             System.exit(1);
         }
@@ -87,17 +88,31 @@ public class PdfEditApplication {
             context.close();
             System.exit(0);
         }
-        // The text reader's models loaded a little after the start, not when the first scan is read: the first page
-        // read would otherwise wait two seconds or more for them.
-        if (!AotTraining.requested()) context.getBeanProvider(com.pdfedit.ocr.PageOcr.class).ifAvailable(ocr -> Thread.ofPlatform().daemon()
-                .name("ocr-early").priority(Thread.MIN_PRIORITY).start(() -> {
-                    try {
-                        Thread.sleep(OCR_EARLY_MS);
-                        ocr.prepareInBackground();
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                    }
-                }));
+        if (!AotTraining.requested()) {
+            // PDFBox's list of the PC's fonts, made at once in the background: PDFBox makes it the first time a page
+            // asks for a font the PDF does not carry, by reading every font file on the PC - on a PC where it was
+            // never made (a new install) the first document waited for it, half a minute or more.
+            Thread.ofPlatform().daemon().name("font-list-early").start(() -> {
+                long started = System.nanoTime();
+                try {
+                    org.apache.pdfbox.pdmodel.font.FontMappers.instance().getFontBoxFont("WintechNoSuchFont", null);
+                    log.info("PDF 글꼴 목록 준비: {} ms", (System.nanoTime() - started) / 1_000_000);
+                } catch (RuntimeException | LinkageError e) {
+                    log.info("PDF 글꼴 목록 준비 못 함: {}", e.toString());
+                }
+            });
+            // The text reader's models loaded a little after the start, not when the first scan is read: the first
+            // page read would otherwise wait two seconds or more for them.
+            context.getBeanProvider(com.pdfedit.ocr.PageOcr.class).ifAvailable(ocr -> Thread.ofPlatform().daemon()
+                    .name("ocr-early").priority(Thread.MIN_PRIORITY).start(() -> {
+                        try {
+                            Thread.sleep(OCR_EARLY_MS);
+                            ocr.prepareInBackground();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                    }));
+        }
         if (desktop && !"true".equalsIgnoreCase(System.getenv("PDFEDIT_NO_BROWSER"))) {
             openBrowser(url);
         }

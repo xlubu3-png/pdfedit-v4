@@ -17,6 +17,7 @@ const dataDir = mkdtempSync(join(tmpdir(), 'wintech-pdf-e2e-'))
 
 export default defineConfig({
   testDir: './tests',
+  globalSetup: './tests/warmup.setup.ts',
   timeout: 60_000,
   expect: { timeout: 10_000 },
   fullyParallel: false,
@@ -35,6 +36,8 @@ export default defineConfig({
     url: `http://localhost:${port}/api/v1/pdf/health`,
     reuseExistingServer: false,
     timeout: 120_000,
+    // The app's own log in the test output: when a test fails on the build PC, what the app did is there.
+    stdout: 'pipe',
     // Scans are not recognized as they open unless a test switches it on: most tests open one and choose.
     // No browser window of its own either (on a PC with a desktop the app opens one as it starts).
     env: { ...process.env, PDFEDIT_DATA_DIR: dataDir, PDFEDIT_AUTO_OCR: 'false', PDFEDIT_NO_BROWSER: 'true' } as Record<string, string>,

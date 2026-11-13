@@ -190,9 +190,15 @@ export async function createBlankDocument(): Promise<UploadResponse> {
   return response.json()
 }
 
-/** Recognizes the text of a scanned page (a second or two); the server keeps it for the export. */
-export async function recognizePage(documentId: string, pageIndex: number): Promise<OcrResult> {
-  const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/ocr`, { method: 'POST' })
+/**
+ * Recognizes the text of a scanned page (a second or two); the server keeps it for the export. With wayUp the
+ * page's way up is told first: a page upside down or on its side is not read, and the result's turn says how it
+ * is to be turned (see straightenPage) before it is read again.
+ */
+export async function recognizePage(documentId: string, pageIndex: number, wayUp = false): Promise<OcrResult> {
+  const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/ocr${wayUp ? '?wayUp=true' : ''}`, {
+    method: 'POST',
+  })
   if (!response.ok) {
     throw await failure(response, '글자를 인식하지 못했습니다')
   }
@@ -245,10 +251,11 @@ export async function straightenPage(
   pageIndex: number,
   shown = 0,
   wayUp = true,
+  turn?: number,
 ): Promise<{ documentId: string | null; degrees: number; quarter: number }> {
   // How the list shows the page turned: turned by the user, its way up is theirs (only its slant is set straight).
   // Without wayUp, only the slant: the way up is asked for when the page then does not read well upright.
-  const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/straighten?shown=${shown}${wayUp ? '' : '&wayUp=false'}`, {
+  const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/straighten?shown=${shown}${wayUp ? '' : '&wayUp=false'}${turn ? `&turn=${turn}` : ''}`, {
     method: 'POST',
   })
   if (!response.ok) {

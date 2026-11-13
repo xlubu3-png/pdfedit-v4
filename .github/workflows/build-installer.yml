@@ -32,7 +32,7 @@ jobs:
   build:
     name: Windows 설치 파일
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - name: 소스 받기
         uses: actions/checkout@v5
@@ -48,7 +48,9 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            frontend/package-lock.json
+            e2e/package-lock.json
 
       - name: Gradle 준비
         uses: gradle/actions/setup-gradle@v5
@@ -77,6 +79,29 @@ jobs:
       - name: 설치 파일 만들기
         shell: pwsh
         run: .\installer\build-installer.ps1
+
+      # 설치될 그대로(설치 파일에 들어가는 Java와 프로그램 파일)를 띄워, Windows의 Edge로 화면 시험 전체를 돌립니다.
+      # Linux 시험에서는 안 보이는 Windows만의 문제(글꼴, 경로, PowerShell로 Office 부르기, 빠진 Java 모듈)를
+      # 잡습니다. 하나라도 실패하면 아래 단계(Artifacts·릴리스)로 가지 않습니다.
+      - name: 시험 도구 설치
+        working-directory: e2e
+        run: npm ci
+
+      - name: Windows 화면 시험 (설치될 프로그램으로)
+        working-directory: e2e
+        shell: pwsh
+        env:
+          E2E_JAVA: ${{ github.workspace }}\installer\build\runtime\bin\java.exe
+          E2E_JAR: ${{ github.workspace }}\installer\build\input\WINTECH_PDF.jar
+        run: npx playwright test --trace off
+
+      - name: 실패한 화면 사진 올리기
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: windows-e2e-results
+          path: e2e/test-results
+          retention-days: 7
 
       - name: 설치 파일 올려 두기 (Artifacts)
         uses: actions/upload-artifact@v5

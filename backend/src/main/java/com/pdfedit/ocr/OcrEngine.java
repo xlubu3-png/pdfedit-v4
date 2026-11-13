@@ -118,7 +118,23 @@ public final class OcrEngine implements AutoCloseable {
     }
 
     /** The lines of text on the picture, top to bottom, with their corners in the picture's pixels. */
-    public synchronized List<OcrLine> read(BufferedImage picture) throws OrtException {
+    public List<OcrLine> read(BufferedImage picture) throws OrtException {
+        return read(picture, false).lines();
+    }
+
+    /**
+     * A reading of a picture: its lines, or - when the way up was to be told first and the picture is upside down
+     * or on its side - no lines and the quarter turns clockwise (90, 180, 270) that set it upright.
+     */
+    public record Reading(List<OcrLine> lines, int turn) {
+    }
+
+    /**
+     * @param wayUp tell the picture's way up first, from the lines the reading finds anyway (a few of them read
+     *              twice: a tenth of a second), and when it is not upright stop there: a page upside down or on its
+     *              side is read badly, and read again once turned
+     */
+    public synchronized Reading read(BufferedImage picture, boolean wayUp) throws OrtException {
         BufferedImage image = picture;
         double scale = 1;
         if (Math.max(picture.getWidth(), picture.getHeight()) > MAX_SIDE) {
@@ -129,11 +145,14 @@ public final class OcrEngine implements AutoCloseable {
         int height = image.getHeight();
         int[] rgb = image.getRGB(0, 0, width, height, null, 0, width);
 
-        Pass pass = readAt(image, rgb, 1);
+        Pass pass = readAt(image, rgb, 1, wayUp);
+        if (pass.turn() != 0) {
+            return new Reading(List.of(), pass.turn());
+        }
         // Many lines found but too unsure to keep (small print on a dense page, kordoc's low-confidence retry): the
         // text is looked for again on the picture enlarged for the detector, and the reading keeping more wins.
         if (lookAgain(pass.dropped(), pass.lines().size(), Math.max(width, height))) {
-            Pass larger = readAt(image, rgb, RETRY_BOOST);
+            Pass larger = readAt(image, rgb, RETRY_BOOST, false);
             if (better(larger, pass)) {
                 pass = larger;
             }
@@ -146,7 +165,7 @@ public final class OcrEngine implements AutoCloseable {
             }
             lines.add(new OcrLine(line.text(), line.score(), corners, line.centers(), line.orientation()));
         }
-        return lines;
+        return new Reading(lines, 0);
     }
 
     /**
@@ -174,13 +193,25 @@ public final class OcrEngine implements AutoCloseable {
     }
 
     /** The lines kept from one reading of the picture, and how many found lines were too unsure to keep. */
-    private record Pass(List<OcrLine> lines, int dropped) {}
+    private record Pass(List<OcrLine> lines, int dropped, int turn) {
+        Pass(List<OcrLine> lines, int dropped) {
+            this(lines, dropped, 0);
+        }
+    }
 
     /** One reading, the detector given the picture enlarged by {@code boost}; corners in the picture's pixels. */
-    private Pass readAt(BufferedImage image, int[] rgb, double boost) throws OrtException {
+    private Pass readAt(BufferedImage image, int[] rgb, double boost, boolean wayUp) throws OrtException {
         int width = image.getWidth();
         long t0 = System.nanoTime();
-        List<float[]> boxes = joinColumns(detect(rgb, width, image.getHeight(), boost), rgb, width);
+        List<float[]> found = detect(rgb, width, image.getHeight(), boost);
+        if (wayUp) {
+            Integer turn = turnOfBoxes(image, found);
+            if (turn != null && turn != 0) {
+                log.debug("read: not upright, turn {} (told in {} ms)", turn, (System.nanoTime() - t0) / 1_000_000);
+                return new Pass(List.of(), 0, turn);
+            }
+        }
+        List<float[]> boxes = joinColumns(found, rgb, width);
         long t1 = System.nanoTime();
         List<int[]> crops = new ArrayList<>(boxes.size());
         List<int[]> sizes = new ArrayList<>(boxes.size());
@@ -595,8 +626,14 @@ public final class OcrEngine implements AutoCloseable {
         int width = image.getWidth();
         int height = image.getHeight();
         long t0 = System.nanoTime();
-        List<float[]> boxes = new ArrayList<>(detect(image.getRGB(0, 0, width, height, null, 0, width), width, height, 1));
+        List<float[]> found = detect(image.getRGB(0, 0, width, height, null, 0, width), width, height, 1);
         log.debug("way up {}x{}: lines found in {} ms", width, height, (System.nanoTime() - t0) / 1_000_000);
+        return turnOfBoxes(image, found);
+    }
+
+    /** The turn told from the lines found on the picture; null when they are too few to tell. */
+    private Integer turnOfBoxes(BufferedImage image, List<float[]> found) throws OrtException {
+        List<float[]> boxes = new ArrayList<>(found);
         List<BufferedImage> lying = new ArrayList<>();
         List<BufferedImage> standing = new ArrayList<>();
         boxes.sort(Comparator.comparingDouble(b -> -Math.max(Math.hypot(b[2] - b[0], b[3] - b[1]),

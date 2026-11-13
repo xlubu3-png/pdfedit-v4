@@ -30,7 +30,7 @@ import { SheetPolish } from './components/SheetPolish'
 import type { Sheet } from './tableGrid'
 import { DEFAULT_IMAGE_CHOICE, imageExportFileName, imageExportStem } from './imageExport'
 import type { ImageChoice } from './imageExport'
-import { ocrMessage, readsUpright, recognizeAll, straightenedNote, withReadAgain } from './ocr'
+import { ocrMessage, recognizeAll, straightenedNote, withReadAgain } from './ocr'
 import type { OcrSummary } from './ocr'
 import { keyCode } from './keys'
 import { dragHasFiles, pickPdfs } from './pdfFiles'
@@ -340,8 +340,8 @@ function App() {
     setScanSuggest(null)
     try {
       // Pages fed askew are set straight first: they are read better, and their lines then lie level. Only their
-      // slant: their way up is looked at only for the pages that then do not read well upright (few are upside
-      // down or on their side, and telling it costs as much as setting them straight).
+      // slant: their way up is told by the reading itself, from the lines it finds anyway, and a page upside down
+      // or on its side is turned and read again (telling it apart beforehand cost as much as setting it straight).
       const straightening = settings?.straightenOnOcr !== false
       const { copies: turned } = straightening ? await straighten(chosen, false) : { copies: new Map<string, PageItem>() }
       if (ocrStop.current) {
@@ -351,14 +351,21 @@ function App() {
         return stopped
       }
       const notUpright: PageItem[] = []
+      const turns = new Map<string, number>()
       let summary = await recognize(
         chosen.map((p) => turned.get(p.key) ?? p),
-        straightening ? (page, result) => void (page.rotation % 360 === 0 && !readsUpright(result) && notUpright.push(page)) : undefined,
+        (page, result) => {
+          if (result.turn) {
+            notUpright.push(page)
+            turns.set(page.key, result.turn)
+          }
+        },
+        straightening,
       )
       let set = turned.size
       let upright = 0
       if (notUpright.length > 0 && !ocrStop.current) {
-        const { copies: righted, upright: turnedUp } = await straighten(notUpright, true)
+        const { copies: righted, upright: turnedUp } = await straighten(notUpright, true, turns)
         if (righted.size > 0 && !ocrStop.current) {
           const again = await recognize([...righted.values()])
           summary = withReadAgain(summary, again, [...righted.keys()])
@@ -461,10 +468,11 @@ function App() {
             }
           }
           let read = page
-          let result = await recognizePage(read.documentId, read.pageIndex)
-          if (straightening && read.rotation % 360 === 0 && !readsUpright(result) && editingNow.current !== read.key) {
-            // Upside down or on its side, perhaps: its way up told, and read again the right way up.
-            const turned = await straightenPage(read.documentId, read.pageIndex, read.rotation, true)
+          // Its way up is told by the reading (unless the user turned it: then its way up is theirs).
+          let result = await recognizePage(read.documentId, read.pageIndex, straightening && read.rotation % 360 === 0)
+          if (result.turn && editingNow.current !== read.key) {
+            // Upside down or on its side: turned the way the reading told, and read again the right way up.
+            const turned = await straightenPage(read.documentId, read.pageIndex, read.rotation, true, result.turn)
             if (turned.documentId && turned.quarter !== 0 && pagesNow.current.some((p) => p.key === read.key)) {
               read = replace(read, turned.documentId)
               wasStraightened = true
@@ -501,12 +509,19 @@ function App() {
   async function recognize(
     reading: PageItem[],
     onPage?: (page: PageItem, result: OcrResult) => void,
+    wayUp = false,
   ): Promise<OcrSummary> {
     ocrStop.current = false
     try {
       const summary = await recognizeAll(
         reading,
-        recognizePage,
+        // The way up told first only for pages the user has not turned (their way up is theirs).
+        (documentId, pageIndex) =>
+          recognizePage(
+            documentId,
+            pageIndex,
+            wayUp && reading.find((p) => p.documentId === documentId && p.pageIndex === pageIndex)?.rotation === 0,
+          ),
         (done, total) => setOcrProgress({ done, total }),
         () => ocrStop.current,
         onPage,
@@ -524,7 +539,11 @@ function App() {
    * The scanned pages fed askew, each replaced in the list by its straightened copy (one step Ctrl+Z takes back);
    * the copies by the key of the page they replace. Pages straight already, or not scans, are left as they are.
    */
-  async function straighten(targets: PageItem[], wayUp = true): Promise<{ copies: Map<string, PageItem>; upright: number }> {
+  async function straighten(
+    targets: PageItem[],
+    wayUp = true,
+    turns?: Map<string, number>,
+  ): Promise<{ copies: Map<string, PageItem>; upright: number }> {
     const copies = new Map<string, PageItem>()
     let upright = 0
     ocrStop.current = false
@@ -535,7 +554,7 @@ function App() {
       setOcrProgress({ done, total: targets.length, straightening: true })
       let result
       try {
-        result = await straightenPage(p.documentId, p.pageIndex, p.rotation, wayUp)
+        result = await straightenPage(p.documentId, p.pageIndex, p.rotation, wayUp, turns?.get(p.key))
       } catch (e) {
         setOcrProgress(null)
         throw e

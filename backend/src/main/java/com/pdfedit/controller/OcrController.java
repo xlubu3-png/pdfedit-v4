@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.pdfedit.ocr.OcrText;
@@ -45,8 +46,13 @@ public class OcrController {
      * @param lines       what the page says, top to bottom
      * @param alreadyText lines not kept because the page already has real text there
      * @param seconds     how long the recognition took
+     * @param turn        when the way up was to be told first and the page is upside down or on its side: the
+     *                    quarter turns clockwise that set it upright (90, 180, 270), and nothing was read or kept
      */
-    public record OcrResponse(List<OcrText> lines, int alreadyText, double seconds) {
+    public record OcrResponse(List<OcrText> lines, int alreadyText, double seconds, int turn) {
+        public OcrResponse(List<OcrText> lines, int alreadyText, double seconds) {
+            this(lines, alreadyText, seconds, 0);
+        }
     }
 
     /**
@@ -54,10 +60,15 @@ public class OcrController {
      * lines needs, is then told in the background.
      */
     @PostMapping
-    public OcrResponse recognize(@PathVariable String documentId, @PathVariable int pageIndex) throws IOException {
+    public OcrResponse recognize(@PathVariable String documentId, @PathVariable int pageIndex,
+            @RequestParam(defaultValue = "false") boolean wayUp) throws IOException {
         checkPage(documentId, pageIndex);
         byte[] pdf = store.getContent(documentId);
-        PageOcr.Result result = pageOcr.recognize(pdf, pageIndex);
+        PageOcr.Result result = pageOcr.recognize(pdf, pageIndex, wayUp);
+        if (result.turn() != 0) {
+            // Not upright: nothing kept; the screen turns the page (straighten with this turn) and reads it again.
+            return new OcrResponse(List.of(), 0, result.seconds(), result.turn());
+        }
         store.setOcr(documentId, pageIndex, result.lines());
         lineBox.prepare(pdf, pageIndex, result.lines());
         return new OcrResponse(result.lines(), result.alreadyText(), result.seconds());

@@ -32,6 +32,12 @@ export async function recognizeAll(
       break
     }
     const result = await recognize(page.documentId, page.pageIndex)
+    if (result.turn) {
+      // Not read: upside down or on its side. The caller turns it and reads it again.
+      onPage?.(page, result)
+      onProgress(summary.pages, pages.length)
+      continue
+    }
     summary.pages++
     summary.lines += result.lines.length
     summary.linesByKey[page.key] = result.lines.length
@@ -60,20 +66,6 @@ export function withReadAgain(first: OcrSummary, again: OcrSummary, replaced: st
     alreadyText: first.alreadyText,
     stopped: first.stopped || again.stopped,
   }
-}
-
-/** Lines across read this surely count as read upright. */
-const SURE_UPRIGHT = 0.85
-
-/**
- * Whether a page read as it lies was upright: most of its lines read surely across. A page upside down or on its
- * side reads poorly so (an upside-down certificate: 6 sure lines across of 52; on its side: 8 of 102; upright: 117 of
- * 132). A page with only a few lines cannot tell; nor can one whose text is real text (nothing was read).
- */
-export function readsUpright(result: OcrResult): boolean {
-  if (result.lines.length === 0 && result.alreadyText > 0) return true
-  const sure = result.lines.filter((l) => !l.orientation && l.score >= SURE_UPRIGHT).length
-  return sure >= 5 && sure >= result.lines.length / 2
 }
 
 export function ocrMessage(summary: OcrSummary): string {

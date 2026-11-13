@@ -145,6 +145,8 @@ export interface OcrResult {
   /** Lines left out because the page already has real text there. */
   alreadyText: number
   seconds: number
+  /** Asked to tell the way up first and found upside down or on its side: the quarter turns clockwise that set it upright (nothing was read). */
+  turn?: number
 }
 
 export interface PageItem {

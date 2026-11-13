@@ -120,7 +120,7 @@ class OcrControllerTest {
         assertThat(upload.scanned()).as("a page that is only a picture looks scanned").isTrue();
         assertThat(exportedText(upload.documentId(), false)).isEmpty();
 
-        OcrController.OcrResponse result = ocr.recognize(upload.documentId(), 0);
+        OcrController.OcrResponse result = ocr.recognize(upload.documentId(), 0, false);
 
         assertThat(result.lines()).extracting(l -> plain(l.text()))
                 .containsExactly(plain(LINES[0]), plain(LINES[1]), plain(LINES[2]));
@@ -139,7 +139,7 @@ class OcrControllerTest {
     @Test
     void aRecognizedLineInsideARedactionAreaIsNotExported() throws Exception {
         UploadResponse upload = pdf.upload(file(scannedPdf()), null);
-        OcrText number = ocr.recognize(upload.documentId(), 0).lines().get(1);
+        OcrText number = ocr.recognize(upload.documentId(), 0, false).lines().get(1);
         store.setRedactions(upload.documentId(), 0, List.of(new Redaction("r", number.x() + number.width() / 2,
                 number.y(), number.width() / 2, number.height())));
 
@@ -151,7 +151,7 @@ class OcrControllerTest {
     @Test
     void personalInformationOnAScanIsFoundWhereItIsAndRedactedForGood() throws Exception {
         UploadResponse upload = pdf.upload(file(scannedPdf()), null);
-        ocr.recognize(upload.documentId(), 0);
+        ocr.recognize(upload.documentId(), 0, false);
         RedactionController redaction = new RedactionController(store, new TextEditService(new FontMatcher()));
 
         List<PersonalInfoMatch> found = redaction.findPersonalInfo(new PersonalInfoRequest(
@@ -187,7 +187,7 @@ class OcrControllerTest {
     @Test
     void recognizedTextIsFoundBySearchButNotReplaced() throws Exception {
         UploadResponse upload = pdf.upload(file(scannedPdf()), null);
-        ocr.recognize(upload.documentId(), 0);
+        ocr.recognize(upload.documentId(), 0, false);
         TextSearchService search = new TextSearchService(store, textEditService);
         List<PageSpec> pages = List.of(new PageSpec(upload.documentId(), 0, 0));
 
@@ -202,8 +202,8 @@ class OcrControllerTest {
         String[] changed = LINES.clone();
         changed[2] = "연락처 010-9876-6789";
         UploadResponse after = pdf.upload(file(scannedPdf(changed)), null);
-        ocr.recognize(before.documentId(), 0);
-        ocr.recognize(after.documentId(), 0);
+        ocr.recognize(before.documentId(), 0, false);
+        ocr.recognize(after.documentId(), 0, false);
 
         CompareResult result = new CompareController(store, new PdfThumbnailService())
                 .compare(new CompareController.CompareRequest(before.documentId(), after.documentId()));
@@ -231,7 +231,7 @@ class OcrControllerTest {
         UploadResponse upload = pdf.upload(file(typed), null);
         assertThat(upload.scanned()).isFalse();
 
-        OcrController.OcrResponse result = ocr.recognize(upload.documentId(), 0);
+        OcrController.OcrResponse result = ocr.recognize(upload.documentId(), 0, false);
 
         assertThat(result.lines()).isEmpty();
         assertThat(result.alreadyText()).isEqualTo(1);
@@ -245,7 +245,7 @@ class OcrControllerTest {
                 new PdfExportService(saved, textEditService), textEditService);
         OcrController savedOcr = new OcrController(saved, pageOcr, new RecognizedLineBox(new FontMatcher()));
         UploadResponse upload = savedPdf.upload(file(scannedPdf()), null);
-        List<OcrText> lines = savedOcr.recognize(upload.documentId(), 0).lines();
+        List<OcrText> lines = savedOcr.recognize(upload.documentId(), 0, false).lines();
 
         PdfDocumentStore reopened = new PdfDocumentStore(data, Duration.ofDays(30));
         assertThat(reopened.ocr(upload.documentId(), 0)).isEqualTo(lines);
@@ -262,7 +262,7 @@ class OcrControllerTest {
     void aRecognizedLineBecomesATextBoxThatHidesTheScannedLettersAndCanBeRewritten() throws Exception {
         String[] lines = {"공문서 스캔 시험 첫째 줄입니다", "연락처 010-2345-6789"};
         UploadResponse upload = pdf.upload(file(scannedPdf(lines)), null);
-        OcrText phone = ocr.recognize(upload.documentId(), 0).lines().get(1);
+        OcrText phone = ocr.recognize(upload.documentId(), 0, false).lines().get(1);
 
         AddedText box = ocr.textBox(upload.documentId(), 0, 1);
 
@@ -333,7 +333,7 @@ class OcrControllerTest {
             upload = pdf.upload(file(out.toByteArray()), null);
         }
 
-        List<OcrText> lines = ocr.recognize(upload.documentId(), 0).lines();
+        List<OcrText> lines = ocr.recognize(upload.documentId(), 0, false).lines();
 
         assertThat(lines).extracting(l -> plain(l.text())).containsExactlyInAnyOrder("대표자", "성명박장환");
         int index = lines.indexOf(lines.stream().filter(OcrText::vertical).findFirst().orElseThrow());
@@ -384,7 +384,7 @@ class OcrControllerTest {
             upload = pdf.upload(file(out.toByteArray()), null);
         }
 
-        List<OcrText> lines = ocr.recognize(upload.documentId(), 0).lines();
+        List<OcrText> lines = ocr.recognize(upload.documentId(), 0, false).lines();
         int index = lines.indexOf(lines.stream().filter(OcrText::turned).findFirst().orElseThrow());
         assertThat(plain(lines.get(index).text())).isEqualTo("연락처010-2345-6789");
         assertThat(lines.get(index).upwards()).isFalse();
@@ -415,7 +415,7 @@ class OcrControllerTest {
     @Test
     void aRewrittenLineKeepsTheScanOfTheWordsLeftAlone() throws Exception {
         UploadResponse upload = pdf.upload(file(scannedPdf()), null);
-        List<OcrText> lines = ocr.recognize(upload.documentId(), 0).lines();
+        List<OcrText> lines = ocr.recognize(upload.documentId(), 0, false).lines();
         AddedText box = ocr.textBox(upload.documentId(), 0, 2);
         assertThat(plain(box.text())).isEqualTo("연락처010-2345-6789");
         byte[] content = store.getContent(upload.documentId());
@@ -479,7 +479,7 @@ class OcrControllerTest {
     @Test
     void aLineThatWasNotRecognizedCannotBeRewritten() throws Exception {
         UploadResponse upload = pdf.upload(file(scannedPdf()), null);
-        ocr.recognize(upload.documentId(), 0);
+        ocr.recognize(upload.documentId(), 0, false);
 
         assertThatThrownBy(() -> ocr.textBox(upload.documentId(), 0, 9)).isInstanceOf(InvalidEditException.class);
         assertThatThrownBy(() -> ocr.textBox(upload.documentId(), 0, -1)).isInstanceOf(InvalidEditException.class);
@@ -489,7 +489,7 @@ class OcrControllerTest {
     @Test
     void aMisreadLineIsCorrectedWithoutTouchingTheScan() throws Exception {
         UploadResponse upload = pdf.upload(file(scannedPdf()), null);
-        ocr.recognize(upload.documentId(), 0);
+        ocr.recognize(upload.documentId(), 0, false);
         byte[] before = store.getContent(upload.documentId());
 
         OcrText corrected = ocr.correct(upload.documentId(), 0, 2,
@@ -511,7 +511,7 @@ class OcrControllerTest {
     void aPageThatIsNotThereIsRefused() throws Exception {
         UploadResponse blank = pdf.createBlankDocument(200, 200);
 
-        assertThatThrownBy(() -> ocr.recognize(blank.documentId(), 1)).isInstanceOf(InvalidEditException.class);
-        assertThat(ocr.recognize(blank.documentId(), 0).lines()).as("a blank page says nothing").isEmpty();
+        assertThatThrownBy(() -> ocr.recognize(blank.documentId(), 1, false)).isInstanceOf(InvalidEditException.class);
+        assertThat(ocr.recognize(blank.documentId(), 0, false).lines()).as("a blank page says nothing").isEmpty();
     }
 }

@@ -67,11 +67,22 @@ public class PageOcr implements DisposableBean {
      * @param alreadyText lines left out because the page has real text there
      * @param seconds     how long the recognition took
      */
-    public record Result(List<OcrText> lines, int alreadyText, double seconds) {
+    public record Result(List<OcrText> lines, int alreadyText, double seconds, int turn) {
+        public Result(List<OcrText> lines, int alreadyText, double seconds) {
+            this(lines, alreadyText, seconds, 0);
+        }
     }
 
     /** @throws OcrUnavailableException when the recognition engine cannot run on this computer */
     public Result recognize(byte[] pdf, int pageIndex) throws IOException {
+        return recognize(pdf, pageIndex, false);
+    }
+
+    /**
+     * @param wayUp tell the page's way up first: a page upside down or on its side is not read, and the result says
+     *              the quarter turns that set it upright ({@link Result#turn}) instead
+     */
+    public Result recognize(byte[] pdf, int pageIndex, boolean wayUp) throws IOException {
         long start = System.nanoTime();
         BufferedImage picture;
         PDRectangle crop;
@@ -88,7 +99,13 @@ public class PageOcr implements DisposableBean {
             BufferedImage cleaned = ScanCleanup.forReading(picture);
             log.debug("page {} for reading: drawn {} ms, its text {} ms, cleaned {} ms", pageIndex, (drawn - start) / 1_000_000,
                     (described - drawn) / 1_000_000, (System.nanoTime() - described) / 1_000_000);
-            read = engine().read(cleaned);
+            OcrEngine.Reading reading = engine().read(cleaned, wayUp);
+            if (reading.turn() != 0) {
+                log.info("글자 인식 {}쪽: 뒤집히거나 누운 쪽({}도), {} ms", pageIndex + 1, reading.turn(),
+                        (System.nanoTime() - start) / 1_000_000);
+                return new Result(List.of(), 0, (System.nanoTime() - start) / 1e9, reading.turn());
+            }
+            read = reading.lines();
         } catch (OrtException e) {
             throw new OcrUnavailableException(e);
         }

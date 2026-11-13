@@ -9,6 +9,10 @@ import { join } from 'node:path'
  * Build the jar first:  backend\gradlew.bat bootJar
  */
 const port = Number(process.env.E2E_PORT ?? 19090)
+// The Windows installer build tests the program as it is installed: its own Java runtime (E2E_JAVA, the one jlink
+// made) and its unpacked jar (E2E_JAR). Elsewhere: the java on the PATH and the jar gradle built.
+const java = process.env.E2E_JAVA ?? 'java'
+const jar = process.env.E2E_JAR ?? '../backend/build/libs/pdfedit-v2-backend-0.1.0.jar'
 const dataDir = mkdtempSync(join(tmpdir(), 'wintech-pdf-e2e-'))
 
 export default defineConfig({
@@ -27,11 +31,12 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
   webServer: {
-    command: `java -jar ../backend/build/libs/pdfedit-v2-backend-0.1.0.jar --server.port=${port}`,
+    command: `"${java}" --enable-native-access=ALL-UNNAMED -Dfile.encoding=UTF-8 -jar "${jar}" --server.port=${port}`,
     url: `http://localhost:${port}/api/v1/pdf/health`,
     reuseExistingServer: false,
     timeout: 120_000,
     // Scans are not recognized as they open unless a test switches it on: most tests open one and choose.
-    env: { ...process.env, PDFEDIT_DATA_DIR: dataDir, PDFEDIT_AUTO_OCR: 'false' } as Record<string, string>,
+    // No browser window of its own either (on a PC with a desktop the app opens one as it starts).
+    env: { ...process.env, PDFEDIT_DATA_DIR: dataDir, PDFEDIT_AUTO_OCR: 'false', PDFEDIT_NO_BROWSER: 'true' } as Record<string, string>,
   },
 })

@@ -92,4 +92,18 @@ class UprightTurnTest {
         g.dispose();
         assertThat(engine.uprightTurn(blank)).isZero();
     }
+
+    @Test
+    void theReadingTellsTheWayUpFirstAndReadsOnlyAnUprightPage() throws Exception {
+        OcrEngine.Reading upright = engine.read(page(0), true);
+        assertThat(upright.turn()).isZero();
+        assertThat(upright.lines()).isNotEmpty();
+        OcrEngine.Reading down = engine.read(page(180), true);
+        assertThat(down.turn()).isEqualTo(180);
+        assertThat(down.lines()).isEmpty();
+        assertThat(engine.read(page(90), true).turn()).isEqualTo(270);
+        assertThat(engine.read(page(270), true).turn()).isEqualTo(90);
+        // Not asked, it reads the page as it lies.
+        assertThat(engine.read(page(180), false).turn()).isZero();
+    }
 }

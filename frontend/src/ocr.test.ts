@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { ocrMessage, recognizeAll, readsUpright, withReadAgain } from './ocr'
+import { ocrMessage, recognizeAll, withReadAgain } from './ocr'
 import type { OcrResult, PageItem } from './types'
 
 const page = (key: string): PageItem => ({
@@ -59,22 +59,20 @@ describe('ocrMessage', () => {
   })
 })
 
-describe('a page read as it lies', () => {
-  const line = (score: number, orientation?: string) => ({ text: '가', x: 0, y: 0, width: 10, height: 2, score, orientation })
-  const result = (lines: ReturnType<typeof line>[], alreadyText = 0) => ({ lines, alreadyText, seconds: 1 })
-
-  it('was upright when most of its lines read surely across', () => {
-    expect(readsUpright(result([...Array(117)].map(() => line(0.97)).concat([...Array(15)].map(() => line(0.6)))))).toBe(true)
-  })
-
-  it('was not when few did: upside down, on its side, or too few lines to tell', () => {
-    expect(readsUpright(result([...Array(6)].map(() => line(0.9)).concat([...Array(46)].map(() => line(0.6)))))).toBe(false)
-    expect(readsUpright(result([...Array(8)].map(() => line(0.95)).concat([...Array(94)].map(() => line(0.95, 'down')))))).toBe(false)
-    expect(readsUpright(result([line(0.99), line(0.99)]))).toBe(false)
-  })
-
-  it('is taken as upright when its text is real text', () => {
-    expect(readsUpright(result([], 12))).toBe(true)
+describe('a page found upside down', () => {
+  it('is not counted as read: it is handed back to be turned and read again', async () => {
+    const page = (key: string): PageItem => ({ key, documentId: key, sourceFileName: 'a.pdf', pageIndex: 0, rotation: 0, textRevision: 0 })
+    const turned: string[] = []
+    const summary = await recognizeAll(
+      [page('a'), page('b')],
+      async (id) => (id === 'b' ? { lines: [], alreadyText: 0, seconds: 0.1, turn: 180 } : { lines: [], alreadyText: 0, seconds: 1 }),
+      () => {},
+      () => false,
+      (p, r) => r.turn && turned.push(p.key),
+    )
+    expect(turned).toEqual(['b'])
+    expect(summary.pages).toBe(1)
+    expect(Object.keys(summary.linesByKey)).toEqual(['a'])
   })
 })
 

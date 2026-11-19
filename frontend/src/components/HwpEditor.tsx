@@ -20,6 +20,32 @@ function download(bytes: Uint8Array, fileName: string) {
   downloadBlob(new Blob([new Uint8Array(bytes)], { type: 'application/octet-stream' }), fileName)
 }
 
+/** How long the studio is given to draw the empty document it starts with. */
+const STARTUP_WAIT_MS = 5000
+/** How long after a document was handed over its pages are looked for, and how often it is handed over again. */
+const DRAW_WAIT_MS = 500
+const LOAD_TRIES = 5
+
+/**
+ * Whether the studio (served by this app, so its page can be looked into) has pages drawn: waits for them up to
+ * `withinMs`.
+ */
+async function pagesDrawn(container: HTMLElement, withinMs: number): Promise<boolean> {
+  const drawn = (): boolean => {
+    try {
+      return !!container.querySelector('iframe')?.contentDocument?.querySelector('canvas.document-page-canvas')
+    } catch {
+      return false
+    }
+  }
+  const until = Date.now() + withinMs
+  while (!drawn()) {
+    if (Date.now() >= until) return false
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  return true
+}
+
 /**
  * A Hangul document (HWP or HWPX) opened in rhwp-studio, the open-source HWP editor the app serves itself:
  * the studio's own menus and toolbars edit it, and the buttons here save it back as HWPX or HWP. Nothing of
@@ -47,13 +73,25 @@ export function HwpEditor({ file, onClose }: HwpEditorProps) {
           return
         }
         editor.current = opened
+        // The studio (0.9.0 on) opens an empty document by itself as it starts. A file handed over while that
+        // one is still being set up is loaded but its pages are never drawn: wait until the empty one is.
+        await pagesDrawn(container, STARTUP_WAIT_MS)
+        if (cancelled) return
         if (file) {
-          const loaded = await opened.loadFile(await file.arrayBuffer(), file.name)
+          const bytes = await file.arrayBuffer()
+          let loaded = await opened.loadFile(bytes.slice(0), file.name)
+          // The studio has drawn the pages by the time it answers. When it has not (0.9.0: its choosing of how to
+          // draw can cut in on the loading, and the pages are then left out without a word), it is handed over
+          // again.
+          for (let tries = 1; tries < LOAD_TRIES && !cancelled && !(await pagesDrawn(container, DRAW_WAIT_MS)); tries++) {
+            loaded = await opened.loadFile(bytes.slice(0), file.name)
+          }
           if (cancelled) return
           setPageCount(loaded.pageCount)
         } else {
-          // The studio's own "새 문서" (Alt+N); it makes the document a moment after it is asked.
-          await opened.commands.execute('file:new-doc')
+          // The empty document the studio opened by itself is the new one; an older studio is asked for it
+          // ("새 문서", Alt+N), and makes it a moment after it is asked.
+          if ((await opened.pageCount().catch(() => 0)) === 0) await opened.commands.execute('file:new-doc')
           let pages = 0
           for (let tries = 0; tries < 50 && pages === 0 && !cancelled; tries++) {
             pages = await opened.pageCount().catch(() => 0)

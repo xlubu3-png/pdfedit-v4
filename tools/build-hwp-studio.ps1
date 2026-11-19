@@ -3,20 +3,21 @@
   app serves it itself at /hwp-studio/: no part of it, and no document, goes through an outside server.
 
     .\tools\build-hwp-studio.ps1               # the version below
-    .\tools\build-hwp-studio.ps1 -Version 0.8.8
+    .\tools\build-hwp-studio.ps1 -Version 0.9.2
 
   What it does:
     1. takes the studio's source, its bundled open-source fonts and its licences from the rhwp tag v<Version>
     2. takes the matching prebuilt WASM engine from the npm package @rhwp/core@<Version> (no Rust needed)
-    3. builds the studio with the base path /hwp-studio/, without the HwpCtrl plugin and with the outside
-       (CDN) web fonts switched off; the bundled fonts are used instead
+    3. builds the studio with the base path /hwp-studio/, without the HwpCtrl plugin, without the AI helper
+       (it would send text to outside AI services) and with the outside (CDN) web fonts switched off; the
+       bundled fonts are used instead
     4. leaves out its sample documents and its service worker (the app serves the files itself; a cached
        copy would outlive an update of the app)
     5. puts the result in frontend\public\hwp-studio, which the frontend build copies into the app
 
   Needs git, node/npm and network access while it runs; the app built from the result needs neither.
 #>
-param([string]$Version = '0.8.7')
+param([string]$Version = '0.9.1')
 $ErrorActionPreference = 'Stop'
 
 $root = Split-Path $PSScriptRoot -Parent
@@ -40,7 +41,8 @@ $src = Join-Path $work 'rhwp'
 Run 'source' { git clone --quiet --depth 1 --branch "v$Version" --filter=blob:none --sparse https://github.com/edwardkim/rhwp.git $src }
 Push-Location $src
 try {
-    Run 'sparse checkout' { git sparse-checkout set rhwp-studio npm assets/fonts }
+    # Since 0.9.0 the studio also takes files from rhwp-shared, vendor/npm (a patched ajv) and src/renderer (a shader).
+    Run 'sparse checkout' { git sparse-checkout set rhwp-studio rhwp-shared npm vendor/npm assets/fonts src/renderer }
 } finally { Pop-Location }
 
 Push-Location $work
@@ -63,10 +65,12 @@ try {
     Run 'dependencies' { npm ci --ignore-scripts --no-audit --no-fund }
     $env:RHWP_WITHOUT_HWPCTRL = '1'
     $env:RHWP_DISABLE_EXTERNAL_WEBFONTS = '1'
+    # The AI helper (0.9.0) sends the document's text to outside AI services: left out, as nothing leaves the PC.
+    $env:RHWP_WITHOUT_AI = '1'
     Run 'type check' { npx tsc }
     Run 'build' { npx vite build --base /hwp-studio/ }
 } finally {
-    Remove-Item Env:RHWP_WITHOUT_HWPCTRL, Env:RHWP_DISABLE_EXTERNAL_WEBFONTS -ErrorAction SilentlyContinue
+    Remove-Item Env:RHWP_WITHOUT_HWPCTRL, Env:RHWP_DISABLE_EXTERNAL_WEBFONTS, Env:RHWP_WITHOUT_AI -ErrorAction SilentlyContinue
     Pop-Location
 }
 

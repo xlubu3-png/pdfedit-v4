@@ -21,6 +21,7 @@ function renderGrid({ busy = false, selected = [] as string[] } = {}) {
     onRotate: vi.fn(),
     onDelete: vi.fn(),
     onToggleSelect: vi.fn(),
+    onSelectKeys: vi.fn(),
     onInsertBlankAfter: vi.fn(),
     onExtract: vi.fn(),
     onDuplicate: vi.fn(),
@@ -135,6 +136,7 @@ describe('PageGrid moving pages', () => {
         onRotate={noop}
         onDelete={noop}
         onToggleSelect={noop}
+        onSelectKeys={noop}
         onInsertBlankAfter={noop}
         onExtract={noop}
         onDuplicate={noop}

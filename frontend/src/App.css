@@ -172,6 +172,24 @@ button.primary:disabled {
 /* Dragging pages to move them: no text picked on the way, the hand closed, and a bar where they will land. */
 .page-grid {
   user-select: none;
+  /* Room under the last row to start a selection box from. */
+  padding-bottom: 48px;
+}
+
+/* The box dragged out from an empty part of the page list to pick the pages it touches. */
+.page-band {
+  position: fixed;
+  z-index: 50;
+  pointer-events: none;
+  border: 1px solid var(--accent);
+  background: var(--accent-bg);
+  opacity: 0.85;
+  border-radius: 2px;
+}
+
+.page-grid.boxing,
+.page-grid.boxing * {
+  cursor: crosshair !important;
 }
 
 .page-grid.sorting,

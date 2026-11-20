@@ -16,6 +16,8 @@ interface PageGridProps {
   onRotate: (key: string, delta: 90 | -90) => void
   onDelete: (key: string) => void
   onToggleSelect: (key: string) => void
+  /** The picked pages, all at once: a box dragged over the list picks the pages it touches. */
+  onSelectKeys: (keys: Set<string>) => void
   onInsertBlankAfter: (key: string) => void
   onExtract: (key: string) => void
   onDuplicate: (key: string) => void
@@ -37,6 +39,43 @@ interface PageGridProps {
 const DRAG_START = 6
 /** How close (pixels) to the top or bottom of the window a drag scrolls the list. */
 const SCROLL_EDGE = 70
+
+/**
+ * A box being dragged out from an empty part of the list: where it started (in the page, so it stays put when the
+ * list scrolls), the pointer, and the pages picked before it (kept when Ctrl or Shift was held).
+ */
+interface Band {
+  pointerId: number
+  startX: number
+  startY: number
+  x: number
+  y: number
+  base: Set<string>
+  /** The pages picked when the box was started: what Esc brings back. */
+  before: Set<string>
+  shown: boolean
+}
+
+/** The pages whose cards the box (window coordinates) touches. */
+function keysInBox(grid: HTMLElement | null, left: number, top: number, right: number, bottom: number): Set<string> {
+  const keys = new Set<string>()
+  for (const card of Array.from(grid?.querySelectorAll<HTMLElement>('.page-card[data-key]') ?? [])) {
+    const r = card.getBoundingClientRect()
+    if (r.right >= left && r.left <= right && r.bottom >= top && r.top <= bottom) keys.add(card.dataset.key!)
+  }
+  return keys
+}
+
+/** The pages the box touches now, picked (with the pages picked before it when it was started with Ctrl/Shift). */
+function pickInBand(grid: HTMLElement | null, band: Band, select: (keys: Set<string>) => void) {
+  const left = Math.min(band.startX - window.scrollX, band.x)
+  const right = Math.max(band.startX - window.scrollX, band.x)
+  const top = Math.min(band.startY - window.scrollY, band.y)
+  const bottom = Math.max(band.startY - window.scrollY, band.y)
+  const picked = new Set(band.base)
+  for (const key of keysInBox(grid, left, top, right, bottom)) picked.add(key)
+  select(picked)
+}
 
 /** A drag in progress: the pages moved, and before which page (index; the count for the end) they would land. */
 interface Drag {
@@ -73,6 +112,7 @@ export function PageGrid({
   onRotate,
   onDelete,
   onToggleSelect,
+  onSelectKeys,
   onInsertBlankAfter,
   onExtract,
   onDuplicate,
@@ -100,6 +140,20 @@ export function PageGrid({
     dragRef.current = next
     setDragState(next)
   }
+  // Picking pages with a box dragged from an empty part of the list (between or around the cards), as in the
+  // Windows file explorer: a press on a card still moves the page.
+  const bandRef = useRef<Band | null>(null)
+  const [band, setBand] = useState<Band | null>(null)
+  const showBand = (next: Band | null) => {
+    bandRef.current = next
+    setBand(next)
+  }
+
+  // The latest onSelectKeys, for the scrolling loop below.
+  const selectRef = useRef(onSelectKeys)
+  useEffect(() => {
+    selectRef.current = onSelectKeys
+  })
 
   // A right click on a page card opens the page's menu (taken at the window: see rightClick.ts).
   useRightClick((target, x, y, blocked) => {
@@ -116,11 +170,43 @@ export function PageGrid({
     // The card's buttons and tick box do their own thing.
     if (target.closest('button, input, label, a, select, textarea')) return
     const key = target.closest<HTMLElement>('.page-card[data-key]')?.dataset.key
-    if (key === undefined) return
+    if (key === undefined) {
+      const base = e.ctrlKey || e.metaKey || e.shiftKey ? new Set(selectedKeys) : new Set<string>()
+      bandRef.current = {
+        pointerId: e.pointerId,
+        startX: e.clientX + window.scrollX,
+        startY: e.clientY + window.scrollY,
+        x: e.clientX,
+        y: e.clientY,
+        base,
+        before: new Set(selectedKeys),
+        shown: false,
+      }
+      return
+    }
     press.current = { key, x: e.clientX, y: e.clientY, pointerId: e.pointerId }
   }
 
   function onPointerMove(e: ReactPointerEvent<HTMLDivElement>) {
+    const boxing = bandRef.current
+    if (boxing && e.pointerId === boxing.pointerId) {
+      if ((e.buttons & 1) === 0) {
+        finishBand(true)
+        return
+      }
+      pointer.current = { x: e.clientX, y: e.clientY }
+      const moved = Math.hypot(e.clientX + window.scrollX - boxing.startX, e.clientY + window.scrollY - boxing.startY)
+      if (!boxing.shown && moved < DRAG_START) return
+      if (!boxing.shown) {
+        e.currentTarget.setPointerCapture?.(e.pointerId)
+        setMenu(null)
+      }
+      e.preventDefault()
+      const next = { ...boxing, x: e.clientX, y: e.clientY, shown: true }
+      showBand(next)
+      pickInBand(gridRef.current, next, onSelectKeys)
+      return
+    }
     const pressed = press.current
     if (!pressed || e.pointerId !== pressed.pointerId) return
     if ((e.buttons & 1) === 0) {
@@ -142,13 +228,60 @@ export function PageGrid({
     if (current !== dragRef.current || slot !== current.slot) showDrag({ keys: current.keys, slot })
   }
 
+  /** The box let go (its pages stay picked), or given up with Esc (the pages picked before it come back). */
+  function finishBand(keep: boolean) {
+    const current = bandRef.current
+    if (!current) return
+    showBand(null)
+    if (!keep && current.shown) onSelectKeys(current.before)
+  }
+
   function finish(drop: boolean) {
+    finishBand(true)
     const current = dragRef.current
     press.current = null
     if (!current) return
     showDrag(null)
     if (drop && current.slot !== null) onReorder(dropAt(pages, current.keys, current.slot))
   }
+
+  // While a box is dragged out: the window scrolls near its top and bottom edge (the box grows with it), and
+  // Esc gives it up.
+  const boxing = band?.shown ?? false
+  useEffect(() => {
+    if (!boxing) return
+    let frame = 0
+    const step = () => {
+      const current = bandRef.current
+      if (!current) return
+      const { y } = pointer.current
+      const bottom = window.innerHeight - SCROLL_EDGE
+      const speed = y < SCROLL_EDGE ? -(SCROLL_EDGE - y) / 4 : y > bottom ? (y - bottom) / 4 : 0
+      if (speed !== 0) {
+        window.scrollBy(0, speed)
+        const next = { ...current }
+        bandRef.current = next
+        setBand(next)
+        pickInBand(gridRef.current, next, selectRef.current)
+      }
+      frame = requestAnimationFrame(step)
+    }
+    frame = requestAnimationFrame(step)
+    const escape = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      const current = bandRef.current
+      bandRef.current = null
+      setBand(null)
+      if (current) selectRef.current(current.before)
+    }
+    window.addEventListener('keydown', escape, true)
+    return () => {
+      cancelAnimationFrame(frame)
+      window.removeEventListener('keydown', escape, true)
+    }
+  }, [boxing])
 
   // While dragging: the window scrolls near its top and bottom edge, and Esc puts the pages back.
   const dragging = drag !== null
@@ -249,7 +382,7 @@ export function PageGrid({
   return (
     <>
       <div
-        className={`page-grid${dragging ? ' sorting' : ''}`}
+        className={`page-grid${dragging ? ' sorting' : ''}${boxing ? ' boxing' : ''}`}
         ref={gridRef}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -275,6 +408,18 @@ export function PageGrid({
           />
         ))}
       </div>
+      {band?.shown && (
+        <div
+          className="page-band"
+          aria-hidden="true"
+          style={{
+            left: Math.min(band.startX - window.scrollX, band.x),
+            top: Math.min(band.startY - window.scrollY, band.y),
+            width: Math.abs(band.x - (band.startX - window.scrollX)),
+            height: Math.abs(band.y - (band.startY - window.scrollY)),
+          }}
+        />
+      )}
       {/* A page removed while its menu was open (by another action) takes the menu with it. */}
       {menu && menuIndex >= 0 && (
         <ContextMenu

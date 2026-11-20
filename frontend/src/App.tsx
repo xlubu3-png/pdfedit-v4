@@ -1717,6 +1717,7 @@ function App() {
             onRotate={handleRotate}
             onDelete={handleDelete}
             onToggleSelect={handleToggleSelect}
+            onSelectKeys={setSelectedKeys}
             onInsertBlankAfter={handleInsertBlank}
             onExtract={handleExtractOne}
             onDuplicate={(key) => void handleDuplicate([key])}

@@ -100,6 +100,9 @@ public final class OcrEngine implements AutoCloseable {
     /** The engine with the models bundled with the app. */
     public static OcrEngine load() throws IOException, OrtException {
         OrtEnvironment env = OrtEnvironment.getEnvironment();
+        // No usage reports to Microsoft from the engine (it sends them where its build has them on): nothing of the
+        // app or its documents leaves the PC.
+        env.setTelemetry(false);
         try (OrtSession.SessionOptions options = new OrtSession.SessionOptions()) {
             options.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT);
             OrtSession detector = env.createSession(model("det.onnx"), options);

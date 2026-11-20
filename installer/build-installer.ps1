@@ -93,6 +93,10 @@ $common = @(
     # ${USERPROFILE}.
     '--java-options', '-XX:AOTCache=${USERPROFILE}\WINTECH_PDF\app.aot',
     '--java-options', '-XX:G1PeriodicGCInterval=60000',
+    # ...and gives the heap back down to what is used, not to 70% free: after a big document it went back to only
+    # about half of what it had grown to (measured: 230 MB -> 120 MB held after a few scans).
+    '--java-options', '-XX:MinHeapFreeRatio=10',
+    '--java-options', '-XX:MaxHeapFreeRatio=30',
     # Text recognition (ONNX Runtime) loads a native library; newer Java versions refuse that unless allowed.
     '--java-options', '--enable-native-access=ALL-UNNAMED'
 )

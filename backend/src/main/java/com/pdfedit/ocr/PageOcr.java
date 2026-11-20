@@ -18,6 +18,7 @@ import org.apache.pdfbox.rendering.PDFRenderer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import com.pdfedit.dto.TextRunDto;
@@ -56,7 +57,16 @@ public class PageOcr implements DisposableBean {
 
     private final TextEditService textEditService;
     private OcrEngine engine;
+    /** When the engine was last asked for (System.nanoTime). */
+    private long lastUsed;
     private final AtomicBoolean prepared = new AtomicBoolean();
+
+    /**
+     * How long the engine stays loaded after its last use. Loaded, its models and their working memory take hundreds
+     * of MB (over 1 GB after a few big scans) that were never given back: the app stayed that heavy until it was
+     * closed. Loading it again takes a second or two.
+     */
+    static final long IDLE_RELEASE_MS = 3 * 60_000;
 
     public PageOcr(TextEditService textEditService) {
         this.textEditService = textEditService;
@@ -232,6 +242,7 @@ public class PageOcr implements DisposableBean {
 
     /** Loaded on first use: the models take a second or two and some memory, and most documents never need them. */
     private synchronized OcrEngine engine() {
+        lastUsed = System.nanoTime();
         if (engine == null) {
             try {
                 engine = OcrEngine.load();
@@ -241,6 +252,37 @@ public class PageOcr implements DisposableBean {
             }
         }
         return engine;
+    }
+
+    /**
+     * Closes the engine when it has not been used for {@link #IDLE_RELEASE_MS}, giving its memory back; the next
+     * page to recognize loads it again. A reading under way finishes first (the engine closes after it).
+     */
+    @Scheduled(fixedDelay = 30_000, initialDelay = 30_000)
+    public void releaseIfIdle() {
+        releaseIfIdle(IDLE_RELEASE_MS);
+    }
+
+    /** Closes the engine if unused for `idleMs`; true when it did. */
+    synchronized boolean releaseIfIdle(long idleMs) {
+        if (engine == null || System.nanoTime() - lastUsed < idleMs * 1_000_000) {
+            return false;
+        }
+        try {
+            engine.close();
+        } catch (OrtException | RuntimeException e) {
+            log.info("OCR engine not closed: {}", e.toString());
+        }
+        engine = null;
+        // A scan opened later warms it up again.
+        prepared.set(false);
+        log.info("글자 인식 엔진을 내려놓음 ({}분 동안 쓰지 않음)", idleMs / 60_000);
+        return true;
+    }
+
+    /** Whether the engine is loaded now. */
+    synchronized boolean loaded() {
+        return engine != null;
     }
 
     @Override

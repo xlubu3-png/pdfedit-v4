@@ -188,6 +188,10 @@ export function PageGrid({
       if (latest.current.busy || e.button !== 0 || e.pointerType === 'touch' || !grid || !grid.offsetParent) return
       const target = e.target as Element | null
       if (!target || latest.current.pages.length === 0) return
+      // The window's scroll bar: a press on it reaches the page as a press on <html>, beside or under the page's
+      // own width and height. Scrolling is not picking (it took the picked pages away).
+      const root = document.documentElement
+      if (target === root || e.clientX >= root.clientWidth || e.clientY >= root.clientHeight) return
       if (target.closest('button, input, label, a, select, textarea, [role=dialog], .context-menu')) return
       const card = target.closest<HTMLElement>('.page-card[data-key]')
       const ctrl = e.ctrlKey || e.metaKey
@@ -243,9 +247,9 @@ export function PageGrid({
       bandRef.current = null
       setBand(null)
       if (current.shown) return
-      // A click, not a box: on a card (Ctrl/Shift+click); in empty space without keys, nothing picked any more.
-      if (current.fromKey !== undefined) clickCard(current.fromKey, current.ctrl, current.shift)
-      else if (!current.ctrl && !current.shift && e.type === 'pointerup') latest.current.onSelectKeys(new Set())
+      // A click, not a box: on a card, a Ctrl/Shift+click. In empty space nothing changes: a stray click there (as
+      // before scrolling) must not take the picked pages away; Esc and the menu's 선택 해제 do that.
+      if (current.fromKey !== undefined && e.type === 'pointerup') clickCard(current.fromKey, current.ctrl, current.shift)
     }
     window.addEventListener('pointerdown', down)
     window.addEventListener('pointermove', move)

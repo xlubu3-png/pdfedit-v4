@@ -20,7 +20,7 @@ async function middle(page: Page, index: number) {
   return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
 }
 
-test('pages are picked with clicks as in the file explorer: click, Ctrl+click, Shift+click, a click on empty space', async ({ page }) => {
+test('pages are picked with clicks as in the file explorer: click, Ctrl+click, Shift+click; a stray click keeps them', async ({ page }) => {
   await openSix(page)
   const at = async (i: number, modifiers: ('Control' | 'Shift')[] = []) => {
     const p = await middle(page, i)
@@ -43,13 +43,13 @@ test('pages are picked with clicks as in the file explorer: click, Ctrl+click, S
   expect(await picked(page)).toEqual([1, 2, 3, 4, 5, 6])
   await at(4)
   expect(await picked(page)).toEqual([5])
-  // A click on empty space (the margin beside the list) picks nothing any more.
+  // A stray click on empty space (the margin beside the list) leaves the picked pages as they are.
   const grid = (await page.locator('.page-grid').boundingBox())!
   await page.mouse.click(grid.x - 30, (await middle(page, 0)).y)
-  expect(await picked(page)).toEqual([])
+  expect(await picked(page)).toEqual([5])
   // The tick box still works on its own.
   await page.locator('.page-card').nth(2).locator('input[type=checkbox]').check()
-  expect(await picked(page)).toEqual([3])
+  expect(await picked(page)).toEqual([3, 5])
 })
 
 test('a box dragged from empty space or with Ctrl from a card picks the pages it touches; a plain drag on a card moves it', async ({ page }) => {
@@ -100,4 +100,39 @@ test('a box dragged from empty space or with Ctrl from a card picks the pages it
   await expect(page.locator('.page-band')).toHaveCount(0)
   await page.mouse.up()
   await expect(cards.last().locator('img')).toHaveAttribute('src', /pages\/3\//)
+})
+
+test('the picked pages stay picked when the window is scrolled (scroll bar, wheel)', async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 700 })
+  await page.goto('/')
+  await page.locator('input[type=file]').setInputFiles({ name: 'many.pdf', mimeType: 'application/pdf', buffer: simplePdf(['Page'], 18) })
+  await expect(page.locator('.page-card')).toHaveCount(18)
+  for (const i of [0, 2]) await page.locator('.page-card').nth(i).locator('input[type=checkbox]').check()
+  expect(await picked(page)).toEqual([1, 3])
+
+  // The scroll bar: a press on it reaches the page as a press on the page's root (<html>), at its right edge.
+  // The test browser draws no scroll bar, so the press is sent as the browser sends it.
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight / 2))
+  await page.evaluate(() => {
+    const root = document.documentElement
+    const x = window.innerWidth - 8
+    const y = 300
+    for (const [type, buttons] of [['pointerdown', 1], ['pointermove', 1], ['pointermove', 1], ['pointerup', 0]] as const) {
+      const moved = type === 'pointermove' ? 120 : 0
+      root.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, pointerType: 'mouse', button: 0, buttons, clientX: x, clientY: y + moved }))
+    }
+    window.scrollBy(0, 400)
+  })
+  await expect(page.locator('.page-band')).toHaveCount(0)
+  expect(await picked(page)).toEqual([1, 3])
+
+  // The wheel.
+  await page.mouse.move(700, 400)
+  await page.mouse.wheel(0, 600)
+  await page.mouse.wheel(0, -900)
+  expect(await picked(page)).toEqual([1, 3])
+  // A click on the empty margin beside the list, as before scrolling.
+  const grid = (await page.locator('.page-grid').boundingBox())!
+  await page.mouse.click(grid.x - 30, 400)
+  expect(await picked(page)).toEqual([1, 3])
 })

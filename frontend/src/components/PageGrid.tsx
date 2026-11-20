@@ -54,6 +54,10 @@ interface Band {
   /** The pages picked when the box was started: what Esc brings back. */
   before: Set<string>
   shown: boolean
+  /** The card it was started on (with Ctrl or Shift held): let go without a drag, it is a click on that card. */
+  fromKey?: string
+  ctrl: boolean
+  shift: boolean
 }
 
 /** The pages whose cards the box (window coordinates) touches. */
@@ -140,20 +144,122 @@ export function PageGrid({
     dragRef.current = next
     setDragState(next)
   }
-  // Picking pages with a box dragged from an empty part of the list (between or around the cards), as in the
-  // Windows file explorer: a press on a card still moves the page.
+  // Picking pages as in the Windows file explorer:
+  // - a click on a card picks that page alone, Ctrl+click adds or takes it away, Shift+click picks the pages from
+  //   the last clicked one to it (Ctrl+Shift adds them);
+  // - a box dragged from empty space (between, beside or under the cards) picks the pages it touches, and so does
+  //   one dragged from a card with Ctrl or Shift held; a plain drag on a card still moves the page.
+  // The box is followed at the window, as it may start outside the list (its margins, the space under it).
   const bandRef = useRef<Band | null>(null)
   const [band, setBand] = useState<Band | null>(null)
-  const showBand = (next: Band | null) => {
-    bandRef.current = next
-    setBand(next)
+  /** The page clicked last: where a Shift+click range starts. */
+  const anchor = useRef<string | null>(null)
+
+  // The latest props, for the window's listeners below.
+  const latest = useRef({ pages, selectedKeys, busy, onSelectKeys })
+  useEffect(() => {
+    latest.current = { pages, selectedKeys, busy, onSelectKeys }
+  })
+
+  /** A click (no drag) on a card, with the keys held. */
+  function clickCard(key: string, ctrl: boolean, shift: boolean) {
+    const { pages: list, selectedKeys: picked, onSelectKeys: select } = latest.current
+    if (shift && anchor.current !== null && list.some((p) => p.key === anchor.current)) {
+      const from = list.findIndex((p) => p.key === anchor.current)
+      const to = list.findIndex((p) => p.key === key)
+      const range = list.slice(Math.min(from, to), Math.max(from, to) + 1).map((p) => p.key)
+      select(new Set(ctrl ? [...picked, ...range] : range))
+      return
+    }
+    anchor.current = key
+    if (ctrl) {
+      const next = new Set(picked)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      select(next)
+    } else {
+      select(new Set([key]))
+    }
   }
 
-  // The latest onSelectKeys, for the scrolling loop below.
-  const selectRef = useRef(onSelectKeys)
   useEffect(() => {
-    selectRef.current = onSelectKeys
-  })
+    const down = (e: PointerEvent) => {
+      const grid = gridRef.current
+      if (latest.current.busy || e.button !== 0 || e.pointerType === 'touch' || !grid || !grid.offsetParent) return
+      const target = e.target as Element | null
+      if (!target || latest.current.pages.length === 0) return
+      if (target.closest('button, input, label, a, select, textarea, [role=dialog], .context-menu')) return
+      const card = target.closest<HTMLElement>('.page-card[data-key]')
+      const ctrl = e.ctrlKey || e.metaKey
+      const shift = e.shiftKey
+      let fromKey: string | undefined
+      if (card && grid.contains(card)) {
+        // A plain press on a card is a click or a page moved (the list's own handler).
+        if (!ctrl && !shift) return
+        fromKey = card.dataset.key
+      } else if (!(target === grid || target.contains(grid))) {
+        // Only empty space: the list itself, or what holds it (its margins); nothing else on the screen.
+        return
+      } else if (e.clientY < grid.getBoundingClientRect().top - 24) {
+        return // above the list: the menus, the drop zone
+      }
+      const picked = latest.current.selectedKeys
+      bandRef.current = {
+        pointerId: e.pointerId,
+        startX: e.clientX + window.scrollX,
+        startY: e.clientY + window.scrollY,
+        x: e.clientX,
+        y: e.clientY,
+        base: ctrl || shift ? new Set(picked) : new Set<string>(),
+        before: new Set(picked),
+        shown: false,
+        fromKey,
+        ctrl,
+        shift,
+      }
+      if (fromKey !== undefined) e.preventDefault() // no text picked, no page moved
+    }
+    const move = (e: PointerEvent) => {
+      const current = bandRef.current
+      if (!current || e.pointerId !== current.pointerId) return
+      if ((e.buttons & 1) === 0) {
+        bandRef.current = null
+        setBand(null)
+        return
+      }
+      pointer.current = { x: e.clientX, y: e.clientY }
+      const moved = Math.hypot(e.clientX + window.scrollX - current.startX, e.clientY + window.scrollY - current.startY)
+      if (!current.shown && moved < DRAG_START) return
+      if (!current.shown) setMenu(null)
+      e.preventDefault()
+      const next = { ...current, x: e.clientX, y: e.clientY, shown: true }
+      bandRef.current = next
+      setBand(next)
+      pickInBand(gridRef.current, next, latest.current.onSelectKeys)
+    }
+    const up = (e: PointerEvent) => {
+      const current = bandRef.current
+      if (!current || e.pointerId !== current.pointerId) return
+      bandRef.current = null
+      setBand(null)
+      if (current.shown) return
+      // A click, not a box: on a card (Ctrl/Shift+click); in empty space without keys, nothing picked any more.
+      if (current.fromKey !== undefined) clickCard(current.fromKey, current.ctrl, current.shift)
+      else if (!current.ctrl && !current.shift && e.type === 'pointerup') latest.current.onSelectKeys(new Set())
+    }
+    window.addEventListener('pointerdown', down)
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
+    return () => {
+      window.removeEventListener('pointerdown', down)
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+    }
+    // clickCard reads everything from refs.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // A right click on a page card opens the page's menu (taken at the window: see rightClick.ts).
   useRightClick((target, x, y, blocked) => {
@@ -166,47 +272,16 @@ export function PageGrid({
 
   function onPointerDown(e: ReactPointerEvent<HTMLDivElement>) {
     if (busy || e.button !== 0 || e.pointerType === 'touch') return
+    if (e.ctrlKey || e.metaKey || e.shiftKey) return // picking, at the window
     const target = e.target as Element
     // The card's buttons and tick box do their own thing.
     if (target.closest('button, input, label, a, select, textarea')) return
     const key = target.closest<HTMLElement>('.page-card[data-key]')?.dataset.key
-    if (key === undefined) {
-      const base = e.ctrlKey || e.metaKey || e.shiftKey ? new Set(selectedKeys) : new Set<string>()
-      bandRef.current = {
-        pointerId: e.pointerId,
-        startX: e.clientX + window.scrollX,
-        startY: e.clientY + window.scrollY,
-        x: e.clientX,
-        y: e.clientY,
-        base,
-        before: new Set(selectedKeys),
-        shown: false,
-      }
-      return
-    }
+    if (key === undefined) return
     press.current = { key, x: e.clientX, y: e.clientY, pointerId: e.pointerId }
   }
 
   function onPointerMove(e: ReactPointerEvent<HTMLDivElement>) {
-    const boxing = bandRef.current
-    if (boxing && e.pointerId === boxing.pointerId) {
-      if ((e.buttons & 1) === 0) {
-        finishBand(true)
-        return
-      }
-      pointer.current = { x: e.clientX, y: e.clientY }
-      const moved = Math.hypot(e.clientX + window.scrollX - boxing.startX, e.clientY + window.scrollY - boxing.startY)
-      if (!boxing.shown && moved < DRAG_START) return
-      if (!boxing.shown) {
-        e.currentTarget.setPointerCapture?.(e.pointerId)
-        setMenu(null)
-      }
-      e.preventDefault()
-      const next = { ...boxing, x: e.clientX, y: e.clientY, shown: true }
-      showBand(next)
-      pickInBand(gridRef.current, next, onSelectKeys)
-      return
-    }
     const pressed = press.current
     if (!pressed || e.pointerId !== pressed.pointerId) return
     if ((e.buttons & 1) === 0) {
@@ -228,19 +303,15 @@ export function PageGrid({
     if (current !== dragRef.current || slot !== current.slot) showDrag({ keys: current.keys, slot })
   }
 
-  /** The box let go (its pages stay picked), or given up with Esc (the pages picked before it come back). */
-  function finishBand(keep: boolean) {
-    const current = bandRef.current
-    if (!current) return
-    showBand(null)
-    if (!keep && current.shown) onSelectKeys(current.before)
-  }
-
   function finish(drop: boolean) {
-    finishBand(true)
     const current = dragRef.current
+    const pressed = press.current
     press.current = null
-    if (!current) return
+    if (!current) {
+      // Let go where it was pressed: a click on the card picks that page alone.
+      if (drop && pressed) clickCard(pressed.key, false, false)
+      return
+    }
     showDrag(null)
     if (drop && current.slot !== null) onReorder(dropAt(pages, current.keys, current.slot))
   }
@@ -262,7 +333,7 @@ export function PageGrid({
         const next = { ...current }
         bandRef.current = next
         setBand(next)
-        pickInBand(gridRef.current, next, selectRef.current)
+        pickInBand(gridRef.current, next, latest.current.onSelectKeys)
       }
       frame = requestAnimationFrame(step)
     }
@@ -274,7 +345,7 @@ export function PageGrid({
       const current = bandRef.current
       bandRef.current = null
       setBand(null)
-      if (current) selectRef.current(current.before)
+      if (current) latest.current.onSelectKeys(current.before)
     }
     window.addEventListener('keydown', escape, true)
     return () => {

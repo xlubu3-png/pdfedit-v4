@@ -3,7 +3,7 @@
 # Shown in the UI. Raise it by 0.001 with every change to the app. Keep it in quotes: unquoted, YAML reads
 # 0.050 as the number 0.05 and the screen would show "v0.05".
 app:
-  version: "0.163"
+  version: "0.164"
   # Uploaded documents and their edits are kept here, so they survive a restart of the app.
   # PDFEDIT_DATA_DIR moves it; documents untouched for this many days are deleted.
   data-dir: ${PDFEDIT_DATA_DIR:${user.home}/WINTECH_PDF/data}
@@ -40,5 +40,5 @@ spring:
           no-cache: true
   servlet:
     multipart:
-      max-file-size: 100MB
-      max-request-size: 200MB
+      max-file-size: 200MB
+      max-request-size: 400MB

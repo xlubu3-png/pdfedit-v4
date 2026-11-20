@@ -40,12 +40,23 @@ describe('api errors are said in Korean', () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     const big = new File(['%PDF'], '도면.pdf', { type: 'application/pdf' })
-    Object.defineProperty(big, 'size', { value: 101 * 1024 * 1024 })
+    Object.defineProperty(big, 'size', { value: 201 * 1024 * 1024 })
 
     const error = await uploadDocument(big).catch((e: unknown) => e)
 
     expect((error as ApiError).status).toBe(413)
-    expect((error as ApiError).message).toContain('도면.pdf: 파일이 너무 큽니다')
+    expect((error as ApiError).message).toContain('도면.pdf: 파일이 너무 큽니다 (한 파일에 200MB까지')
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('sends a file of 150 MB: up to 200 MB is taken', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ documentId: 'd1', fileName: '준공도서.pdf', pageCount: 1 })))
+    vi.stubGlobal('fetch', fetchMock)
+    const big = new File(['%PDF'], '준공도서.pdf', { type: 'application/pdf' })
+    Object.defineProperty(big, 'size', { value: 150 * 1024 * 1024 })
+
+    await uploadDocument(big).catch(() => undefined)
+
+    expect(fetchMock).toHaveBeenCalled()
   })
 })

@@ -71,7 +71,7 @@ async function call(input: string, init?: RequestInit): Promise<Response> {
 }
 
 /** The biggest file the app takes (spring.servlet.multipart.max-file-size). */
-export const MAX_UPLOAD_MB = 100
+export const MAX_UPLOAD_MB = 200
 
 /** An encrypted PDF without its password, or with a wrong one, fails with status 401. */
 export async function uploadDocument(file: File, password?: string): Promise<UploadResponse> {

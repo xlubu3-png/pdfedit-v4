@@ -87,7 +87,7 @@ $common = @(
     # and an idle collection so the memory used for a big document is given back after a minute.
     # Starts small and grows when a big document needs it (it started at 1/64 of the RAM: about 100 MB more).
     '--java-options', '-Xms32m',
-    '--java-options', '-Xmx3g',
+    '--java-options', '-Xmx4g',
     # Java's AOT cache: made on this PC by the app itself after the first start (and after each update), in the
     # user's own folder (Program Files cannot be written); a start without it is just slower. The launcher fills in
     # ${USERPROFILE}.

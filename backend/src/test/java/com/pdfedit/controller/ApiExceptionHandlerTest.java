@@ -20,7 +20,7 @@ class ApiExceptionHandlerTest {
         var response = handler.handleTooBig(new MaxUploadSizeExceededException(100L * 1024 * 1024));
 
         assertThat(response.getStatusCode().value()).isEqualTo(413);
-        assertThat(response.getBody()).isEqualTo("파일이 너무 큽니다. 한 파일에 100MB까지 열 수 있습니다.");
+        assertThat(response.getBody()).isEqualTo("파일이 너무 큽니다. 한 파일에 200MB까지 열 수 있습니다.");
     }
 
     @Test

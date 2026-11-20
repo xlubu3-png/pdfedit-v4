@@ -19,7 +19,7 @@ import com.pdfedit.text.FontUnavailableException;
 public class ApiExceptionHandler {
 
     /** spring.servlet.multipart.max-file-size, in MB (the screen checks the same size before sending). */
-    static final int MAX_UPLOAD_MB = 100;
+    static final int MAX_UPLOAD_MB = 200;
 
     @ExceptionHandler(NoSuchElementException.class)
     public ResponseEntity<String> handleUnknownDocument(NoSuchElementException e) {

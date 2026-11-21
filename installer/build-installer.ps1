@@ -97,6 +97,10 @@ $common = @(
     # about half of what it had grown to (measured: 230 MB -> 120 MB held after a few scans).
     '--java-options', '-XX:MinHeapFreeRatio=10',
     '--java-options', '-XX:MaxHeapFreeRatio=30',
+    # The idle collection a full one: the default (a concurrent cycle) left what big documents had used lying in the
+    # heap - measured: still 1.3 GB held 2.5 minutes after opening and saving a 40-page scan, 430 MB with this. It
+    # runs only after a minute without any collection, so while the app sits idle (a pause of a few tens of ms).
+    '--java-options', '-XX:-G1PeriodicGCInvokesConcurrent',
     # Text recognition (ONNX Runtime) loads a native library; newer Java versions refuse that unless allowed.
     '--java-options', '--enable-native-access=ALL-UNNAMED'
 )

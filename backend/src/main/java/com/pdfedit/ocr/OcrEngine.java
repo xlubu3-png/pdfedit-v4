@@ -109,6 +109,11 @@ public final class OcrEngine implements AutoCloseable {
             // minutes the PC (and the app's own screen) went slow. Half of them, at least two.
             options.setIntraOpNumThreads(threads());
             options.setInterOpNumThreads(1);
+            // No memory kept back between pages: the engine kept every page's working memory (sized by the biggest
+            // page read so far) for the next one, well over 1 GB after a few scans, held until the engine is put
+            // down. Measured: about a quarter less memory at the peak, recognition about a tenth slower.
+            options.setCPUArenaAllocator(false);
+            options.setMemoryPatternOptimization(false);
             OrtSession detector = env.createSession(model("det.onnx"), options);
             OrtSession reader = env.createSession(model("rec-korean.onnx"), options);
             return new OcrEngine(env, detector, reader);

@@ -29,6 +29,16 @@ class PdfThumbnailServiceTest {
     }
 
     @Test
+    void thePageListPictureIsAJpegOfTheRequestedWidth() throws IOException {
+        byte[] jpeg = thumbnailService.renderThumbnail(singlePagePdf(), 0, 240);
+
+        assertThat(jpeg[0] & 0xff).isEqualTo(0xff);
+        assertThat(jpeg[1] & 0xff).isEqualTo(0xd8);
+        BufferedImage image = ImageIO.read(new ByteArrayInputStream(jpeg));
+        assertThat(image.getWidth()).isEqualTo(240);
+    }
+
+    @Test
     void rejectsOutOfRangePageIndex() throws IOException {
         byte[] pdf = singlePagePdf();
 

@@ -303,7 +303,7 @@ public class PdfController {
         return new StraightenResponse(copyId, degrees, quarter);
     }
 
-    @GetMapping(value = "/documents/{documentId}/pages/{pageIndex}/thumbnail", produces = MediaType.IMAGE_PNG_VALUE)
+    @GetMapping(value = "/documents/{documentId}/pages/{pageIndex}/thumbnail", produces = MediaType.IMAGE_JPEG_VALUE)
     public byte[] thumbnail(@PathVariable String documentId, @PathVariable int pageIndex,
             @RequestParam(defaultValue = "240") int width) throws IOException {
         // A picture of absurd size would exhaust memory; the page list never asks for more than a few hundred.
@@ -312,7 +312,7 @@ public class PdfController {
         PageEdits edits = store.pageEditsSnapshot(documentId, pageIndex);
         List<Redaction> redactions = store.redactions(documentId, pageIndex);
         if (edits.isEmpty() && redactions.isEmpty()) {
-            return thumbnailService.renderPage(content, pageIndex, shown);
+            return thumbnailService.renderThumbnail(content, pageIndex, shown);
         }
         byte[] page = textEditService.buildSinglePage(content, pageIndex, edits);
         if (!redactions.isEmpty()) {
@@ -324,7 +324,7 @@ public class PdfController {
                 page = out.toByteArray();
             }
         }
-        return thumbnailService.renderPage(page, 0, shown);
+        return thumbnailService.renderThumbnail(page, 0, shown);
     }
 
     @PostMapping("/export")

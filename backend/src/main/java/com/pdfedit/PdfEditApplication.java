@@ -19,6 +19,8 @@ public class PdfEditApplication {
 
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(PdfEditApplication.class);
     private static final int DEFAULT_PORT = 19000;
+    /** How long after the start what the start used is given back (the screen's first requests done by then). */
+    private static final long SETTLE_MS = 20_000;
     private static final int MAX_PORT_ATTEMPTS = 20;
 
     public static void main(String[] args) {
@@ -97,6 +99,17 @@ public class PdfEditApplication {
                     log.info("PDF 글꼴 목록 준비: {} ms", (System.nanoTime() - started) / 1_000_000);
                 } catch (RuntimeException | LinkageError e) {
                     log.info("PDF 글꼴 목록 준비 못 함: {}", e.toString());
+                }
+            });
+            // What the start used (the font lists read, the screen's files, the font analysis loaded) given back
+            // once it is done: left to itself the heap kept about 230 MB for some 20 MB in use until the first
+            // collection, which an idle app may not need for a long time.
+            Thread.ofPlatform().daemon().name("settle").priority(Thread.MIN_PRIORITY).start(() -> {
+                try {
+                    Thread.sleep(SETTLE_MS);
+                    System.gc();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
                 }
             });
             // The text reader's models are not loaded at the start any more (they were, from 0.160): loaded, they

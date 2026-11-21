@@ -105,10 +105,20 @@ public final class OcrEngine implements AutoCloseable {
         env.setTelemetry(false);
         try (OrtSession.SessionOptions options = new OrtSession.SessionOptions()) {
             options.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT);
+            // Not every core: recognition runs in the background as scans are opened, and with all cores busy for
+            // minutes the PC (and the app's own screen) went slow. Half of them, at least two.
+            options.setIntraOpNumThreads(threads());
+            options.setInterOpNumThreads(1);
             OrtSession detector = env.createSession(model("det.onnx"), options);
             OrtSession reader = env.createSession(model("rec-korean.onnx"), options);
             return new OcrEngine(env, detector, reader);
         }
+    }
+
+    /** The cores recognition may use: half of the PC's, at least two (one on a one-core PC). */
+    static int threads() {
+        int cores = Runtime.getRuntime().availableProcessors();
+        return Math.min(cores, Math.max(2, cores / 2));
     }
 
     private static byte[] model(String name) throws IOException {

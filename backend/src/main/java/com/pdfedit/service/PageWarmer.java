@@ -18,8 +18,13 @@ import org.springframework.stereotype.Service;
 public class PageWarmer implements DisposableBean {
 
     private static final Logger log = LoggerFactory.getLogger(PageWarmer.class);
-    /** A document with more pages than this is read ahead only near the page being edited. */
-    static final int MAX_WHOLE_DOCUMENT = 300;
+    /**
+     * How many of a document's first pages are read ahead when it is opened. All its pages were (up to 300): one
+     * core busy for minutes after a big document was opened, the PC slower meanwhile, for pages that were mostly
+     * never edited. The first pages teach most of the document's fonts (kept, also on disk), and the pages around
+     * the one being edited are read ahead as before.
+     */
+    static final int FIRST_PAGES = 6;
     /** Pages waiting at most; older wishes give way to newer ones. */
     private static final int MAX_WAITING = 2000;
 
@@ -40,13 +45,10 @@ public class PageWarmer implements DisposableBean {
         worker.start();
     }
 
-    /** A document just opened: its pages, first to last, after whatever is waiting already. */
+    /** A document just opened: its first pages ({@link #FIRST_PAGES}), after whatever is waiting already. */
     public void wholeDocument(String documentId, int pageCount) {
-        if (pageCount > MAX_WHOLE_DOCUMENT) {
-            return;
-        }
         synchronized (waiting) {
-            for (int p = 0; p < pageCount; p++) {
+            for (int p = 0; p < Math.min(pageCount, FIRST_PAGES); p++) {
                 String key = key(documentId, p);
                 if (!done.contains(key) && waiting.size() < MAX_WAITING) {
                     waiting.add(key);

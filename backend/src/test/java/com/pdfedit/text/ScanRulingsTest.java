@@ -279,4 +279,73 @@ class ScanRulingsTest {
         assertThat(lines.horizontal()).isEmpty();
         assertThat(lines.vertical()).isEmpty();
     }
+
+    /** A faded 1-pixel rule, as a thin border comes out in a light scan (about 223 of 255). */
+    private static final Color FADED = new Color(223, 223, 223);
+
+    @Test
+    void faintRowsAndColumnsInsideATablesDarkFrameAreItsBorders() {
+        BufferedImage image = white(600, 400);
+        Graphics2D g = image.createGraphics();
+        g.setColor(new Color(40, 40, 40));
+        g.setStroke(new BasicStroke(2));
+        g.drawRect(50, 50, 500, 200);
+        g.setColor(FADED);
+        g.setStroke(new BasicStroke(1));
+        for (int y : new int[] {90, 130, 170, 210}) {
+            g.drawLine(51, y, 549, y);
+        }
+        g.drawLine(250, 51, 250, 249);
+        g.dispose();
+
+        RulingLines.Lines lines = ScanRulings.of(image, PPP);
+
+        List<Long> rows = ys(lines);
+        assertThat(rows).hasSize(6);
+        long[] expected = {50, 90, 130, 170, 210, 250};
+        for (int i = 0; i < expected.length; i++) {
+            assertThat(rows.get(i)).isBetween(expected[i] - 1, expected[i] + 1);
+        }
+        List<Long> columns = xs(lines);
+        assertThat(columns).hasSize(3);
+        assertThat(columns.get(1)).isBetween(249L, 251L);
+    }
+
+    @Test
+    void inATableWithoutSidesAFaintColumnIsTakenToo() {
+        BufferedImage image = white(600, 400);
+        Graphics2D g = image.createGraphics();
+        g.setColor(new Color(40, 40, 40));
+        g.setStroke(new BasicStroke(2));
+        for (int y : new int[] {50, 100, 150, 200, 250}) {
+            g.drawLine(50, y, 550, y);
+        }
+        g.drawLine(150, 50, 150, 250);
+        g.setColor(FADED);
+        g.setStroke(new BasicStroke(1));
+        g.drawLine(350, 51, 350, 249);
+        g.dispose();
+
+        List<Long> columns = xs(ScanRulings.of(image, PPP));
+        assertThat(columns).hasSize(2);
+        assertThat(columns.get(0)).isBetween(149L, 151L);
+        assertThat(columns.get(1)).isBetween(349L, 351L);
+    }
+
+    @Test
+    void faintLinesOutsideAnyTableAreNotBorders() {
+        BufferedImage image = white(600, 400);
+        Graphics2D g = image.createGraphics();
+        g.setColor(FADED);
+        for (int y : new int[] {90, 130, 170, 210}) {
+            g.drawLine(50, y, 550, y);
+        }
+        g.drawLine(250, 50, 250, 250);
+        g.dispose();
+
+        RulingLines.Lines lines = ScanRulings.of(image, PPP);
+
+        assertThat(lines.horizontal()).isEmpty();
+        assertThat(lines.vertical()).isEmpty();
+    }
 }

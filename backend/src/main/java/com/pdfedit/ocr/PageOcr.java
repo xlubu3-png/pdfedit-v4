@@ -204,6 +204,61 @@ public class PageOcr implements DisposableBean {
         return false;
     }
 
+    /** At most this many readings of a line are offered in its review. */
+    static final int CANDIDATES = 3;
+
+    /**
+     * The likeliest readings of a recognized line, read again off the page (best first, with their share of the
+     * likelihood): offered when the line is checked, to pick from instead of typing. Empty for a line read across
+     * the page's turn (upright, or tilted), whose picture is not a plain strip.
+     */
+    public List<OcrEngine.Candidate> candidates(byte[] pdf, int pageIndex, OcrText line) throws IOException {
+        if (line.orientation() != null) {
+            return List.of();
+        }
+        BufferedImage picture;
+        PDRectangle crop;
+        try (PDDocument doc = Loader.loadPDF(pdf)) {
+            crop = doc.getPage(pageIndex).getCropBox();
+            picture = new PDFRenderer(doc).renderImageWithDPI(pageIndex, DPI, ImageType.RGB);
+        }
+        float px = DPI / 72f;
+        // The line's box holds it as it lies on the page; on a page turned a little, it is turned back upright
+        // round the box's middle, the strip as long as the line and as high as its letters.
+        double turn = line.tilt() == null ? 0 : Math.toRadians(line.tilt());
+        double cx = (line.x() - crop.getLowerLeftX() + line.width() / 2) * px;
+        double cy = (crop.getUpperRightY() - line.y() - line.height() / 2) * px;
+        double length = line.width() * px / Math.max(0.5, Math.cos(turn));
+        double high = Math.max(line.height() * px * 0.5, line.height() * px - Math.abs(length * Math.sin(turn)));
+        // Cut to the line's box itself, as recognition cuts it: with paper round it (15%), the reading agreed with
+        // the first one on 57% of a faded scan's lines, without it on 77%.
+        int w = (int) Math.round(length);
+        int h = (int) Math.round(high);
+        if (w < 4 || h < 4) {
+            return List.of();
+        }
+        BufferedImage cut = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = cut.createGraphics();
+        try {
+            g.setColor(Color.WHITE);
+            g.fillRect(0, 0, w, h);
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g.translate(w / 2.0, h / 2.0);
+            // Turned counter-clockwise by the tilt; turned back clockwise (the picture's y runs down).
+            g.rotate(turn);
+            g.translate(-cx, -cy);
+            g.drawImage(picture, 0, 0, null);
+        } finally {
+            g.dispose();
+        }
+        BufferedImage strip = ScanCleanup.forReading(cut);
+        try {
+            return engine().candidates(strip, CANDIDATES);
+        } catch (OrtException e) {
+            throw new OcrUnavailableException(e);
+        }
+    }
+
     /**
      * Starts the recognition engine in the background, once per run of the app: called when a scan is opened, so
      * that recognizing its first page does not also wait for the models to load and run for the first time (about

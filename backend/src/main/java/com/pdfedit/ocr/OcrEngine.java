@@ -1138,6 +1138,147 @@ public final class OcrEngine implements AutoCloseable {
         return turned;
     }
 
+    /** A reading of a line and how likely it is (over all of the line's candidates given). */
+    public record Candidate(String text, double probability) {
+    }
+
+    /** How many readings a candidate search keeps at each step, and how many classes it tries at each. */
+    private static final int BEAM = 16;
+    private static final int BEAM_CLASSES = 6;
+
+    /**
+     * The likeliest readings of one line's picture (upright, the line filling it), best first, at most {@code n},
+     * each with its share of the likelihood of those found (kordoc's ocrLineCandidates: a CTC prefix beam search
+     * over the reader's output). For the review of a line read with little confidence: "240,070" or "240.070".
+     * The best one is laid out as recognition lays out its lines; the others take its spaces where they read the same
+     * number of letters.
+     */
+    public synchronized List<Candidate> candidates(BufferedImage line, int n) throws OrtException {
+        int w = line.getWidth();
+        int h = line.getHeight();
+        if (w < 2 || h < 2 || n < 1) {
+            return List.of();
+        }
+        int[] rgb = line.getRGB(0, 0, w, h, null, 0, w);
+        double ratio = Math.max((double) w / h, (double) REC_MIN_WIDTH / REC_HEIGHT);
+        int width = (int) (REC_HEIGHT * ratio);
+        int resized = Math.max((int) Math.min(Math.ceil(REC_HEIGHT * (double) w / h), width), 1);
+        int plane = REC_HEIGHT * width;
+        float[] input = new float[3 * plane];
+        putResized(rgb, w, h, resized, REC_HEIGHT, input, 0, width, plane);
+        float[] probs;
+        int steps;
+        int classes;
+        try (OnnxTensor tensor = OnnxTensor.createTensor(env, FloatBuffer.wrap(input), new long[] {1, 3, REC_HEIGHT, width});
+                OrtSession.Result result = reader.run(Map.of(recInput, tensor))) {
+            OnnxTensor out = (OnnxTensor) result.get(0);
+            long[] shape = out.getInfo().getShape();
+            steps = (int) shape[1];
+            classes = (int) shape[2];
+            probs = new float[steps * classes];
+            out.getFloatBuffer().get(probs);
+        }
+        Read best = decode(probs, 0, steps, classes, (double) width / steps / resized);
+        List<Candidate> out = new ArrayList<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        String bestLetters = best.text().replace(" ", "");
+        for (Map.Entry<List<Integer>, Double> beam : beamSearch(probs, steps, classes)) {
+            StringBuilder letters = new StringBuilder();
+            for (int c : beam.getKey()) {
+                if (c < characters.length && !characters[c].isBlank()) {
+                    letters.append(characters[c]);
+                }
+            }
+            String text = letters.toString().equals(bestLetters) ? best.text() : laidOutLike(best.text(), letters.toString());
+            if (!text.isBlank() && seen.add(text)) {
+                out.add(new Candidate(text, beam.getValue()));
+            }
+            if (out.size() == n) {
+                break;
+            }
+        }
+        double total = out.stream().mapToDouble(Candidate::probability).sum();
+        return total <= 0 ? out : out.stream().map(c -> new Candidate(c.text(), c.probability() / total)).toList();
+    }
+
+    /**
+     * CTC prefix beam search: the readings (class ids, repeats merged and blanks dropped) likeliest over all their
+     * alignments, best first, with their likelihood (rescaled at each step, so only their ratios mean anything).
+     */
+    private static List<Map.Entry<List<Integer>, Double>> beamSearch(float[] probs, int steps, int classes) {
+        // A reading's chance of ending in a blank, and in a letter.
+        Map<List<Integer>, double[]> beams = new java.util.HashMap<>();
+        beams.put(List.of(), new double[] {1, 0});
+        Integer[] order = new Integer[classes];
+        for (int t = 0; t < steps; t++) {
+            int base = t * classes;
+            for (int c = 0; c < classes; c++) {
+                order[c] = c;
+            }
+            Arrays.sort(order, (a, b) -> Float.compare(probs[base + b], probs[base + a]));
+            Map<List<Integer>, double[]> next = new java.util.HashMap<>();
+            for (Map.Entry<List<Integer>, double[]> beam : beams.entrySet()) {
+                List<Integer> prefix = beam.getKey();
+                double blank = beam.getValue()[0];
+                double letter = beam.getValue()[1];
+                Integer last = prefix.isEmpty() ? null : prefix.getLast();
+                // The blank always, and the likeliest classes at this step.
+                for (int k = 0; k <= BEAM_CLASSES; k++) {
+                    int c = k == BEAM_CLASSES ? 0 : order[k];
+                    if (k == BEAM_CLASSES && order[0] == 0) {
+                        continue;
+                    }
+                    double p = probs[base + c];
+                    if (c == 0) {
+                        next.computeIfAbsent(prefix, x -> new double[2])[0] += (blank + letter) * p;
+                        continue;
+                    }
+                    List<Integer> longer = new ArrayList<>(prefix);
+                    longer.add(c);
+                    longer = List.copyOf(longer);
+                    if (last != null && last == c) {
+                        // The same letter again: a new one only after a blank, else the same one going on.
+                        next.computeIfAbsent(longer, x -> new double[2])[1] += blank * p;
+                        next.computeIfAbsent(prefix, x -> new double[2])[1] += letter * p;
+                    } else {
+                        next.computeIfAbsent(longer, x -> new double[2])[1] += (blank + letter) * p;
+                    }
+                }
+            }
+            List<Map.Entry<List<Integer>, double[]>> ranked = new ArrayList<>(next.entrySet());
+            ranked.sort((a, b) -> Double.compare(b.getValue()[0] + b.getValue()[1], a.getValue()[0] + a.getValue()[1]));
+            double top = ranked.isEmpty() ? 1 : ranked.getFirst().getValue()[0] + ranked.getFirst().getValue()[1];
+            beams = new java.util.HashMap<>();
+            for (Map.Entry<List<Integer>, double[]> e : ranked.subList(0, Math.min(BEAM, ranked.size()))) {
+                beams.put(e.getKey(), new double[] {e.getValue()[0] / top, e.getValue()[1] / top});
+            }
+        }
+        List<Map.Entry<List<Integer>, Double>> out = new ArrayList<>();
+        beams.forEach((k, v) -> out.add(Map.entry(k, v[0] + v[1])));
+        out.sort((a, b) -> Double.compare(b.getValue(), a.getValue()));
+        return out;
+    }
+
+    /** {@code letters} (no spaces) given the spaces of {@code shaped} when both have as many letters; else as they are. */
+    static String laidOutLike(String shaped, String letters) {
+        int[] cps = letters.codePoints().toArray();
+        if (shaped.replace(" ", "").codePointCount(0, shaped.replace(" ", "").length()) != cps.length) {
+            return letters;
+        }
+        StringBuilder out = new StringBuilder();
+        int k = 0;
+        for (int i = 0; i < shaped.length(); ) {
+            int cp = shaped.codePointAt(i);
+            i += Character.charCount(cp);
+            if (cp == ' ') {
+                out.append(' ');
+            } else {
+                out.appendCodePoint(cps[k++]);
+            }
+        }
+        return out.toString();
+    }
+
     private void recognize(List<int[]> crops, List<int[]> sizes, Read[] reads) throws OrtException {
         Integer[] order = new Integer[crops.size()];
         for (int k = 0; k < order.length; k++) {

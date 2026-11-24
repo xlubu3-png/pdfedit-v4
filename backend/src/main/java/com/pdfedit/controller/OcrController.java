@@ -129,6 +129,21 @@ public class OcrController {
         return corrected;
     }
 
+    /**
+     * The likeliest readings of line {@code line}, read again off the scan (best first, with their share of the
+     * likelihood), to pick from when it is checked; empty when there are none to offer.
+     */
+    @GetMapping("/{line}/candidates")
+    public List<com.pdfedit.ocr.OcrEngine.Candidate> candidates(@PathVariable String documentId, @PathVariable int pageIndex,
+            @PathVariable int line) throws java.io.IOException {
+        checkPage(documentId, pageIndex);
+        List<OcrText> lines = store.ocr(documentId, pageIndex);
+        if (line < 0 || line >= lines.size()) {
+            throw new InvalidEditException("인식한 글자 줄을 찾지 못했습니다. 글자 인식을 다시 해 주세요.");
+        }
+        return pageOcr.candidates(store.getContent(documentId), pageIndex, lines.get(line));
+    }
+
     /** Drops what was recognized: the page is exported as a plain picture again. */
     @DeleteMapping
     public ResponseEntity<Void> forget(@PathVariable String documentId, @PathVariable int pageIndex) {

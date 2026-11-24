@@ -83,6 +83,22 @@ public final class ScanRulings {
     /** A strip of paper between two dark fills is at most this thick (points) to be the border between them. */
     private static final float FILL_GAP_PT = 3;
 
+    /**
+     * Inside a table's dark frame, lighter than this (0 - 255) is a faint border: a thin rule printed light, or faded
+     * in the scan (about 223), which {@link #INK} leaves out - its columns ran together (kordoc's faint cell
+     * dividers). Only inside a frame and only repeated, so a page's faint marks and specks are not taken.
+     */
+    private static final int FAINT = 240;
+    /** In a frame without sides, a faint upright border is darker than the paper 3 pixels either side by this much. */
+    private static final int FAINT_EDGE = 12;
+    /** How near (points) lines must come to count as the same edge of a frame. */
+    private static final float FRAME_TOL = 3;
+    /** A frame is at least this wide and this high (points). */
+    private static final float FRAME_MIN_WIDTH = 30;
+    private static final float FRAME_MIN_HEIGHT = 20;
+    /** A frame's faint rows must be at least this many (a table's rows, not a stray line). */
+    private static final int FAINT_MIN_ROWS = 3;
+
     private enum Kind { SOLID, DOTTED, FILL }
 
     private ScanRulings() {
@@ -193,6 +209,16 @@ public final class ScanRulings {
             }
         }
         Page page = new Page(w, h, grey, ink, paper, pointsPerPixel);
+        int[] colours = new int[w * h];
+        for (int y = 0; y < h; y++) {
+            image.getRGB(0, y, w, 1, row, 0, w);
+            for (int x = 0; x < w; x++) {
+                int r = (row[x] >> 16) & 0xff;
+                int g = (row[x] >> 8) & 0xff;
+                int b = row[x] & 0xff;
+                colours[y * w + x] = Math.max(r, Math.max(g, b)) - Math.min(r, Math.min(g, b));
+            }
+        }
 
         List<Found> found = new ArrayList<>();
         for (boolean alongX : new boolean[] {true, false}) {
@@ -248,7 +274,136 @@ public final class ScanRulings {
                 vertical.add(new RulingLines.Vertical(p.across, p.from, p.to));
             }
         }
+        faintInsideFrames(page, colours, horizontal, vertical);
         return new RulingLines.Lines(horizontal, vertical);
+    }
+
+    /** A table's outline found among the dark borders, inside which faint borders are looked for. */
+    private record Frame(double x1, double x2, double y1, double y2, boolean open) {
+    }
+
+    /**
+     * Adds the faint borders inside tables' dark frames (kordoc's ocr/ruling-lines.ts, its faint cell dividers and
+     * frames without sides, MIT). A frame is two dark rows of the same width with dark sides at both ends - or, a
+     * table without sides, a dark upright border inside the width of a dark row running down to another of the
+     * same width, with at least four such rows from top to bottom. Inside one, the faint rows reaching from side to
+     * side (in a frame without sides: from an edge or from a dark column across the frame) are its rows, and the
+     * faint uprights from top to bottom its columns, when there are at least {@link #FAINT_MIN_ROWS} rows and at least
+     * one column (faint, or dark across the frame).
+     */
+    private static void faintInsideFrames(Page page, int[] colours, List<RulingLines.Horizontal> horizontal,
+            List<RulingLines.Vertical> vertical) {
+        float ppp = page.pointsPerPixel();
+        List<Frame> frames = new ArrayList<>();
+        for (int i = 0; i < horizontal.size() && frames.size() < 32; i++) {
+            RulingLines.Horizontal a = horizontal.get(i);
+            for (int j = i + 1; j < horizontal.size() && frames.size() < 32; j++) {
+                RulingLines.Horizontal b = horizontal.get(j);
+                if (Math.abs(a.x1() - b.x1()) > FRAME_TOL || Math.abs(a.x2() - b.x2()) > FRAME_TOL) {
+                    continue;
+                }
+                double y1 = Math.min(a.y(), b.y());
+                double y2 = Math.max(a.y(), b.y());
+                if (a.x2() - a.x1() < FRAME_MIN_WIDTH || y2 - y1 < FRAME_MIN_HEIGHT) {
+                    continue;
+                }
+                if (darkColumnAt(vertical, a.x1(), y1, y2) && darkColumnAt(vertical, a.x2(), y1, y2)) {
+                    frames.add(new Frame(a.x1(), a.x2(), y1, y2, false));
+                }
+            }
+        }
+        for (RulingLines.Horizontal a : horizontal) {
+            if (frames.size() >= 32 || a.x2() - a.x1() < FRAME_MIN_WIDTH) {
+                continue;
+            }
+            List<RulingLines.Horizontal> same = horizontal.stream()
+                    .filter(b -> Math.abs(a.x1() - b.x1()) <= FRAME_TOL && Math.abs(a.x2() - b.x2()) <= FRAME_TOL).toList();
+            for (RulingLines.Vertical v : vertical) {
+                if (v.x() <= a.x1() + FRAME_TOL || v.x() >= a.x2() - FRAME_TOL || Math.abs(v.y1() - a.y()) > FRAME_TOL) {
+                    continue;
+                }
+                RulingLines.Horizontal b = same.stream().filter(o -> Math.abs(o.y() - v.y2()) <= FRAME_TOL).findFirst().orElse(null);
+                if (b == null || b.y() - a.y() < FRAME_MIN_HEIGHT
+                        || same.stream().filter(o -> o.y() >= a.y() - FRAME_TOL && o.y() <= b.y() + FRAME_TOL).count() < 4) {
+                    continue;
+                }
+                if (frames.stream().noneMatch(f -> Math.abs(f.y1() - a.y()) <= FRAME_TOL && Math.abs(f.y2() - b.y()) <= FRAME_TOL)) {
+                    frames.add(new Frame(a.x1(), a.x2(), a.y(), b.y(), true));
+                }
+                break;
+            }
+        }
+        if (frames.isEmpty()) {
+            return;
+        }
+        int w = page.w();
+        int[] grey = page.grey();
+        boolean[] faint = new boolean[grey.length];
+        boolean[] faintEdge = new boolean[grey.length];
+        for (int i = 0; i < grey.length; i++) {
+            faint[i] = grey[i] <= FAINT && colours[i] < COLOURED;
+            int x = i % w;
+            faintEdge[i] = faint[i] && x >= 3 && x + 3 < w && grey[i] + FAINT_EDGE <= Math.min(grey[i - 3], grey[i + 3]);
+        }
+        List<Placed> faintRows = faintLines(new Page(w, page.h(), grey, faint, page.paper(), ppp), true);
+        List<Placed> faintColumns = faintLines(new Page(w, page.h(), grey, faint, page.paper(), ppp), false);
+        List<Placed> faintEdgeColumns = frames.stream().anyMatch(Frame::open)
+                ? faintLines(new Page(w, page.h(), grey, faintEdge, page.paper(), ppp), false) : List.of();
+        for (Frame f : frames) {
+            List<Placed> rows = faintRows.stream().filter(r -> r.across() > f.y1() + FRAME_TOL && r.across() < f.y2() - FRAME_TOL
+                    && endsAtEdge(f, r.from(), f.x1(), vertical) && endsAtEdge(f, r.to(), f.x2(), vertical)).toList();
+            List<Placed> columns = (f.open() ? faintEdgeColumns : faintColumns).stream()
+                    .filter(c -> c.across() > f.x1() + FRAME_TOL && c.across() < f.x2() - FRAME_TOL
+                            && Math.abs(c.from() - f.y1()) <= FRAME_TOL && Math.abs(c.to() - f.y2()) <= FRAME_TOL).toList();
+            boolean darkColumn = vertical.stream().anyMatch(v -> v.x() > f.x1() + FRAME_TOL && v.x() < f.x2() - FRAME_TOL
+                    && v.y1() <= f.y1() + FRAME_TOL && v.y2() >= f.y2() - FRAME_TOL);
+            if (rows.size() < FAINT_MIN_ROWS || (columns.isEmpty() && !darkColumn)) {
+                continue;
+            }
+            for (Placed r : rows) {
+                if (horizontal.stream().noneMatch(o -> Math.abs(o.y() - r.across()) <= FRAME_TOL
+                        && o.x1() <= r.from() + FRAME_TOL && o.x2() >= r.to() - FRAME_TOL)) {
+                    horizontal.add(new RulingLines.Horizontal(r.across(), r.from(), r.to()));
+                }
+            }
+            for (Placed c : columns) {
+                if (vertical.stream().noneMatch(o -> Math.abs(o.x() - c.across()) <= FRAME_TOL
+                        && o.y1() <= c.from() + FRAME_TOL && o.y2() >= c.to() - FRAME_TOL)) {
+                    vertical.add(new RulingLines.Vertical(c.across(), c.from(), c.to()));
+                }
+            }
+        }
+    }
+
+    /** Whether a dark upright border runs at x across the whole height from y1 to y2. */
+    private static boolean darkColumnAt(List<RulingLines.Vertical> vertical, double x, double y1, double y2) {
+        return vertical.stream().anyMatch(v -> Math.abs(v.x() - x) <= FRAME_TOL && v.y1() <= y1 + FRAME_TOL
+                && v.y2() >= y2 - FRAME_TOL);
+    }
+
+    /**
+     * Whether a faint row's end at {@code at} reaches the frame's edge {@code edge} - or, in a frame without sides, a
+     * dark column across the frame (a faint row parting only the cells beside a merged first column).
+     */
+    private static boolean endsAtEdge(Frame f, double at, double edge, List<RulingLines.Vertical> vertical) {
+        return Math.abs(at - edge) <= FRAME_TOL || (f.open() && darkColumnAt(vertical, at, f.y1(), f.y2()));
+    }
+
+    /** The thin straight runs of a mask as lines in points (as the dark borders are found, without their checks). */
+    private static List<Placed> faintLines(Page page, boolean alongX) {
+        float ppp = page.pointsPerPixel();
+        List<Placed> out = new ArrayList<>();
+        for (Line line : join(solidRuns(page, alongX))) {
+            if (line.thickness() > MAX_THICKNESS_PT / ppp) {
+                continue;
+            }
+            float from = line.from * ppp - REACH;
+            float to = (line.to + 1) * ppp + REACH;
+            if (to - from >= MIN_LINE) {
+                out.add(new Placed(alongX, Kind.SOLID, (line.across() + 0.5f) * ppp, from, to));
+            }
+        }
+        return out;
     }
 
     private record Page(int w, int h, int[] grey, boolean[] ink, int paper, float pointsPerPixel) {

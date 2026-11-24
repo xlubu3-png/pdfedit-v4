@@ -86,4 +86,32 @@ describe('OcrFixBar', () => {
     fireEvent.click(screen.getByRole('button', { name: '저장' }))
     await vi.waitFor(() => expect(onClose).toHaveBeenCalled())
   })
+
+  it('offers the other readings of a line to check, and a click puts one in to save', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    const candidates = vi.fn().mockResolvedValue([
+      { text: '요.양급여', probability: 0.55 },
+      { text: '요양급여', probability: 0.4 },
+      { text: '오양급여', probability: 0.05 },
+    ])
+    render(
+      <OcrFixBar lines={lines} index={1} unsure={0.9} onSave={onSave} candidates={candidates} onGo={() => {}} onClose={() => {}} />,
+    )
+
+    const offered = await screen.findByRole('group', { name: '다른 읽기 후보' })
+    expect(candidates).toHaveBeenCalledWith(1)
+    expect(offered.textContent).toContain('요양급여')
+    // What was read first is in the box, not offered again.
+    expect(screen.queryByRole('button', { name: /^요\.양급여/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /^요양급여/ }))
+    expect((screen.getByRole('textbox', { name: '이 줄의 글자' }) as HTMLInputElement).value).toBe('요양급여')
+    fireEvent.click(screen.getByRole('button', { name: '저장' }))
+    await vi.waitFor(() => expect(onSave).toHaveBeenCalledWith(1, '요양급여'))
+  })
+
+  it('does not ask for other readings of a line read with confidence', () => {
+    const candidates = vi.fn().mockResolvedValue([])
+    render(<OcrFixBar lines={lines} index={0} unsure={0.9} onSave={vi.fn()} candidates={candidates} onGo={() => {}} onClose={() => {}} />)
+    expect(candidates).not.toHaveBeenCalled()
+  })
 })

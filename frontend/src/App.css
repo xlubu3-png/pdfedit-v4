@@ -1338,6 +1338,28 @@ button.primary:disabled {
   font-size: 12px;
 }
 
+/* The other readings of the line to pick from: "240.070" for "240,070". */
+.te-fixbar-candidates {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  color: #6a7380;
+}
+
+.te-fixbar-candidates button {
+  padding: 2px 8px;
+  border: 1px solid #d9c98a;
+  border-radius: 4px;
+  background: #fff;
+  font-size: 13px;
+}
+
+.te-fixbar-candidates button.chosen {
+  border-color: #2563eb;
+  background: #eaf1ff;
+}
+
 .te-old-note button {
   margin-left: 8px;
 }

@@ -9,6 +9,7 @@ import {
   previewUrl,
   ocrTextBox,
   correctOcrLine,
+  fetchOcrCandidates,
   fetchRedactions,
   saveRedactions,
   recognizePage,
@@ -1686,6 +1687,12 @@ export function TextEditor({
     setOcrPicked(at)
   }
 
+  /** The other readings of a line being checked, read again off the scan. */
+  const loadCandidates = useCallback(
+    (index: number) => fetchOcrCandidates(documentId, pageIndex, index),
+    [documentId, pageIndex],
+  )
+
   async function saveFix(index: number, text: string) {
     try {
       const line = await correctOcrLine(documentId, pageIndex, index, text)
@@ -3200,6 +3207,7 @@ export function TextEditor({
           index={fixing}
           unsure={UNSURE}
           onSave={saveFix}
+          candidates={loadCandidates}
           scan={
             data
               ? {

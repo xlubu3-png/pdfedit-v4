@@ -137,6 +137,25 @@ class OcrControllerTest {
     }
 
     @Test
+    void aRecognizedLineOffersItsLikeliestReadingsBestFirst() throws Exception {
+        UploadResponse upload = pdf.upload(file(scannedPdf()), null);
+        OcrController.OcrResponse result = ocr.recognize(upload.documentId(), 0, false);
+
+        for (int line = 0; line < result.lines().size(); line++) {
+            List<com.pdfedit.ocr.OcrEngine.Candidate> candidates = ocr.candidates(upload.documentId(), 0, line);
+            assertThat(candidates).isNotEmpty().hasSizeLessThanOrEqualTo(3);
+            // The best one is what was read, laid out the same.
+            assertThat(candidates.getFirst().text()).isEqualTo(result.lines().get(line).text());
+            assertThat(candidates).extracting(com.pdfedit.ocr.OcrEngine.Candidate::text).doesNotHaveDuplicates();
+            assertThat(candidates.stream().mapToDouble(com.pdfedit.ocr.OcrEngine.Candidate::probability).sum())
+                    .isCloseTo(1.0, org.assertj.core.data.Offset.offset(1e-6));
+            assertThat(candidates).isSortedAccordingTo(
+                    java.util.Comparator.comparingDouble(com.pdfedit.ocr.OcrEngine.Candidate::probability).reversed());
+        }
+        assertThatThrownBy(() -> ocr.candidates(upload.documentId(), 0, 99)).isInstanceOf(InvalidEditException.class);
+    }
+
+    @Test
     void aRecognizedLineInsideARedactionAreaIsNotExported() throws Exception {
         UploadResponse upload = pdf.upload(file(scannedPdf()), null);
         OcrText number = ocr.recognize(upload.documentId(), 0, false).lines().get(1);

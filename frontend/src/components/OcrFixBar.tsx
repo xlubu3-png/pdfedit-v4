@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { OcrCandidate } from '../api'
 import { nextUnsure } from '../ocr'
 import type { OcrText } from '../types'
 
@@ -14,6 +15,8 @@ interface OcrFixBarProps {
    * it (points from the page's top-left).
    */
   scan?: { url: string; pageWidth: number; pageHeight: number; left: number; top: number; width: number; height: number }
+  /** The line's likeliest readings, read again off the scan (best first): offered to pick from. */
+  candidates?: (index: number) => Promise<OcrCandidate[]>
   /** Go to another line (it is picked on the page). */
   onGo: (index: number) => void
   onClose: () => void
@@ -23,11 +26,29 @@ interface OcrFixBarProps {
  * Corrects what recognition read off a scanned line, the scan left as it is: the corrected text is what search,
  * copying and the export's invisible text say. Steps from one line read with little confidence (orange) to the next.
  */
-export function OcrFixBar({ lines, index, unsure, onSave, scan, onGo, onClose }: OcrFixBarProps) {
+export function OcrFixBar({ lines, index, unsure, onSave, scan, candidates, onGo, onClose }: OcrFixBarProps) {
   const line = lines[index]
   const [text, setText] = useState(line?.text ?? '')
   const [saving, setSaving] = useState(false)
+  const [others, setOthers] = useState<OcrCandidate[]>([])
   const input = useRef<HTMLInputElement>(null)
+
+  // The other readings of a line to check, asked once it is shown (the scan is read again: a second or so).
+  const unsureLine = line !== undefined && line.score < unsure
+  useEffect(() => {
+    if (!candidates || !unsureLine) return
+    let gone = false
+    const read = line?.text
+    candidates(index)
+      .then((found) => {
+        // What was read first is in the box already: only the other readings are offered.
+        if (!gone) setOthers(found.filter((c) => c.text !== read))
+      })
+      .catch(() => {})
+    return () => {
+      gone = true
+    }
+  }, [candidates, index, unsureLine, line?.text])
 
   // Shown anew for every line (the editor keys it by the line), with its text ready to type over.
   useEffect(() => {
@@ -78,6 +99,25 @@ export function OcrFixBar({ lines, index, unsure, onSave, scan, onGo, onClose }:
           }
         }}
       />
+      {others.length > 0 && (
+        <span className="te-fixbar-candidates" role="group" aria-label="다른 읽기 후보">
+          다른 읽기
+          {others.map((c) => (
+            <button
+              key={c.text}
+              type="button"
+              className={c.text === text ? 'chosen' : undefined}
+              title="이 읽기로 바꾸기 (저장은 Enter)"
+              onClick={() => {
+                setText(c.text)
+                input.current?.focus()
+              }}
+            >
+              {c.text}
+            </button>
+          ))}
+        </span>
+      )}
       <button type="button" onClick={() => void save()} disabled={saving || !text.trim()} title="고친 글자를 저장하고 다음 확인할 줄로 (Enter)">
         저장
       </button>

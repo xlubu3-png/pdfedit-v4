@@ -228,6 +228,21 @@ export async function ocrTextBox(documentId: string, pageIndex: number, line: nu
   return response.json()
 }
 
+/** A reading of a recognized line and its share of the likelihood of the readings offered. */
+export interface OcrCandidate {
+  text: string
+  probability: number
+}
+
+/** The likeliest readings of recognized line `line`, read again off the scan, best first (none when there are none). */
+export async function fetchOcrCandidates(documentId: string, pageIndex: number, line: number): Promise<OcrCandidate[]> {
+  const response = await call(`${BASE}/documents/${documentId}/pages/${pageIndex}/ocr/${line}/candidates`)
+  if (!response.ok) {
+    throw await failure(response, '다른 읽기 후보를 가져오지 못했습니다')
+  }
+  return response.json()
+}
+
 /**
  * Corrects what recognition read off recognized line `line`: the scan stays as it is, the corrected text is what
  * search, copying and the export say. Gives back the line as it is now.

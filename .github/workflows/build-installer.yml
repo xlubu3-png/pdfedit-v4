@@ -18,6 +18,10 @@ on:
         description: '만든 설치 파일을 GitHub 릴리스로 올리기 (설치된 앱이 업데이트로 받음)'
         type: boolean
         default: false
+      measure:
+        description: '설치될 프로그램의 Windows 메모리 사용량 재기 (진단용)'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -94,6 +98,17 @@ jobs:
           E2E_JAVA: ${{ github.workspace }}\installer\build\runtime\bin\java.exe
           E2E_JAR: ${{ github.workspace }}\installer\build\input\WINTECH_PDF.jar
         run: npx playwright test --trace off
+
+      # 진단용: 설치될 그대로 켜고 화면을 열었다 닫은 뒤 2분 반 동안 메모리를 기록합니다(업데이트 직후의 첫 실행과,
+      # 시작 캐시가 생긴 다음 실행).
+      - name: Windows 메모리 재기
+        if: github.event_name == 'workflow_dispatch' && inputs.measure
+        shell: pwsh
+        run: |
+          $java = "${{ github.workspace }}\installer\build\runtime\bin\java.exe"
+          $jar = "${{ github.workspace }}\installer\build\input\WINTECH_PDF.jar"
+          .\tools\measure-memory.ps1 -Java $java -Jar $jar -Label first
+          .\tools\measure-memory.ps1 -Java $java -Jar $jar -Label second
 
       - name: 실패한 화면 사진 올리기
         if: failure()

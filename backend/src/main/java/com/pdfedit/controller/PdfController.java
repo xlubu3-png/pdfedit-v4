@@ -151,7 +151,8 @@ public class PdfController {
             // The screen offers text recognition for a scan: the engine gets ready while the user decides.
             pageOcr.prepareInBackground();
         }
-        if (pageWarmer != null && !scanned) {
+        if (pageWarmer != null && !scanned && content.length <= PdfDocumentStore.KEEP_IN_MEMORY_BYTES) {
+            // (A big document is not read ahead: that would take it all into memory again.)
             // A scan has no text to read ahead; its pages are recognized instead.
             pageWarmer.wholeDocument(documentId, pageCount);
         }
@@ -308,12 +309,17 @@ public class PdfController {
             @RequestParam(defaultValue = "240") int width) throws IOException {
         // A picture of absurd size would exhaust memory; the page list never asks for more than a few hundred.
         int shown = Math.max(MIN_THUMBNAIL_WIDTH, Math.min(MAX_THUMBNAIL_WIDTH, width));
-        byte[] content = store.getContent(documentId);
         PageEdits edits = store.pageEditsSnapshot(documentId, pageIndex);
         List<Redaction> redactions = store.redactions(documentId, pageIndex);
         if (edits.isEmpty() && redactions.isEmpty()) {
-            return thumbnailService.renderThumbnail(content, pageIndex, shown);
+            // From the file when there is one: the page list of a big document does not take it all into memory.
+            var file = store.savedFile(documentId);
+            if (file.isPresent()) {
+                return thumbnailService.renderThumbnail(file.get(), pageIndex, shown);
+            }
+            return thumbnailService.renderThumbnail(store.getContent(documentId), pageIndex, shown);
         }
+        byte[] content = store.getContent(documentId);
         byte[] page = textEditService.buildSinglePage(content, pageIndex, edits);
         if (!redactions.isEmpty()) {
             // The areas only painted: the real redaction is done on export.

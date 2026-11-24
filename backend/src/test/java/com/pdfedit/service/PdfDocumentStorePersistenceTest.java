@@ -126,4 +126,44 @@ class PdfDocumentStorePersistenceTest {
             assertThat(files).isEmpty();
         }
     }
+
+    /** A PDF of one page, padded to `bytes` with an unused stream (a big scan, in effect). */
+    private static byte[] bigPdf(int bytes) throws IOException {
+        try (org.apache.pdfbox.pdmodel.PDDocument doc = new org.apache.pdfbox.pdmodel.PDDocument();
+                java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
+            doc.addPage(new org.apache.pdfbox.pdmodel.PDPage());
+            org.apache.pdfbox.cos.COSStream filler = doc.getDocument().createCOSStream();
+            byte[] noise = new byte[bytes];
+            new java.util.Random(1).nextBytes(noise);
+            try (java.io.OutputStream os = filler.createRawOutputStream()) {
+                os.write(noise);
+            }
+            doc.getDocumentCatalog().getCOSObject().setItem(org.apache.pdfbox.cos.COSName.getPDFName("Filler"), filler);
+            doc.save(out);
+            return out.toByteArray();
+        }
+    }
+
+    @Test
+    void aBigDocumentIsNotKeptInMemoryAndItsPageListPictureIsDrawnFromItsFile() throws IOException {
+        byte[] pdf = bigPdf(PdfDocumentStore.KEEP_IN_MEMORY_BYTES + 1024);
+        PdfDocumentStore store = new PdfDocumentStore(folder, Duration.ofDays(14));
+        String id = store.store("준공도서.pdf", pdf, 1);
+
+        java.nio.file.Path file = store.savedFile(id).orElseThrow();
+        assertThat(java.nio.file.Files.size(file)).isEqualTo(pdf.length);
+        byte[] jpeg = new PdfThumbnailService().renderThumbnail(file, 0, 240);
+        assertThat(javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(jpeg)).getWidth()).isEqualTo(240);
+        // Asked for, it is read back whole.
+        assertThat(store.getContent(id)).isEqualTo(pdf);
+    }
+
+    @Test
+    void aSmallDocumentStaysInMemoryAsItIsOpened() throws IOException {
+        PdfDocumentStore store = new PdfDocumentStore(folder, Duration.ofDays(14));
+        byte[] pdf = TestPdfs.koreanPage();
+        String id = store.store("견적서.pdf", pdf, 1);
+        java.nio.file.Files.delete(store.savedFile(id).orElseThrow());
+        assertThat(store.getContent(id)).isEqualTo(pdf);
+    }
 }

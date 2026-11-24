@@ -49,7 +49,12 @@ public class PdfDocumentStore {
 
     private static final Logger log = LoggerFactory.getLogger(PdfDocumentStore.class);
     private static final Duration TOUCH_INTERVAL = Duration.ofHours(1);
-    private static final Duration CONTENT_IDLE = Duration.ofMinutes(10);
+    /**
+     * How long a document's bytes stay in memory after their last use (they are read again from disk when needed).
+     * Was 10 minutes, checked every 10: a 200 MB document opened once (or brought back with the last session) held
+     * its 200 MB and more for up to 20 minutes, the app over 1 GB while doing nothing.
+     */
+    private static final Duration CONTENT_IDLE = Duration.ofMinutes(3);
 
     /** Longest retention the user can choose: ten years. */
     public static final int MAX_RETENTION_DAYS = 3650;
@@ -207,12 +212,34 @@ public class PdfDocumentStore {
                 throw new UncheckedIOException("Cannot save " + fileName, e);
             }
             persist(documentId);
+            if (content.length > KEEP_IN_MEMORY_BYTES) {
+                // A big document is read from its file when needed: the page list's pictures are drawn from the file
+                // itself, without the whole document in memory.
+                entry.content = null;
+            }
         }
         return documentId;
     }
 
+    /** Documents bigger than this are not kept in memory as they are opened (see {@link #store}). */
+    public static final int KEEP_IN_MEMORY_BYTES = 30 * 1024 * 1024;
+
+    /**
+     * The document's file on disk, when the documents are kept on disk: to read a page from without the whole
+     * document in memory.
+     */
+    public java.util.Optional<Path> savedFile(String documentId) {
+        require(documentId);
+        if (dataDir == null) {
+            return java.util.Optional.empty();
+        }
+        Path file = pdfPath(documentId);
+        return Files.isRegularFile(file) ? java.util.Optional.of(file) : java.util.Optional.empty();
+    }
+
     public byte[] getContent(String documentId) {
         Entry entry = require(documentId);
+        entry.contentUsed = Instant.now();
         byte[] content = entry.content;
         if (content == null) {
             try {
@@ -494,15 +521,19 @@ public class PdfDocumentStore {
         }
         Instant cutoff = Instant.now().minus(idle);
         documents.values().forEach(entry -> {
-            if (entry.content != null && !entry.lastAccessed.isAfter(cutoff)) {
+            if (entry.content != null && !entry.contentUsed.isAfter(cutoff)) {
                 entry.content = null;
             }
         });
     }
 
+    @Scheduled(fixedRate = 60 * 1000L)
+    void releaseIdle() {
+        releaseIdleContent(CONTENT_IDLE);
+    }
+
     @Scheduled(fixedRate = 10 * 60 * 1000L)
     void evictExpired() {
-        releaseIdleContent(CONTENT_IDLE);
         Instant cutoff = Instant.now().minus(retention);
         documents.entrySet().removeIf(e -> {
             boolean expired = e.getValue().lastAccessed.isBefore(cutoff);
@@ -635,6 +666,8 @@ public class PdfDocumentStore {
         final java.util.Set<String> imageIds = ConcurrentHashMap.newKeySet();
         final Map<String, byte[]> imagesInMemory = new ConcurrentHashMap<>();
         volatile Instant lastAccessed = Instant.now();
+        /** When its bytes were last asked for (they are let go of a while after). */
+        volatile Instant contentUsed = Instant.now();
 
         Entry(String fileName, byte[] content, int pageCount) {
             this.fileName = fileName;

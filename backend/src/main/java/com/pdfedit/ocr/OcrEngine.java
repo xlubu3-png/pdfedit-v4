@@ -332,7 +332,18 @@ public final class OcrEngine implements AutoCloseable {
                 dropped++;
                 continue;
             }
-            lines.add(new OcrLine(read.text(), read.score(), allBoxes.get(k).clone(), read.centers(), read.orientation()));
+            String text = read.text();
+            float[] centers = read.centers();
+            if (read.orientation() == null) {
+                // A form's check boxes: left out, or read as letters (V, √, ㄷ ...) - put right as ☑ or □.
+                BufferedImage picture = crop(image, allBoxes.get(k));
+                Object[] fixed = CheckBoxes.restore(text, centers, CheckBoxes.find(picture), picture.getWidth());
+                if (fixed != null) {
+                    text = (String) fixed[0];
+                    centers = (float[]) fixed[1];
+                }
+            }
+            lines.add(new OcrLine(text, read.score(), allBoxes.get(k).clone(), centers, read.orientation()));
         }
         if (log.isDebugEnabled()) {
             log.debug("read {}x{} boost {}: detect {} ms ({} boxes), crops {} ms ({}), recognize {} ms, after {} ms; kept {}, dropped {}",
@@ -420,49 +431,170 @@ public final class OcrEngine implements AutoCloseable {
         heights.sort(Double::compare);
         double usual = heights.get(heights.size() / 2);
         List<Integer> which = new ArrayList<>();
-        List<Integer> cuts = new ArrayList<>();
+        /** Where each box is cut (rows of its picture, top to bottom, the last its height) and whether in many. */
+        List<int[]> cutsOf = new ArrayList<>();
+        List<Boolean> many = new ArrayList<>();
         List<int[]> crops = new ArrayList<>();
         List<int[]> sizes = new ArrayList<>();
         List<Way> ways = new ArrayList<>();
         for (int k = 0; k < boxes.size(); k++) {
             Read r = reads.get(k);
-            if (r.orientation() != null || r.score() < MIN_SCORE || r.score() >= TWO_LINES_UNSURE
-                    || height(boxes.get(k)) <= TWO_LINES_HEIGHT * usual || r.text().chars().noneMatch(c -> isHangul((char) c))) {
+            if (r.orientation() != null) {
                 continue;
             }
-            BufferedImage crop = crop(image, boxes.get(k));
-            int cut = valleyRow(crop);
-            if (cut <= 0) {
+            float[] box = boxes.get(k);
+            double h = height(box);
+            double w = Math.hypot(box[2] - box[0], box[3] - box[1]);
+            int[] cuts = null;
+            boolean severalLines = false;
+            // A box over several lines in a close-packed table cell (no blank row between them), read poorly or not
+            // at all: cut at the faintest rows into as many lines as its height holds (kordoc 4.25.24).
+            if (r.score() < MULTI_LINE_UNSURE && h >= MULTI_LINE_HEIGHT * usual && w >= 2 * usual && h < w * 2) {
+                BufferedImage crop = crop(image, box);
+                int n = (int) Math.min(4, Math.round(h / usual));
+                for (int lines = n; lines >= 2 && cuts == null; lines--) {
+                    cuts = valleyRows(crop, lines);
+                }
+                severalLines = cuts != null;
+            }
+            if (cuts == null && r.score() >= MIN_SCORE && r.score() < TWO_LINES_UNSURE && h > TWO_LINES_HEIGHT * usual
+                    && r.text().chars().anyMatch(c -> isHangul((char) c))) {
+                int cut = valleyRow(crop(image, box));
+                if (cut > 0) {
+                    cuts = new int[] {cut};
+                }
+            }
+            if (cuts == null) {
                 continue;
             }
+            BufferedImage crop = crop(image, box);
             which.add(k);
-            cuts.add(cut);
-            addCrop(crops, sizes, ways, crop.getSubimage(0, 0, crop.getWidth(), cut), new Way(k, Way.ACROSS, null));
-            addCrop(crops, sizes, ways, crop.getSubimage(0, cut, crop.getWidth(), crop.getHeight() - cut), new Way(k, Way.ACROSS, null));
+            many.add(severalLines);
+            int[] edges = new int[cuts.length + 2];
+            System.arraycopy(cuts, 0, edges, 1, cuts.length);
+            edges[edges.length - 1] = crop.getHeight();
+            cutsOf.add(edges);
+            for (int i = 0; i + 1 < edges.length; i++) {
+                addCrop(crops, sizes, ways, crop.getSubimage(0, edges[i], crop.getWidth(), edges[i + 1] - edges[i]),
+                        new Way(k, Way.ACROSS, null));
+            }
         }
         if (which.isEmpty()) {
             return;
         }
-        Read[] halves = new Read[crops.size()];
-        recognize(crops, sizes, halves);
-        // From the last to the first, so that putting a lower half in after its upper one moves no index still to come.
+        Read[] parts = new Read[crops.size()];
+        recognize(crops, sizes, parts);
+        int[] first = new int[which.size()];
+        for (int i = 1; i < which.size(); i++) {
+            first[i] = first[i - 1] + cutsOf.get(i - 1).length - 1;
+        }
+        // From the last to the first, so that putting the lower parts in after their upper one moves no index still to come.
         for (int i = which.size() - 1; i >= 0; i--) {
             int k = which.get(i);
-            Read upper = halves[2 * i];
-            Read lower = halves[2 * i + 1];
+            int[] edges = cutsOf.get(i);
+            int count = edges.length - 1;
             float was = reads.get(k).score();
-            if (upper == null || lower == null || upper.text().isBlank() || lower.text().isBlank()
-                    || Math.min(upper.score(), lower.score()) < Math.max(TWO_LINES_SURE, was + TWO_LINES_GAIN)) {
+            Read[] read = java.util.Arrays.copyOfRange(parts, first[i], first[i] + count);
+            boolean blank = java.util.Arrays.stream(read).anyMatch(p -> p == null || p.text().isBlank());
+            if (blank) {
                 continue;
             }
-            float[] box = boxes.get(k);
-            float share = (float) cuts.get(i) / Math.max(1, (int) height(box));
-            float[][] parts = cutBox(box, Math.min(0.9f, Math.max(0.1f, share)));
-            boxes.set(k, parts[0]);
-            reads.set(k, upper);
-            boxes.add(k + 1, parts[1]);
-            reads.add(k + 1, lower);
+            double least = java.util.Arrays.stream(read).mapToDouble(Read::score).min().orElse(0);
+            double mean = java.util.Arrays.stream(read).mapToDouble(Read::score).average().orElse(0);
+            boolean better = many.get(i)
+                    ? least >= MULTI_LINE_SURE && mean >= was + MULTI_LINE_GAIN
+                    : least >= Math.max(TWO_LINES_SURE, was + TWO_LINES_GAIN);
+            if (!better) {
+                continue;
+            }
+            float[] rest = boxes.get(k);
+            int top = 0;
+            List<float[]> pieces = new ArrayList<>();
+            for (int c = 1; c < count; c++) {
+                float share = (float) (edges[c] - top) / Math.max(1, edges[count] - top);
+                float[][] cut = cutBox(rest, Math.min(0.95f, Math.max(0.05f, share)));
+                pieces.add(cut[0]);
+                rest = cut[1];
+                top = edges[c];
+            }
+            pieces.add(rest);
+            boxes.set(k, pieces.get(0));
+            reads.set(k, read[0]);
+            for (int c = 1; c < count; c++) {
+                boxes.add(k + c, pieces.get(c));
+                reads.add(k + c, read[c]);
+            }
         }
+    }
+
+    /** A box this much higher than the page's usual line may hold several lines, cut without a blank row between. */
+    private static final double MULTI_LINE_HEIGHT = 1.8;
+    /** ... when read less surely than this. */
+    private static final float MULTI_LINE_UNSURE = 0.75f;
+    /** Its lines must each be read this surely, and on average this much surer than the whole, to take its place. */
+    private static final float MULTI_LINE_SURE = 0.9f;
+    private static final float MULTI_LINE_GAIN = 0.15f;
+    /** A row between two lines has at most this share of a line's usual ink. */
+    private static final double VALLEY_MAX = 0.35;
+
+    /**
+     * Where a picture of {@code lines} lines of text, packed with no blank row between them, parts into them: near
+     * each j/lines of its height (within 30% of a line), the row with the least ink (three rows evened out), the
+     * columns of a cell's upright borders left out; null when one of those rows has more than {@link #VALLEY_MAX} of a
+     * line's usual ink (kordoc's valleyBands).
+     */
+    static int[] valleyRows(BufferedImage crop, int lines) {
+        int w = crop.getWidth();
+        int h = crop.getHeight();
+        if (lines < 2 || h < lines * 8 || w < 8) {
+            return null;
+        }
+        boolean[] ink = new boolean[w * h];
+        int[] column = new int[w];
+        int[] row = new int[w];
+        for (int y = 0; y < h; y++) {
+            crop.getRGB(0, y, w, 1, row, 0, w);
+            for (int x = 0; x < w; x++) {
+                int luma = (((row[x] >> 16) & 0xff) * 299 + ((row[x] >> 8) & 0xff) * 587 + (row[x] & 0xff) * 114) / 1000;
+                if (luma < LINE_INK) {
+                    ink[y * w + x] = true;
+                    column[x]++;
+                }
+            }
+        }
+        double[] rows = new double[h];
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                // A column inked nearly all the way down is a cell's border, not letters.
+                if (ink[y * w + x] && column[x] < h * 0.85) {
+                    rows[y]++;
+                }
+            }
+        }
+        double[] inked = java.util.Arrays.stream(rows).filter(v -> v > 0).sorted().toArray();
+        if (inked.length == 0) {
+            return null;
+        }
+        double median = inked[inked.length / 2];
+        int[] cuts = new int[lines - 1];
+        for (int j = 1; j < lines; j++) {
+            double centre = (double) h * j / lines;
+            double reach = (double) h / lines * 0.3;
+            int best = -1;
+            double bestInk = Double.MAX_VALUE;
+            for (int y = Math.max(1, (int) Math.round(centre - reach)); y <= Math.min(h - 2, (int) Math.round(centre + reach)); y++) {
+                double v = (rows[y - 1] + rows[y] + rows[y + 1]) / 3;
+                if (v < bestInk) {
+                    bestInk = v;
+                    best = y;
+                }
+            }
+            if (best < 0 || bestInk > median * VALLEY_MAX || (j > 1 && best <= cuts[j - 2])) {
+                return null;
+            }
+            cuts[j - 1] = best;
+        }
+        return cuts;
     }
 
     private static double height(float[] box) {

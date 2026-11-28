@@ -11,11 +11,11 @@ describe('pickPdfs', () => {
       file('c.docx', 'application/msword'),
       file('견적서.xlsx', ''),
       file('발표.PPTX', ''),
-      file('d.png', 'image/png'),
+      file('d.zip', 'application/zip'),
     ])
 
     expect(pdfs.map((f) => f.name)).toEqual(['a.pdf', 'b.PDF', 'c.docx', '견적서.xlsx', '발표.PPTX'])
-    expect(skipped).toEqual(['d.png'])
+    expect(skipped).toEqual(['d.zip'])
   })
 
   it('sets Hangul documents apart for the HWP editor', () => {
@@ -34,3 +34,13 @@ describe('dragHasFiles', () => {
     expect(dragHasFiles(undefined)).toBe(false)
   })
 })
+
+describe('pictures', () => {
+  it('opens photos, scans and faxes saved as pictures like PDFs', () => {
+    const file = (name: string) => new File([''], name)
+    const { pdfs, skipped } = pickPdfs([file('팩스.TIF'), file('사진.jpeg'), file('화면.png'), file('메모.txt')])
+    expect(pdfs.map((f) => f.name)).toEqual(['팩스.TIF', '사진.jpeg', '화면.png'])
+    expect(skipped).toEqual(['메모.txt'])
+  })
+})
+

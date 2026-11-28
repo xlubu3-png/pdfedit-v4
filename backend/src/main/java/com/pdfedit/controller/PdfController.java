@@ -119,6 +119,11 @@ public class PdfController {
             uploaded = officeConverter.toPdf(uploaded, fileName);
             convertedFrom = fileName;
             fileName = OfficeConverter.pdfName(fileName);
+        } else if (com.pdfedit.service.ImageToPdf.isImage(fileName)) {
+            // A photo, a scan or fax saved as a picture: a page for each of its pictures, then opened like a scan.
+            uploaded = com.pdfedit.service.ImageToPdf.toPdf(uploaded, fileName);
+            convertedFrom = fileName;
+            fileName = com.pdfedit.service.ImageToPdf.pdfName(fileName);
         }
         byte[] content;
         int pageCount;

@@ -33,7 +33,7 @@ import type { ImageChoice } from './imageExport'
 import { ocrMessage, recognizeAll, straightenedNote, withReadAgain } from './ocr'
 import type { OcrSummary } from './ocr'
 import { keyCode } from './keys'
-import { dragHasFiles, pickPdfs } from './pdfFiles'
+import { dragHasFiles, isImage, pickPdfs } from './pdfFiles'
 import { clearSession, loadSession, saveSession } from './session'
 import { loadRecent, orphans, saveRecent, whenText, withWork } from './recent'
 import type { RecentWork } from './recent'
@@ -304,8 +304,16 @@ function App() {
     if (unlocked.length > 0) {
       setNotice(`암호를 풀어서 열었습니다: ${unlocked.join(', ')}. 내보낼 때 암호를 다시 걸 수 있습니다.`)
     } else if (converted.length > 0) {
+      const pictures = converted.filter(isImage)
+      const office = converted.filter((name) => !isImage(name))
       setNotice(
-        `MS Office로 PDF로 바꿔 열었습니다: ${converted.join(', ')}. 고친 결과는 PDF로 저장됩니다 (원래 파일은 그대로).`,
+        [
+          office.length > 0 ? `MS Office로 PDF로 바꿔 열었습니다: ${office.join(', ')}.` : '',
+          pictures.length > 0 ? `그림 파일을 PDF로 바꿔 열었습니다(그림 한 장이 한 쪽): ${pictures.join(', ')}.` : '',
+          '고친 결과는 PDF로 저장됩니다 (원래 파일은 그대로).',
+        ]
+          .filter(Boolean)
+          .join(' '),
       )
     }
     setBusy(false)

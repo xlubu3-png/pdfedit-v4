@@ -81,6 +81,7 @@ import {
   FileSpreadsheet,
   Shrink,
   SquareCheck,
+  Layers,
   Trash,
   Undo2,
   Files,
@@ -91,7 +92,7 @@ import type { AppInfo, AppSettings, OcrResult, PageItem, ReplaceResult, UpdateIn
 import { downloadBlob } from './download'
 import { errorText } from './errors'
 import { usePageList } from './pageHistory'
-import { canMoveBy, moveBy } from './pageOrder'
+import { canMoveBy, interleaveFrontsAndBacks, moveBy } from './pageOrder'
 import { shrinkMessage, type ShrinkReport } from './shrink'
 
 /**
@@ -270,6 +271,7 @@ function App() {
     setError(null)
     const unlocked: string[] = []
     const converted: string[] = []
+    const signedFiles: string[] = []
     const scanned: { files: string[]; pages: PageItem[] } = { files: [], pages: [] }
     // One bad file must not keep the others from being opened.
     for (const file of pdfs) {
@@ -281,6 +283,7 @@ function App() {
         }
         if (uploaded.unlocked) unlocked.push(uploaded.fileName)
         if (uploaded.convertedFrom) converted.push(uploaded.convertedFrom)
+        if (uploaded.signed) signedFiles.push(uploaded.fileName)
         const newPages: PageItem[] = Array.from({ length: uploaded.pageCount }, (_, i) => ({
           key: `${uploaded.documentId}-${i}`,
           documentId: uploaded.documentId,
@@ -301,21 +304,22 @@ function App() {
       }
     }
     setError(problems.length > 0 ? problems.join('\n') : null)
+    const notes: string[] = []
     if (unlocked.length > 0) {
-      setNotice(`암호를 풀어서 열었습니다: ${unlocked.join(', ')}. 내보낼 때 암호를 다시 걸 수 있습니다.`)
+      notes.push(`암호를 풀어서 열었습니다: ${unlocked.join(', ')}. 내보낼 때 암호를 다시 걸 수 있습니다.`)
     } else if (converted.length > 0) {
       const pictures = converted.filter(isImage)
       const office = converted.filter((name) => !isImage(name))
-      setNotice(
-        [
-          office.length > 0 ? `MS Office로 PDF로 바꿔 열었습니다: ${office.join(', ')}.` : '',
-          pictures.length > 0 ? `그림 파일을 PDF로 바꿔 열었습니다(그림 한 장이 한 쪽): ${pictures.join(', ')}.` : '',
-          '고친 결과는 PDF로 저장됩니다 (원래 파일은 그대로).',
-        ]
-          .filter(Boolean)
-          .join(' '),
+      if (office.length > 0) notes.push(`MS Office로 PDF로 바꿔 열었습니다: ${office.join(', ')}.`)
+      if (pictures.length > 0) notes.push(`그림 파일을 PDF로 바꿔 열었습니다(그림 한 장이 한 쪽): ${pictures.join(', ')}.`)
+      notes.push('고친 결과는 PDF로 저장됩니다 (원래 파일은 그대로).')
+    }
+    if (signedFiles.length > 0) {
+      notes.push(
+        `전자서명된 문서입니다: ${signedFiles.join(', ')}. 고치거나 쪽을 옮겨 저장하면 서명이 무효가 됩니다(원래 파일은 그대로). 서명을 지켜야 하면 원본을 그대로 쓰세요.`,
       )
     }
+    if (notes.length > 0) setNotice(notes.join(' '))
     setBusy(false)
     if (scanned.pages.length > 0 && settings?.autoOcr === true) {
       // Opened, then read at once (set straight first), as a reader that recognizes scans does; 중지 stops it.
@@ -756,6 +760,21 @@ function App() {
       else next.add(key)
       return next
     })
+  }
+
+  /** 앞·뒷면 합치기: the two documents' pages in turn (Ctrl+Z takes it back). */
+  function handleInterleave() {
+    if (new Set(pages.map((p) => p.documentId)).size !== 2) {
+      setNotice('앞면 파일과 뒷면 파일, 두 파일만 연 상태에서 쓰세요 (먼저 연 파일이 앞면).')
+      return
+    }
+    const reversed = window.confirm(
+      '뒷면 파일이 마지막 쪽부터 스캔되었나요?\n\n종이 묶음을 그대로 뒤집어 넣고 스캔했다면 보통 그렇습니다 → [확인]\n뒷면도 첫 쪽부터 스캔했다면 → [취소]',
+    )
+    const mixed = interleaveFrontsAndBacks(pages, reversed)
+    if (!mixed) return
+    changePages(mixed)
+    setNotice('앞면과 뒷면을 번갈아 합쳤습니다. 순서가 틀리면 Ctrl+Z로 되돌리세요.')
   }
 
   function clearSelection() {
@@ -1548,6 +1567,13 @@ function App() {
                   disabled={busy || !canRedo}
                 />
                 <RibbonButton icon={<Search />} label="찾아 바꾸기" title="모든 페이지에서 글자를 찾아 바꿉니다 (Ctrl+F)" onClick={() => setFindOpen(true)} disabled={busy} />
+                <RibbonButton
+                  icon={<Layers />}
+                  label="앞·뒷면 합치기"
+                  title="한쪽 면만 스캔하는 복합기로 앞면 파일과 뒷면 파일을 따로 스캔했을 때, 두 파일을 앞1·뒤1·앞2·뒤2 순서로 섞습니다"
+                  onClick={handleInterleave}
+                  disabled={busy || pages.length < 2}
+                />
                 <RibbonButton
                   icon={<SquareCheck />}
                   label="모두 선택"

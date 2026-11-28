@@ -1338,6 +1338,23 @@ button.primary:disabled {
   font-size: 12px;
 }
 
+/* The line as read, its unsure letters marked: "요[.]양급여". */
+.te-fixbar-letters {
+  color: #6a7380;
+  font-size: 14px;
+}
+
+.te-fixbar-letters span {
+  color: #1f2933;
+}
+
+.te-fixbar-letters span.unsure {
+  color: #b45309;
+  background: #fde7c4;
+  border-bottom: 2px solid #f59e0b;
+  font-weight: 600;
+}
+
 /* The other readings of the line to pick from: "240.070" for "240,070". */
 .te-fixbar-candidates {
   display: inline-flex;

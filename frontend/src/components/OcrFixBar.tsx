@@ -3,6 +3,9 @@ import type { OcrCandidate } from '../api'
 import { nextUnsure } from '../ocr'
 import type { OcrText } from '../types'
 
+/** A letter read with less confidence than this is marked to check (orange). */
+const UNSURE_LETTER = 0.6
+
 interface OcrFixBarProps {
   lines: OcrText[]
   /** The line being corrected. */
@@ -31,6 +34,8 @@ export function OcrFixBar({ lines, index, unsure, onSave, scan, candidates, onGo
   const [text, setText] = useState(line?.text ?? '')
   const [saving, setSaving] = useState(false)
   const [others, setOthers] = useState<OcrCandidate[]>([])
+  /** How sure the reader was of each letter of the line as read, when reading it again gave the same. */
+  const [sureness, setSureness] = useState<number[] | null>(null)
   const input = useRef<HTMLInputElement>(null)
 
   // The other readings of a line to check, asked once it is shown (the scan is read again: a second or so).
@@ -42,7 +47,10 @@ export function OcrFixBar({ lines, index, unsure, onSave, scan, candidates, onGo
     candidates(index)
       .then((found) => {
         // What was read first is in the box already: only the other readings are offered.
-        if (!gone) setOthers(found.filter((c) => c.text !== read))
+        if (gone) return
+        setOthers(found.filter((c) => c.text !== read))
+        const same = found.find((c) => c.text === read && c.confidences)
+        setSureness(same?.confidences && same.confidences.length === read?.length ? same.confidences : null)
       })
       .catch(() => {})
     return () => {
@@ -99,6 +107,16 @@ export function OcrFixBar({ lines, index, unsure, onSave, scan, candidates, onGo
           }
         }}
       />
+      {sureness && sureness.some((c) => c < UNSURE_LETTER) && (
+        <span className="te-fixbar-letters" aria-label="확인할 글자">
+          확인할 글자{' '}
+          {[...line.text].map((ch, i) => (
+            <span key={i} className={sureness[i] < UNSURE_LETTER ? 'unsure' : undefined}>
+              {ch}
+            </span>
+          ))}
+        </span>
+      )}
       {others.length > 0 && (
         <span className="te-fixbar-candidates" role="group" aria-label="다른 읽기 후보">
           다른 읽기

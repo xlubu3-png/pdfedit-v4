@@ -88,6 +88,38 @@ class PageStraightenerTest {
     }
 
     @Test
+    void aPictureOfOnlyTwoLinesIsNotTurnedOnTheSlantOfItsLetters() {
+        BufferedImage picture = new BufferedImage(1000, 300, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = picture.createGraphics();
+        g.setColor(Color.WHITE);
+        g.fillRect(0, 0, 1000, 300);
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setTransform(AffineTransform.getRotateInstance(Math.toRadians(-1.5), 500, 150));
+        g.setColor(Color.BLACK);
+        g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 56));
+        g.drawString("견적서 합계 240,070원 확인", 60, 120);
+        g.drawString("담당 홍길동 010-1234-5678", 60, 220);
+        g.dispose();
+        // Too few lines to tell a slant from the letters' strokes: left as it is.
+        assertThat(Deskew.angle(picture)).isZero();
+
+        // Three lines and more: the slant counts again.
+        BufferedImage more = new BufferedImage(1000, 600, BufferedImage.TYPE_INT_RGB);
+        g = more.createGraphics();
+        g.setColor(Color.WHITE);
+        g.fillRect(0, 0, 1000, 600);
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setTransform(AffineTransform.getRotateInstance(Math.toRadians(-1.5), 500, 300));
+        g.setColor(Color.BLACK);
+        g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 40));
+        for (int r = 0; r < 6; r++) {
+            g.drawString("견적서 합계 240,070원 확인 " + r, 60, 100 + r * 80);
+        }
+        g.dispose();
+        assertThat(Deskew.angle(more)).isCloseTo(1.5, within(0.3));
+    }
+
+    @Test
     void aStraightScanOrAPageOfTextIsLeftAlone() throws Exception {
         assertThat(angleOf(scan(0))).isZero();
         try (PDDocument doc = new PDDocument(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {

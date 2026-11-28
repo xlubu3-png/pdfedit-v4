@@ -220,6 +220,33 @@ class PdfControllerTest {
     }
 
     @Test
+    void aDigitallySignedPdfIsReportedAsSignedAndAPlainOneIsNot() throws Exception {
+        byte[] plain;
+        try (org.apache.pdfbox.pdmodel.PDDocument doc = new org.apache.pdfbox.pdmodel.PDDocument();
+                java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
+            doc.addPage(new org.apache.pdfbox.pdmodel.PDPage());
+            doc.save(out);
+            plain = out.toByteArray();
+        }
+        byte[] signed;
+        try (org.apache.pdfbox.pdmodel.PDDocument doc = org.apache.pdfbox.Loader.loadPDF(plain);
+                java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
+            var signature = new org.apache.pdfbox.pdmodel.interactive.digitalsignature.PDSignature();
+            signature.setFilter(org.apache.pdfbox.pdmodel.interactive.digitalsignature.PDSignature.FILTER_ADOBE_PPKLITE);
+            signature.setSubFilter(org.apache.pdfbox.pdmodel.interactive.digitalsignature.PDSignature.SUBFILTER_ADBE_PKCS7_DETACHED);
+            signature.setName("홍길동");
+            // Any bytes stand for the signature here: only whether one is there is asked.
+            doc.addSignature(signature, content -> new byte[] {0x30, 0x03, 0x02, 0x01, 0x01});
+            doc.saveIncremental(out);
+            signed = out.toByteArray();
+        }
+        assertThat(PdfController.isSigned(plain)).isFalse();
+        assertThat(PdfController.isSigned(signed)).isTrue();
+        assertThat(controller.upload(new org.springframework.mock.web.MockMultipartFile("file", "계약서.pdf", "application/pdf", signed), null).signed()).isTrue();
+        assertThat(controller.upload(new org.springframework.mock.web.MockMultipartFile("file", "견적서.pdf", "application/pdf", plain), null).signed()).isFalse();
+    }
+
+    @Test
     void aVeryTallPageGivesAThumbnailOfBoundedSize() throws IOException {
         UploadResponse banner = controller.createBlankDocument(100, 14_400);
 

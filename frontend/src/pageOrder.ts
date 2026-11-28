@@ -47,3 +47,23 @@ export function canMoveBy(pages: PageItem[], moving: ReadonlySet<string>, delta:
 export function moveToNumber(pages: PageItem[], moving: ReadonlySet<string>, number: number): PageItem[] {
   return moveTo(pages, moving, number - 1)
 }
+
+/**
+ * A two-sided paper scanned on a one-sided scanner: the fronts in one file, the backs in another (the stack turned
+ * over, so the backs come last page first, when `backsReversed`). The pages of the two documents in the list, taken
+ * in turn - front 1, back 1, front 2, back 2 - with whatever is left over (one more front) after them. Null unless
+ * the list holds the pages of exactly two documents.
+ */
+export function interleaveFrontsAndBacks(pages: PageItem[], backsReversed: boolean): PageItem[] | null {
+  const documents = [...new Set(pages.map((p) => p.documentId))]
+  if (documents.length !== 2) return null
+  const fronts = pages.filter((p) => p.documentId === documents[0])
+  const backs = pages.filter((p) => p.documentId === documents[1])
+  if (backsReversed) backs.reverse()
+  const out: PageItem[] = []
+  for (let i = 0; i < Math.max(fronts.length, backs.length); i++) {
+    if (i < fronts.length) out.push(fronts[i])
+    if (i < backs.length) out.push(backs[i])
+  }
+  return out
+}

@@ -1138,8 +1138,15 @@ public final class OcrEngine implements AutoCloseable {
         return turned;
     }
 
-    /** A reading of a line and how likely it is (over all of the line's candidates given). */
-    public record Candidate(String text, double probability) {
+    /**
+     * A reading of a line and how likely it is (over all of the line's candidates given). The best one also says how
+     * sure the reader was of each of its letters ({@code confidences}, one per char, 1 for a space; null for the
+     * others): the unsure letters are the ones to check (kordoc's ocrChars).
+     */
+    public record Candidate(String text, double probability, List<Float> confidences) {
+        public Candidate(String text, double probability) {
+            this(text, probability, null);
+        }
     }
 
     /** How many readings a candidate search keeps at each step, and how many classes it tries at each. */
@@ -1179,6 +1186,7 @@ public final class OcrEngine implements AutoCloseable {
             out.getFloatBuffer().get(probs);
         }
         Read best = decode(probs, 0, steps, classes, (double) width / steps / resized);
+        List<Float> bestConfidences = letterConfidences(probs, steps, classes, best.text());
         List<Candidate> out = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
         String bestLetters = best.text().replace(" ", "");
@@ -1191,14 +1199,51 @@ public final class OcrEngine implements AutoCloseable {
             }
             String text = letters.toString().equals(bestLetters) ? best.text() : laidOutLike(best.text(), letters.toString());
             if (!text.isBlank() && seen.add(text)) {
-                out.add(new Candidate(text, beam.getValue()));
+                out.add(new Candidate(text, beam.getValue(), text.equals(best.text()) ? bestConfidences : null));
             }
             if (out.size() == n) {
                 break;
             }
         }
         double total = out.stream().mapToDouble(Candidate::probability).sum();
-        return total <= 0 ? out : out.stream().map(c -> new Candidate(c.text(), c.probability() / total)).toList();
+        return total <= 0 ? out : out.stream().map(c -> new Candidate(c.text(), c.probability() / total, c.confidences())).toList();
+    }
+
+    /**
+     * How sure the reader was of each char of {@code text} (its greedy reading): the probability of the class it
+     * chose at the step the letter was read, 1 for the spaces; null when the letters do not line up with the text.
+     */
+    private List<Float> letterConfidences(float[] probs, int steps, int classes, String text) {
+        List<Float> letters = new ArrayList<>();
+        int previous = -1;
+        for (int t = 0; t < steps; t++) {
+            int best = 0;
+            float bestProb = probs[t * classes];
+            for (int c = 1; c < classes; c++) {
+                if (probs[t * classes + c] > bestProb) {
+                    best = c;
+                    bestProb = probs[t * classes + c];
+                }
+            }
+            if (best != previous && best != 0 && best < characters.length && !characters[best].isBlank()) {
+                for (int k = 0; k < characters[best].length(); k++) {
+                    letters.add(Math.round(bestProb * 1000) / 1000f);
+                }
+            }
+            previous = best;
+        }
+        List<Float> out = new ArrayList<>(text.length());
+        int k = 0;
+        for (int i = 0; i < text.length(); i++) {
+            if (text.charAt(i) == ' ') {
+                out.add(1f);
+            } else if (k < letters.size()) {
+                out.add(letters.get(k++));
+            } else {
+                return null;
+            }
+        }
+        return k == letters.size() ? out : null;
     }
 
     /**
@@ -1398,11 +1443,33 @@ public final class OcrEngine implements AutoCloseable {
             out.setLength(out.length() - 1);
             centers.removeLast();
         }
+        marks(out, centers);
         float[] at = new float[centers.size()];
         for (int k = 0; k < at.length; k++) {
             at[k] = centers.get(k);
         }
         return new Read(out.toString(), score, at, null);
+    }
+
+    /**
+     * Two marks the reader gets wrong (kordoc 4.25.21): the per-mille sign ‰ read as "%。" is put back, and a
+     * full-width full stop "。" right after a Hangul syllable or a digit (Korean text ends a sentence or a number with
+     * "."; "。" is Chinese and Japanese) becomes ".". At the head of a line "。" is a small round bullet: left alone.
+     */
+    static void marks(StringBuilder text, List<Float> centers) {
+        for (int i = 0; i < text.length(); i++) {
+            if (text.charAt(i) != '。' || i == 0) {
+                continue;
+            }
+            char before = text.charAt(i - 1);
+            if (before == '%') {
+                text.replace(i - 1, i + 1, "‰");
+                centers.remove(i);
+                i--;
+            } else if (isHangul(before) || Character.isDigit(before)) {
+                text.setCharAt(i, '.');
+            }
+        }
     }
 
     /**

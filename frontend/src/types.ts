@@ -124,6 +124,8 @@ export interface UploadResponse {
   scanned?: boolean
   /** The Word, Excel or PowerPoint file it was printed from by MS Office; absent for a PDF. */
   convertedFrom?: string | null
+  /** The PDF carries a digital signature, which any change breaks. */
+  signed?: boolean
 }
 
 /** A line of text recognized on a scanned page, in PDF points (origin bottom-left; `y` is its bottom). */

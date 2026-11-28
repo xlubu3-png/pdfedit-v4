@@ -90,7 +90,7 @@ describe('OcrFixBar', () => {
   it('offers the other readings of a line to check, and a click puts one in to save', async () => {
     const onSave = vi.fn().mockResolvedValue(undefined)
     const candidates = vi.fn().mockResolvedValue([
-      { text: '요.양급여', probability: 0.55 },
+      { text: '요.양급여', probability: 0.55, confidences: [0.99, 0.31, 0.98, 0.97, 0.95] },
       { text: '요양급여', probability: 0.4 },
       { text: '오양급여', probability: 0.05 },
     ])
@@ -101,6 +101,10 @@ describe('OcrFixBar', () => {
     const offered = await screen.findByRole('group', { name: '다른 읽기 후보' })
     expect(candidates).toHaveBeenCalledWith(1)
     expect(offered.textContent).toContain('요양급여')
+    // The unsure letter of what was read is marked.
+    const letters = screen.getByLabelText('확인할 글자')
+    expect(letters.querySelectorAll('.unsure')).toHaveLength(1)
+    expect(letters.querySelector('.unsure')!.textContent).toBe('.')
     // What was read first is in the box, not offered again.
     expect(screen.queryByRole('button', { name: /^요\.양급여/ })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /^요양급여/ }))

@@ -146,6 +146,9 @@ class OcrControllerTest {
             assertThat(candidates).isNotEmpty().hasSizeLessThanOrEqualTo(3);
             // The best one is what was read, laid out the same.
             assertThat(candidates.getFirst().text()).isEqualTo(result.lines().get(line).text());
+            // ... with how sure the reader was of each of its letters.
+            assertThat(candidates.getFirst().confidences()).hasSize(candidates.getFirst().text().length())
+                    .allSatisfy(c -> assertThat(c).isBetween(0f, 1f));
             assertThat(candidates).extracting(com.pdfedit.ocr.OcrEngine.Candidate::text).doesNotHaveDuplicates();
             assertThat(candidates.stream().mapToDouble(com.pdfedit.ocr.OcrEngine.Candidate::probability).sum())
                     .isCloseTo(1.0, org.assertj.core.data.Offset.offset(1e-6));

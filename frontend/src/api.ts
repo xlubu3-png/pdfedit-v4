@@ -232,6 +232,8 @@ export async function ocrTextBox(documentId: string, pageIndex: number, line: nu
 export interface OcrCandidate {
   text: string
   probability: number
+  /** The best reading only: how sure the reader was of each char (1 for a space). */
+  confidences?: number[] | null
 }
 
 /** The likeliest readings of recognized line `line`, read again off the scan, best first (none when there are none). */

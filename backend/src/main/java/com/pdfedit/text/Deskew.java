@@ -29,6 +29,14 @@ final class Deskew {
     private static final int INK = 160;
     /** Fewer ink points than this is too little to tell a slant from. */
     private static final int MIN_POINTS = 400;
+    /**
+     * Fewer lines of text than this (bands of ink, set straight) is too little too: in a picture of one or two lines
+     * the shape of a font's strokes (a Windows gothic) reads as a slant of half a degree or so, and the picture was
+     * turned for nothing (kordoc 4.25.10).
+     */
+    static final int MIN_LINES = 3;
+    /** A row with less ink than this share of the fullest row is a gap between lines. */
+    private static final double BAND_SHARE = 0.15;
 
     private Deskew() {
     }
@@ -79,14 +87,32 @@ final class Deskew {
                 best = a;
             }
         }
-        if (Math.abs(best) < MIN_APPLY || bestScore < none * MIN_GAIN) {
+        if (Math.abs(best) < MIN_APPLY || bestScore < none * MIN_GAIN || lines(xs, ys, n, best, bins) < MIN_LINES) {
             return 0;
         }
         return Math.round(best * 100) / 100.0;
     }
 
-    /** How peaked the rows' ink counts are with the page turned by {@code degrees}: the sum of their squares. */
-    private static double sharpness(double[] xs, double[] ys, int n, double degrees, int bins) {
+    /** How many lines of text (bands of rows with ink, gaps between) the page has, turned by {@code degrees}. */
+    static int lines(double[] xs, double[] ys, int n, double degrees, int bins) {
+        int[] counts = rows(xs, ys, n, degrees, bins);
+        int most = 0;
+        for (int c : counts) {
+            most = Math.max(most, c);
+        }
+        double inked = Math.max(1, most * BAND_SHARE);
+        int bands = 0;
+        boolean in = false;
+        for (int c : counts) {
+            if (c >= inked && !in) {
+                bands++;
+            }
+            in = c >= inked;
+        }
+        return bands;
+    }
+
+    private static int[] rows(double[] xs, double[] ys, int n, double degrees, int bins) {
         double r = Math.toRadians(degrees);
         double sin = Math.sin(r);
         double cos = Math.cos(r);
@@ -98,6 +124,12 @@ final class Deskew {
                 counts[y]++;
             }
         }
+        return counts;
+    }
+
+    /** How peaked the rows' ink counts are with the page turned by {@code degrees}: the sum of their squares. */
+    private static double sharpness(double[] xs, double[] ys, int n, double degrees, int bins) {
+        int[] counts = rows(xs, ys, n, degrees, bins);
         double sum = 0;
         for (int c : counts) {
             sum += (double) c * c;

@@ -130,6 +130,7 @@ public class PdfController {
         boolean unlocked;
         Integer permissions;
         boolean scanned;
+        boolean signed = false;
         try {
             // An encrypted file is kept as a plain copy, so nothing after this line needs the password.
             PdfUnlocker.Unlocked plain = PdfUnlocker.unlock(uploaded, password);
@@ -141,6 +142,7 @@ public class PdfController {
                 pageCount = document.getNumberOfPages();
                 scanned = pageCount > 0 && hasNoText(document);
             }
+            signed = isSigned(plain.content());
         } catch (InvalidPasswordException e) {
             throw new PasswordRequiredException(password == null || password.isEmpty()
                     ? "암호가 걸린 PDF입니다. 암호를 입력해 주세요."
@@ -161,7 +163,7 @@ public class PdfController {
             // A scan has no text to read ahead; its pages are recognized instead.
             pageWarmer.wholeDocument(documentId, pageCount);
         }
-        return new UploadResponse(documentId, fileName, pageCount, unlocked, permissions, scanned, convertedFrom);
+        return new UploadResponse(documentId, fileName, pageCount, unlocked, permissions, scanned, convertedFrom, signed);
     }
 
     /** No text on its first pages: a scan, most likely, that the screen offers to run text recognition on. */
@@ -307,6 +309,18 @@ public class PdfController {
         }
         store.setOcr(copyId, 0, List.of());
         return new StraightenResponse(copyId, degrees, quarter);
+    }
+
+    /**
+     * Whether the PDF carries a digital signature with something signed in it (an empty signature field to be signed
+     * later does not count): any change to the document - an edit, a page moved, even saving it again - breaks it.
+     */
+    static boolean isSigned(byte[] pdf) {
+        try (PDDocument doc = Loader.loadPDF(pdf)) {
+            return doc.getSignatureDictionaries().stream().anyMatch(s -> s.getContents() != null && s.getContents().length > 0);
+        } catch (IOException | RuntimeException e) {
+            return false;
+        }
     }
 
     @GetMapping(value = "/documents/{documentId}/pages/{pageIndex}/thumbnail", produces = MediaType.IMAGE_JPEG_VALUE)

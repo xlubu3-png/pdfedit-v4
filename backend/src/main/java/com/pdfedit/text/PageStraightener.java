@@ -42,6 +42,45 @@ public final class PageStraightener {
         return Deskew.angle(seen);
     }
 
+    /** A page laid flat is drawn again this sharp (enough to read 8-point print). */
+    private static final float FLAT_DPI = 200;
+    /** ... and is told on the page drawn this sharp: at 100 dpi the bands' slopes were off by half a degree. */
+    private static final float PLAN_DPI = 150;
+
+    /**
+     * The page as a document of its own laid flat, when it is a scan or photo taken at a slant - its lines sloping
+     * differently at the top and the bottom, which turning cannot set straight (see {@link Dewarp}); null when it is
+     * not. Told on the page drawn small; then drawn {@link #FLAT_DPI} sharp, laid flat, and put in as a picture the
+     * size of the page.
+     */
+    public static byte[] flattened(byte[] pdf, int pageIndex) throws IOException {
+        try (PDDocument source = Loader.loadPDF(pdf)) {
+            if (!isScan(source, pageIndex)) {
+                return null;
+            }
+            PDFRenderer renderer = new PDFRenderer(source);
+            BufferedImage seen = renderer.renderImageWithDPI(pageIndex, PLAN_DPI, ImageType.RGB);
+            Dewarp.Plan plan = Dewarp.plan(seen);
+            if (plan == null) {
+                return null;
+            }
+            float dpi = com.pdfedit.service.RenderLimits.cappedDpi(source.getPage(pageIndex).getCropBox(), FLAT_DPI);
+            BufferedImage sharp = renderer.renderImageWithDPI(pageIndex, dpi, ImageType.RGB);
+            BufferedImage flat = Dewarp.apply(sharp, plan.scaled((double) sharp.getHeight() / seen.getHeight(), sharp.getWidth()));
+            PDRectangle box = source.getPage(pageIndex).getCropBox();
+            try (PDDocument copy = new PDDocument(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+                PDPage page = new PDPage(new PDRectangle(box.getWidth(), box.getHeight()));
+                copy.addPage(page);
+                try (org.apache.pdfbox.pdmodel.PDPageContentStream cs = new org.apache.pdfbox.pdmodel.PDPageContentStream(copy, page)) {
+                    cs.drawImage(org.apache.pdfbox.pdmodel.graphics.image.JPEGFactory.createFromImage(copy, flat, 0.9f),
+                            0, 0, box.getWidth(), box.getHeight());
+                }
+                copy.save(out);
+                return out.toByteArray();
+            }
+        }
+    }
+
     /**
      * The page as a document of its own, shown turned clockwise by {@code quarter} (0, 90, 180, 270) - a /Rotate,
      * which an uploaded document has baked into its drawing (PageRotationBaker) before it is edited.

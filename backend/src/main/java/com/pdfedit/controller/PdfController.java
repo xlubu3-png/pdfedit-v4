@@ -295,15 +295,20 @@ public class PdfController {
             degrees = PageStraightener.angle(doc, index);
         }
         long t2 = System.nanoTime();
-        if (quarter == 0 && degrees == 0) {
+        // Photographed at a slant (the lines slope differently at the top and the bottom): laid flat instead.
+        byte[] flat = PageStraightener.flattened(page, index);
+        if (quarter == 0 && degrees == 0 && flat == null) {
             return new StraightenResponse(null, 0, 0);
         }
-        byte[] straight = degrees == 0 ? page : PageStraightener.straightened(page, index, degrees);
+        if (flat != null) {
+            log.info("기울기 바로잡기 {}쪽: 비스듬히 찍힌 쪽이라 원근을 폈습니다", pageIndex + 1);
+        }
+        byte[] straight = flat != null ? flat : degrees == 0 ? page : PageStraightener.straightened(page, index, degrees);
         long t3 = System.nanoTime();
         String copyId = store.store(info.fileName(), straight, 1);
         log.info("기울기 바로잡기 {}쪽: 방향 {} ms, 기울기 {} ms, 돌리기 {} ms, 저장 {} ms", pageIndex + 1,
                 (t1 - t0) / 1_000_000, (t2 - t1) / 1_000_000, (t3 - t2) / 1_000_000, (System.nanoTime() - t3) / 1_000_000);
-        if (quarter == 0) {
+        if (quarter == 0 && flat == null) {
             // Turned a little, the page's edits still sit where they were; turned a quarter or more they would not.
             store.copyPageEdits(documentId, pageIndex, copyId, 0);
         }
